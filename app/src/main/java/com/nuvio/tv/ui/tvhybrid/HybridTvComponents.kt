@@ -255,8 +255,8 @@ fun Surface(
     tonalElevation: Dp = 0.dp,
     shape: Shape = SurfaceDefaults.shape,
     colors: SurfaceColors = SurfaceDefaults.colors(),
-    border: Border = SurfaceDefaults.border,
-    glow: Glow = SurfaceDefaults.glow,
+    border: Border = Border.None,
+    glow: Glow = Glow.None,
     content: @Composable (BoxScope.() -> Unit),
 ) {
     TvSurface(

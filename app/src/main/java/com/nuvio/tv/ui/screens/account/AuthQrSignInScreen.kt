@@ -273,9 +273,10 @@ fun AuthQrSignInScreen(
                 )
             }
         } else {
+            val isNarrowWide = maxWidth < 900.dp
             val horizontalBrandPad = if (maxWidth < 960.dp) 28.dp else 56.dp
-            val paneWidth = if (maxWidth < 900.dp) 360.dp else 440.dp
-            val paneHorizPad = if (maxWidth < 900.dp) 24.dp else 40.dp
+            val paneWidth = if (isNarrowWide) 360.dp else 440.dp
+            val paneHorizPad = if (isNarrowWide) 24.dp else 40.dp
             Row(
                 modifier = Modifier
                     .fillMaxSize()
@@ -293,7 +294,7 @@ fun AuthQrSignInScreen(
                     showRestore = isOnboardingMode && !isSignedIn,
                     onRestore = backupViewModel::openWhereFrom,
                     restoreFocusRequester = restoreFocus,
-                    compact = maxWidth < 900.dp
+                    compact = isNarrowWide
                 )
 
                 AuthQrLoginPane(
@@ -315,7 +316,7 @@ fun AuthQrSignInScreen(
                     isSignedIn = isSignedIn,
                     isOnboardingMode = isOnboardingMode,
                     useEmailLogin = useEmailLogin,
-                    isCompactMobile = maxWidth < 900.dp,
+                    isCompactMobile = isNarrowWide,
                     isHandheld = isHandheld,
                     onSignIn = viewModel::signIn,
                     onRefreshOrSignOut = {
