@@ -32,7 +32,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.tv.material3.Card
+import com.nuvio.tv.ui.tvhybrid.Card
 import androidx.tv.material3.CardDefaults
 import com.nuvio.tv.core.formatcheck.FormatCheckRetest
 import com.nuvio.tv.core.formatcheck.FormatCheckStart

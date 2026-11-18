@@ -91,7 +91,9 @@ jobs:
             --tests 'com.nuvio.tv.launcher.*' \
             --tests 'com.nuvio.tv.ui.screens.settings.*' \
             --tests 'com.nuvio.tv.ui.v2.*' \
+            --tests 'com.nuvio.tv.ui.monolith.*' \
             --tests 'com.nuvio.tv.ui.brand.*' \
+            --tests 'com.nuvio.tv.core.auth.ContinueWithoutAccountTest' \
             --tests 'com.nuvio.tv.core.util.ProcessLocaleTest' \
             --tests 'com.nuvio.tv.core.assessment.*' \
             --tests 'com.nuvio.tv.updater.*' \

@@ -91,7 +91,10 @@ class AccountViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(AccountUiState())
+    private val isCloudConfigured: Boolean
+        get() = serverConfiguration.backendUrl.isNotBlank() && serverConfiguration.publishableKey.isNotBlank()
+
+    private val _uiState = MutableStateFlow(AccountUiState(isServerConfigured = isCloudConfigured))
     val uiState: StateFlow<AccountUiState> = _uiState.asStateFlow()
     private var qrLoginPollJob: Job? = null
     private var activeQrLoginTraceId: Long? = null
@@ -284,6 +287,17 @@ class AccountViewModel @Inject constructor(
     }
 
     fun startQrLogin() {
+        if (!isCloudConfigured) {
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    isServerConfigured = false,
+                    error = null,
+                    qrLoginStatus = context.getString(R.string.auth_cloud_not_configured)
+                )
+            }
+            return
+        }
         viewModelScope.launch {
             val traceId = qrLoginTraceCounter.incrementAndGet()
             val startedAtMs = SystemClock.elapsedRealtime()

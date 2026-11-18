@@ -34,6 +34,7 @@ data class SyncOverview(
 
 data class AccountUiState(
     val authState: AuthState = AuthState.Loading,
+    val isServerConfigured: Boolean = true,
     val isLoading: Boolean = false,
     val isStatsLoading: Boolean = false,
     val error: String? = null,

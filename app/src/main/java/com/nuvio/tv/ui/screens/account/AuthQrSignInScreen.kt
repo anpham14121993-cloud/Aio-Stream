@@ -18,20 +18,27 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
@@ -65,7 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.tv.material3.Button
+import com.nuvio.tv.ui.tvhybrid.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
@@ -81,6 +88,8 @@ import com.nuvio.tv.domain.model.AuthState
 import com.nuvio.tv.ui.components.BrandWordmark
 import com.nuvio.tv.ui.components.SkeletonBar
 import com.nuvio.tv.ui.components.rememberShimmerFill
+import com.nuvio.tv.ui.monolith.DeviceFormFactor
+import com.nuvio.tv.ui.monolith.LocalDeviceFormFactor
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import kotlin.math.PI
 import kotlin.math.abs
@@ -152,9 +161,10 @@ fun AuthQrSignInScreen(
         }
     }
 
-    LaunchedEffect(uiState.authState, isSignedIn, uiState.qrLoginCode, uiState.isLoading, uiState.error, exitRequested) {
+    LaunchedEffect(uiState.authState, uiState.isServerConfigured, isSignedIn, uiState.qrLoginCode, uiState.isLoading, uiState.error, exitRequested) {
         if (
             useQrLogin &&
+            uiState.isServerConfigured &&
             !exitRequested &&
             uiState.authState !is AuthState.Loading &&
             !isSignedIn &&
@@ -188,66 +198,146 @@ fun AuthQrSignInScreen(
         }
     }
 
-    Box(
+    val formFactor = LocalDeviceFormFactor.current
+    val isHandheld = formFactor != DeviceFormFactor.TV
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
             .authGradientBackground()
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize(),
-        ) {
-            AuthQrBrandPanel(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .padding(start = 56.dp, end = 56.dp),
-                isSignedIn = isSignedIn,
-                fullAccount = fullAccount,
-                useEmailLogin = useEmailLogin,
-                showRestore = isOnboardingMode && !isSignedIn,
-                onRestore = backupViewModel::openWhereFrom,
-                restoreFocusRequester = restoreFocus
-            )
+        val isCompactLayout = maxWidth < 720.dp || (formFactor == DeviceFormFactor.MOBILE && maxWidth < maxHeight)
+        val safePaddingModifier = if (isHandheld) {
+            Modifier.statusBarsPadding().navigationBarsPadding()
+        } else {
+            Modifier
+        }
 
-            AuthQrLoginPane(
+        if (isCompactLayout) {
+            Column(
                 modifier = Modifier
-                    .width(460.dp)
-                    .fillMaxHeight()
-                    .background(AuthPaneBackground)
-                    .drawBehind {
-                        drawLine(
-                            color = AuthPaneBorder,
-                            start = Offset(0f, 0f),
-                            end = Offset(0f, size.height),
-                            strokeWidth = 1.dp.toPx()
-                        )
+                    .fillMaxSize()
+                    .then(safePaddingModifier)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                Spacer(modifier = Modifier.height(28.dp))
+                AuthQrBrandPanel(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 440.dp),
+                    isSignedIn = isSignedIn,
+                    fullAccount = fullAccount,
+                    useEmailLogin = useEmailLogin,
+                    showRestore = isOnboardingMode && !isSignedIn,
+                    onRestore = backupViewModel::openWhereFrom,
+                    restoreFocusRequester = restoreFocus,
+                    compact = true
+                )
+
+                AuthQrLoginPane(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 440.dp)
+                        .background(AuthPaneBackground, RoundedCornerShape(18.dp))
+                        .border(1.dp, AuthPaneBorder, RoundedCornerShape(18.dp))
+                        .padding(horizontal = 20.dp, vertical = 22.dp),
+                    uiState = uiState,
+                    isSignedIn = isSignedIn,
+                    isOnboardingMode = isOnboardingMode,
+                    useEmailLogin = useEmailLogin,
+                    isCompactMobile = true,
+                    isHandheld = isHandheld,
+                    onSignIn = viewModel::signIn,
+                    onRefreshOrSignOut = {
+                        if (isSignedIn) {
+                            showSignOutConfirmation = true
+                        } else {
+                            viewModel.startQrLogin()
+                        }
                     },
-                uiState = uiState,
-                isSignedIn = isSignedIn,
-                isOnboardingMode = isOnboardingMode,
-                useEmailLogin = useEmailLogin,
-                onSignIn = viewModel::signIn,
-                onRefreshOrSignOut = {
-                    if (isSignedIn) {
-                        showSignOutConfirmation = true
-                    } else {
-                        viewModel.startQrLogin()
-                    }
-                },
-                onBackOrContinue = {
-                    if (isOnboardingMode) {
-                        continueFromAuthScreen()
-                    } else {
-                        leaveAuthScreen()
-                    }
-                },
-                initialFocusRequester = loginFocusRequester,
-                showSupportButton = supportState.showSupportButton && !(isSignedIn && isOnboardingMode),
-                supporterTier = supportState.tier.takeIf { supportState.status == SupportStatus.SUPPORTER },
-                onSupport = { showSupportDialog = true }
-            )
+                    onBackOrContinue = {
+                        if (isOnboardingMode) {
+                            continueFromAuthScreen()
+                        } else {
+                            leaveAuthScreen()
+                        }
+                    },
+                    initialFocusRequester = loginFocusRequester,
+                    showSupportButton = supportState.showSupportButton && !(isSignedIn && isOnboardingMode),
+                    supporterTier = supportState.tier.takeIf { supportState.status == SupportStatus.SUPPORTER },
+                    onSupport = { showSupportDialog = true }
+                )
+            }
+        } else {
+            val horizontalBrandPad = if (maxWidth < 960.dp) 28.dp else 56.dp
+            val paneWidth = if (maxWidth < 900.dp) 360.dp else 440.dp
+            val paneHorizPad = if (maxWidth < 900.dp) 24.dp else 40.dp
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(safePaddingModifier)
+            ) {
+                AuthQrBrandPanel(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = horizontalBrandPad, end = horizontalBrandPad, top = 48.dp, bottom = 32.dp),
+                    isSignedIn = isSignedIn,
+                    fullAccount = fullAccount,
+                    useEmailLogin = useEmailLogin,
+                    showRestore = isOnboardingMode && !isSignedIn,
+                    onRestore = backupViewModel::openWhereFrom,
+                    restoreFocusRequester = restoreFocus,
+                    compact = maxWidth < 900.dp
+                )
+
+                AuthQrLoginPane(
+                    modifier = Modifier
+                        .width(paneWidth)
+                        .fillMaxHeight()
+                        .background(AuthPaneBackground)
+                        .drawBehind {
+                            drawLine(
+                                color = AuthPaneBorder,
+                                start = Offset(0f, 0f),
+                                end = Offset(0f, size.height),
+                                strokeWidth = 1.dp.toPx()
+                            )
+                        }
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = paneHorizPad, vertical = 28.dp),
+                    uiState = uiState,
+                    isSignedIn = isSignedIn,
+                    isOnboardingMode = isOnboardingMode,
+                    useEmailLogin = useEmailLogin,
+                    isCompactMobile = maxWidth < 900.dp,
+                    isHandheld = isHandheld,
+                    onSignIn = viewModel::signIn,
+                    onRefreshOrSignOut = {
+                        if (isSignedIn) {
+                            showSignOutConfirmation = true
+                        } else {
+                            viewModel.startQrLogin()
+                        }
+                    },
+                    onBackOrContinue = {
+                        if (isOnboardingMode) {
+                            continueFromAuthScreen()
+                        } else {
+                            leaveAuthScreen()
+                        }
+                    },
+                    initialFocusRequester = loginFocusRequester,
+                    showSupportButton = supportState.showSupportButton && !(isSignedIn && isOnboardingMode),
+                    supporterTier = supportState.tier.takeIf { supportState.status == SupportStatus.SUPPORTER },
+                    onSupport = { showSupportDialog = true }
+                )
+            }
         }
 
         if (BuildConfig.FEATURE_CUSTOM_SERVER_CONNECTIONS_ENABLED) {
@@ -255,7 +345,8 @@ fun AuthQrSignInScreen(
                 viewModel = hiltViewModel(),
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(28.dp)
+                    .then(if (isHandheld) Modifier.statusBarsPadding() else Modifier)
+                    .padding(if (isCompactLayout) 12.dp else 24.dp)
             )
         }
         com.nuvio.tv.ui.screens.backup.BackupPhoneOverlay(backupState, backupViewModel)
@@ -312,31 +403,33 @@ private fun AuthQrBrandPanel(
     useEmailLogin: Boolean,
     showRestore: Boolean = false,
     onRestore: () -> Unit = {},
-    restoreFocusRequester: FocusRequester? = null
+    restoreFocusRequester: FocusRequester? = null,
+    compact: Boolean = false
 ) {
     Column(
         modifier = modifier,
-        horizontalAlignment = Alignment.Start,
+        horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start,
         verticalArrangement = Arrangement.Center
     ) {
         BrandWordmark(
             contentDescription = stringResource(R.string.cd_nuvio_logo),
-            modifier = Modifier.height(60.dp),
+            modifier = Modifier.height(if (compact) 46.dp else 60.dp),
             contentScale = ContentScale.Fit
         )
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(if (compact) 16.dp else 32.dp))
         Text(
             text = stringResource(R.string.auth_qr_tagline),
             modifier = Modifier.widthIn(max = 440.dp),
+            textAlign = if (compact) TextAlign.Center else TextAlign.Start,
             style = MaterialTheme.typography.displayLarge.copy(
                 color = AuthTextPrimary,
-                fontSize = 40.sp,
-                lineHeight = 45.sp,
+                fontSize = if (compact) 26.sp else 40.sp,
+                lineHeight = if (compact) 32.sp else 45.sp,
                 fontWeight = FontWeight.SemiBold
             )
         )
         if (isSignedIn || useEmailLogin) {
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(if (compact) 10.dp else 18.dp))
             Text(
                 text = if (isSignedIn) {
                     stringResource(R.string.auth_qr_connected)
@@ -344,10 +437,11 @@ private fun AuthQrBrandPanel(
                     stringResource(R.string.auth_email_hint)
                 },
                 modifier = Modifier.widthIn(max = 400.dp),
+                textAlign = if (compact) TextAlign.Center else TextAlign.Start,
                 style = MaterialTheme.typography.bodyLarge.copy(
                     color = AuthTextSecondary,
-                    fontSize = 17.sp,
-                    lineHeight = 26.sp,
+                    fontSize = if (compact) 14.sp else 17.sp,
+                    lineHeight = if (compact) 21.sp else 26.sp,
                     fontWeight = FontWeight.Normal
                 )
             )
@@ -401,6 +495,7 @@ private fun AuthQrBrandPanel(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AuthQrLoginPane(
     modifier: Modifier,
@@ -408,6 +503,8 @@ private fun AuthQrLoginPane(
     isSignedIn: Boolean,
     isOnboardingMode: Boolean,
     useEmailLogin: Boolean,
+    isCompactMobile: Boolean,
+    isHandheld: Boolean,
     onSignIn: (String, String) -> Unit,
     onRefreshOrSignOut: () -> Unit,
     onBackOrContinue: () -> Unit,
@@ -416,29 +513,30 @@ private fun AuthQrLoginPane(
     supporterTier: MemberTier?,
     onSupport: () -> Unit
 ) {
-    val focusEmail = useEmailLogin && !isSignedIn
-    val focusMainAction = !focusEmail && !uiState.isLoading
+    val context = LocalContext.current
+    val focusEmail = useEmailLogin && uiState.isServerConfigured && !isSignedIn
+    val focusMainAction = !focusEmail && uiState.isServerConfigured && !uiState.isLoading
     Column(
-        modifier = modifier.padding(horizontal = 48.dp),
+        modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = if (isSignedIn) {
-                stringResource(R.string.auth_qr_synced_data)
-            } else if (useEmailLogin) {
-                stringResource(R.string.auth_email_instruction)
-            } else {
-                stringResource(R.string.auth_qr_scan_instruction)
+            text = when {
+                isSignedIn -> stringResource(R.string.auth_qr_synced_data)
+                !uiState.isServerConfigured -> stringResource(R.string.auth_cloud_not_configured)
+                useEmailLogin -> stringResource(R.string.auth_email_instruction)
+                else -> stringResource(R.string.auth_qr_scan_instruction)
             },
             style = MaterialTheme.typography.bodyLarge.copy(
-                color = AuthTextSecondary,
-                fontSize = 15.sp,
-                lineHeight = 21.sp
+                color = if (!isSignedIn && !uiState.isServerConfigured) AuthTextPrimary else AuthTextSecondary,
+                fontSize = if (isCompactMobile) 16.sp else 15.sp,
+                lineHeight = 22.sp,
+                fontWeight = if (!isSignedIn && !uiState.isServerConfigured) FontWeight.SemiBold else FontWeight.Normal
             ),
             textAlign = TextAlign.Center
         )
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
         if (isSignedIn && !isOnboardingMode) {
             AccountConnectedStatsStrip(
@@ -451,6 +549,15 @@ private fun AuthQrLoginPane(
                 containerColor = AuthSecondaryButtonBackground,
                 contentColor = AuthTextSecondary
             )
+        } else if (!uiState.isServerConfigured) {
+            Text(
+                text = stringResource(R.string.auth_cloud_not_configured_desc),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = AuthTextSecondary,
+                    lineHeight = 21.sp
+                ),
+                textAlign = TextAlign.Center
+            )
         } else if (useEmailLogin) {
             AuthEmailLoginForm(
                 uiState = uiState,
@@ -458,20 +565,48 @@ private fun AuthQrLoginPane(
                 initialFocusRequester = initialFocusRequester
             )
         } else {
-            AuthQrCodeBlock(uiState = uiState)
+            AuthQrCodeBlock(
+                uiState = uiState,
+                qrSize = if (isCompactMobile) 180.dp else 206.dp
+            )
+            if (isHandheld && !uiState.qrLoginUrl.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Button(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uiState.qrLoginUrl)))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.colors(
+                        containerColor = Color.White,
+                        focusedContainerColor = Color.White,
+                        contentColor = Color.Black,
+                        focusedContentColor = Color.Black
+                    ),
+                    shape = ButtonDefaults.shape(RoundedCornerShape(16.dp))
+                ) {
+                    Text(
+                        text = stringResource(R.string.auth_open_browser_signin),
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(22.dp))
         Column(
-            modifier = Modifier.width(IntrinsicSize.Max),
+            modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
-                verticalAlignment = Alignment.CenterVertically
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm, Alignment.CenterVertically)
             ) {
-                if (isSignedIn || !useEmailLogin) {
+                if (isSignedIn || (!useEmailLogin && uiState.isServerConfigured)) {
                     Button(
                         onClick = onRefreshOrSignOut,
                         enabled = !uiState.isLoading,
@@ -507,9 +642,9 @@ private fun AuthQrLoginPane(
                         Modifier
                     },
                     colors = ButtonDefaults.colors(
-                        containerColor = AuthSecondaryButtonBackground,
+                        containerColor = if (!uiState.isServerConfigured && !isSignedIn) Color.White else AuthSecondaryButtonBackground,
                         focusedContainerColor = Color.White,
-                        contentColor = AuthTextPrimary,
+                        contentColor = if (!uiState.isServerConfigured && !isSignedIn) Color.Black else AuthTextPrimary,
                         focusedContentColor = Color.Black
                     ),
                     border = ButtonDefaults.border(
@@ -657,7 +792,8 @@ private fun AuthEmailLoginForm(
 
 @Composable
 private fun AuthQrCodeBlock(
-    uiState: AccountUiState
+    uiState: AccountUiState,
+    qrSize: androidx.compose.ui.unit.Dp = 206.dp
 ) {
     val qrBitmap = remember(uiState.qrLoginBitmap) { uiState.qrLoginBitmap?.asImageBitmap() }
     if (qrBitmap != null) {
@@ -665,7 +801,7 @@ private fun AuthQrCodeBlock(
             bitmap = qrBitmap,
             contentDescription = stringResource(R.string.cd_qr_login),
             modifier = Modifier
-                .size(206.dp)
+                .size(qrSize)
                 .background(Color.White, RoundedCornerShape(8.dp))
                 .padding(8.dp),
             contentScale = ContentScale.Fit
@@ -673,9 +809,10 @@ private fun AuthQrCodeBlock(
     } else {
         Box(
             modifier = Modifier
-                .size(206.dp)
+                .size(qrSize)
                 .background(AuthSecondaryButtonBackground, RoundedCornerShape(8.dp))
-                .border(1.dp, AuthSecondaryButtonBorder, RoundedCornerShape(8.dp)),
+                .border(1.dp, AuthSecondaryButtonBorder, RoundedCornerShape(8.dp))
+                .padding(16.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -974,13 +1111,11 @@ private fun Modifier.authGradientBackground(): Modifier = drawWithCache {
     )
     val brush = Brush.linearGradient(
         colorStops = arrayOf(
-            0f to Color(0xFF21113B),
-            0.14f to Color(0xFF21113B),
-            0.26f to Color(0xFF1A0E2F),
-            0.36f to Color(0xFF130A23),
-            0.48f to Color(0xFF0A060F),
-            0.60f to Color(0xFF050408),
-            0.70f to Color.Black,
+            0f to Color(0xFF22252E),
+            0.16f to Color(0xFF1A1D24),
+            0.32f to Color(0xFF12141A),
+            0.52f to Color(0xFF0B0C10),
+            0.72f to Color(0xFF060709),
             1f to Color.Black
         ),
         start = start,

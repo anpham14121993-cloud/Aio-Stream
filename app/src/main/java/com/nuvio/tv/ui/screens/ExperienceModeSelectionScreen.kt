@@ -5,14 +5,22 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VideoSettings
@@ -32,13 +40,11 @@ import com.nuvio.tv.R
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.tv.material3.Border
-import androidx.tv.material3.Card
-import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Surface
+import com.nuvio.tv.ui.tvhybrid.Surface
 import androidx.tv.material3.Text
 import com.nuvio.tv.data.local.ExperienceModeDataStore
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
@@ -81,48 +87,83 @@ fun ExperienceModeSelectionScreen(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 64.dp, vertical = NuvioTheme.spacing.xxxl),
-        contentAlignment = Alignment.Center
+            .statusBarsPadding()
+            .navigationBarsPadding()
     ) {
+        val isCompact = maxWidth < 700.dp
+        val horizontalPadding = if (isCompact) 20.dp else 64.dp
         Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = horizontalPadding, vertical = if (isCompact) 28.dp else NuvioTheme.spacing.xxxl),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
             Text(
                 text = stringResource(R.string.experience_mode_choose_title),
                 style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
-                color = NuvioTheme.colors.TextPrimary
+                color = NuvioTheme.colors.TextPrimary,
+                textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
             Text(
                 text = stringResource(R.string.experience_mode_choose_subtitle),
                 style = MaterialTheme.typography.bodyLarge,
-                color = NuvioTheme.colors.TextSecondary
+                color = NuvioTheme.colors.TextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.widthIn(max = 640.dp)
             )
-            Spacer(modifier = Modifier.height(36.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(20.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                ExperienceModeCard(
-                    title = stringResource(R.string.experience_mode_essential),
-                    subtitle = stringResource(R.string.experience_mode_essential_card_subtitle),
-                    icon = Icons.Default.VideoSettings,
-                    onClick = { choose(ExperienceMode.ESSENTIAL) },
+            Spacer(modifier = Modifier.height(if (isCompact) 24.dp else 36.dp))
+            if (isCompact) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(essentialFocusRequester)
-                )
-                ExperienceModeCard(
-                    title = stringResource(R.string.experience_mode_advanced),
-                    subtitle = stringResource(R.string.experience_mode_advanced_card_subtitle),
-                    icon = Icons.Default.Tune,
-                    onClick = { choose(ExperienceMode.ADVANCED) },
-                    modifier = Modifier.weight(1f)
-                )
+                        .fillMaxWidth()
+                        .widthIn(max = 520.dp)
+                ) {
+                    ExperienceModeCard(
+                        title = stringResource(R.string.experience_mode_essential),
+                        subtitle = stringResource(R.string.experience_mode_essential_card_subtitle),
+                        icon = Icons.Default.VideoSettings,
+                        onClick = { choose(ExperienceMode.ESSENTIAL) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(essentialFocusRequester)
+                    )
+                    ExperienceModeCard(
+                        title = stringResource(R.string.experience_mode_advanced),
+                        subtitle = stringResource(R.string.experience_mode_advanced_card_subtitle),
+                        icon = Icons.Default.Tune,
+                        onClick = { choose(ExperienceMode.ADVANCED) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            } else {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    ExperienceModeCard(
+                        title = stringResource(R.string.experience_mode_essential),
+                        subtitle = stringResource(R.string.experience_mode_essential_card_subtitle),
+                        icon = Icons.Default.VideoSettings,
+                        onClick = { choose(ExperienceMode.ESSENTIAL) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(essentialFocusRequester)
+                    )
+                    ExperienceModeCard(
+                        title = stringResource(R.string.experience_mode_advanced),
+                        subtitle = stringResource(R.string.experience_mode_advanced_card_subtitle),
+                        icon = Icons.Default.Tune,
+                        onClick = { choose(ExperienceMode.ADVANCED) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
     }
@@ -139,7 +180,7 @@ private fun ExperienceModeCard(
 ) {
     Surface(
         onClick = onClick,
-        modifier = modifier.height(210.dp),
+        modifier = modifier.heightIn(min = 148.dp),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = NuvioTheme.colors.BackgroundCard,
             focusedContainerColor = NuvioTheme.colors.FocusBackground
@@ -157,36 +198,29 @@ private fun ExperienceModeCard(
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f)
     ) {
-        Card(
-            onClick = onClick,
-            colors = CardDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-            shape = CardDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md)),
-            scale = CardDefaults.scale(focusedScale = 1f)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(NuvioTheme.spacing.xl),
+            verticalArrangement = Arrangement.Center
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(NuvioTheme.spacing.xl),
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = NuvioTheme.colors.TextSecondary
-                )
-                Spacer(modifier = Modifier.height(18.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                    color = NuvioTheme.colors.TextPrimary
-                )
-                Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = NuvioTheme.colors.TextSecondary
-                )
-            }
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = NuvioTheme.colors.TextSecondary
+            )
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = NuvioTheme.colors.TextPrimary
+            )
+            Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = NuvioTheme.colors.TextSecondary
+            )
         }
     }
 }

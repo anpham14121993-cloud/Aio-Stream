@@ -19,6 +19,9 @@ data class ServerConfiguration(
     val deviceLoginWebBaseUrl: String? = null,
     val avatarPublicBaseUrl: String? = null
 ) {
+    val isConfigured: Boolean
+        get() = backendUrl.isNotBlank() && publishableKey.isNotBlank()
+
     val isSecure: Boolean
         get() = backendUrl.startsWith("https://", ignoreCase = true)
 

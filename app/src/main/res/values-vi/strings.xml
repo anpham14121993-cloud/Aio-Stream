@@ -2326,10 +2326,13 @@
     <string name="auth_qr_manual_instruction">Hoặc truy cập %1$s và nhập</string>
     <string name="auth_qr_refresh">Làm mới mã QR</string>
     <string name="auth_qr_continue_without_account">Tiếp tục không cần tài khoản</string>
-    <string name="auth_qr_connected">Tài khoản của bạn đã được kết nối trên TV này.</string>
+    <string name="auth_qr_connected">Tài khoản của bạn đã được kết nối trên thiết bị này.</string>
     <string name="auth_qr_synced_data">Dữ liệu đã đồng bộ</string>
     <string name="auth_qr_generating">Đang tạo mã QR\u2026</string>
     <string name="auth_qr_unavailable">Mã QR không khả dụng. Làm mới để thử lại.</string>
+    <string name="auth_cloud_not_configured">Chưa cấu hình máy chủ đồng bộ</string>
+    <string name="auth_cloud_not_configured_desc">AioStream hoạt động đầy đủ ở chế độ cục bộ mà không cần tài khoản. Bạn có thể cấu hình máy chủ riêng tại biểu tượng \u22ee ở góc trên hoặc tiếp tục ngay.</string>
+    <string name="auth_open_browser_signin">Mở liên kết xác nhận trên trình duyệt</string>
     <string name="auth_qr_please_wait">Vui lòng đợi\u2026</string>
     <string name="auth_qr_continue">Tiếp tục</string>
     <string name="auth_qr_back">Quay lại</string>

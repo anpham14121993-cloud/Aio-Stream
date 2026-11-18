@@ -300,7 +300,7 @@ fun CatalogSeeAllScreen(
                                 modifier = Modifier
                                     .then(if (globalLandscape) Modifier.fillMaxWidth() else Modifier.width(posterCardStyle.width))
                             ) {
-                                androidx.tv.material3.Card(
+                                com.nuvio.tv.ui.tvhybrid.Card(
                                     onClick = {},
                                     modifier = Modifier
                                         .then(

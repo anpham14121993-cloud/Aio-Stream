@@ -73,6 +73,11 @@ fun NuvioDialog(
     val dialogWindowHeightPx = if (v2) {
         LocalWindowInfo.current.containerSize.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
     } else resources.displayMetrics.heightPixels
+    val dialogWindowWidthPx = if (v2) {
+        LocalWindowInfo.current.containerSize.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+    } else resources.displayMetrics.widthPixels
+    val availableWidthDp = with(dialogDensity) { dialogWindowWidthPx.toDp() }
+    val resolvedWidth = minOf(width, (availableWidthDp - 32.dp).coerceAtLeast(280.dp))
     val maxDialogHeight = (with(dialogDensity) { dialogWindowHeightPx.toDp() } - NuvioTheme.spacing.xxxl).coerceAtLeast(320.dp)
     val containerShape = RoundedCornerShape(containerCornerRadius)
     val solid = solidWithoutBlur && !com.nuvio.tv.ui.v2.quality.LocalGlassTokens.current.liveBlur
@@ -99,7 +104,7 @@ fun NuvioDialog(
         ) {
             Box(
                 modifier = Modifier
-                    .width(width)
+                    .width(resolvedWidth)
                     .heightIn(max = maxDialogHeight)
                     .clip(containerShape)
                     .then(backgroundModifier)

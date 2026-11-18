@@ -141,13 +141,13 @@ import androidx.metrics.performance.PerformanceMetricsState
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.tv.material3.Card
+import com.nuvio.tv.ui.tvhybrid.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.DrawerValue
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.ModalNavigationDrawer
-import androidx.tv.material3.Surface
+import com.nuvio.tv.ui.tvhybrid.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
 import androidx.tv.material3.contentColorFor
@@ -324,6 +324,9 @@ open class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var authManager: AuthManager
+
+    @Inject
+    lateinit var serverConfiguration: com.nuvio.tv.domain.model.ServerConfiguration
 
     @Inject
     lateinit var backupSignInOffer: com.nuvio.tv.core.backup.BackupSignInOffer
@@ -517,8 +520,12 @@ open class MainActivity : ComponentActivity() {
                 }
             }
 
-            LaunchedEffect(hasSeenAuthQrOnFirstLaunch, authState) {
-                if (hasSeenAuthQrOnFirstLaunch == false && authState is AuthState.FullAccount) {
+            val hasConfiguredAuthServer = remember(serverConfiguration) {
+                serverConfiguration.backendUrl.isNotBlank() && serverConfiguration.publishableKey.isNotBlank()
+            }
+
+            LaunchedEffect(hasSeenAuthQrOnFirstLaunch, authState, hasConfiguredAuthServer) {
+                if (hasSeenAuthQrOnFirstLaunch == false && (authState is AuthState.FullAccount || !hasConfiguredAuthServer)) {
                     appOnboardingDataStore.setHasSeenAuthQrOnFirstLaunch(true)
                     onboardingCompletedThisSession = true
                 }
@@ -888,6 +895,7 @@ open class MainActivity : ComponentActivity() {
 
                     if (
                         hasSeenAuthQrOnFirstLaunch == false &&
+                        hasConfiguredAuthServer &&
                         authState !is AuthState.FullAccount &&
                         !onboardingCompletedThisSession
                     ) {
@@ -1729,6 +1737,10 @@ open class MainActivity : ComponentActivity() {
     private var currentInPlayer: Boolean = false
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            screensaverController.notifyWake()
+            ambientIdleController.dismiss()
+        }
         if (com.nuvio.tv.ui.monolith.AdaptiveDeviceDetector.isDirectTouchEvent(ev)) {
             liveInputMode.value = com.nuvio.tv.ui.monolith.InputInteractionMode.TOUCH
         }

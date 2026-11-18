@@ -3,16 +3,25 @@ package com.nuvio.tv.ui.screens.addon
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -34,7 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.tv.material3.Button
+import com.nuvio.tv.ui.tvhybrid.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
@@ -59,37 +68,39 @@ fun EssentialAddonSetupScreen(
         onDispose { viewModel.stopQrMode() }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 58.dp, vertical = 42.dp),
-        contentAlignment = Alignment.Center
+            .statusBarsPadding()
+            .navigationBarsPadding()
     ) {
+        val isCompact = maxWidth < 720.dp
+        val horizontalPadding = if (isCompact) 20.dp else 58.dp
         Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = horizontalPadding, vertical = if (isCompact) 24.dp else 42.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
             Text(
                 text = stringResource(R.string.essential_addon_setup_title),
                 style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold, textDirection = TextDirection.Content),
                 color = NuvioTheme.colors.TextPrimary,
+                textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = stringResource(R.string.essential_addon_setup_subtitle),
                 style = MaterialTheme.typography.bodyLarge,
-                color = NuvioTheme.colors.TextSecondary
+                color = NuvioTheme.colors.TextSecondary,
+                textAlign = TextAlign.Center
             )
-            Spacer(modifier = Modifier.height(28.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(18.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Spacer(modifier = Modifier.height(24.dp))
+            val urlInstallCard: @Composable (Modifier) -> Unit = { cardMod ->
                 Card(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(220.dp),
+                    modifier = cardMod.heightIn(min = 200.dp),
                     colors = CardDefaults.cardColors(containerColor = NuvioTheme.colors.BackgroundCard),
                     shape = RoundedCornerShape(NuvioTheme.radii.md)
                 ) {
@@ -107,7 +118,9 @@ fun EssentialAddonSetupScreen(
                             onValueChange = viewModel::onInstallUrlChange,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(NuvioTheme.spacing.xxxl),
+                                .height(NuvioTheme.spacing.xxxl)
+                                .background(NuvioTheme.colors.BackgroundElevated, RoundedCornerShape(10.dp))
+                                .border(1.dp, NuvioTheme.colors.Border, RoundedCornerShape(10.dp)),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Uri,
@@ -119,14 +132,17 @@ fun EssentialAddonSetupScreen(
                                     keyboardController?.hide()
                                 }
                             ),
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = NuvioTheme.colors.TextPrimary,
-                                            textDirection = TextDirection.Content),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = NuvioTheme.colors.TextPrimary,
+                                textDirection = TextDirection.Content
+                            ),
                             cursorBrush = SolidColor(NuvioTheme.colors.Primary),
                             decorationBox = { innerTextField ->
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(horizontal = 14.dp, vertical = NuvioTheme.spacing.md)
+                                        .padding(horizontal = 14.dp),
+                                    contentAlignment = Alignment.CenterStart
                                 ) {
                                     if (uiState.installUrl.isEmpty()) {
                                         Text(
@@ -169,10 +185,10 @@ fun EssentialAddonSetupScreen(
                         }
                     }
                 }
+            }
+            val phoneQrCard: @Composable (Modifier) -> Unit = { cardMod ->
                 Card(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(220.dp),
+                    modifier = cardMod.heightIn(min = 200.dp),
                     colors = CardDefaults.cardColors(containerColor = NuvioTheme.colors.BackgroundCard),
                     shape = RoundedCornerShape(NuvioTheme.radii.md)
                 ) {
@@ -209,6 +225,25 @@ fun EssentialAddonSetupScreen(
                             Text(text = stringResource(R.string.essential_addon_show_qr))
                         }
                     }
+                }
+            }
+
+            if (isCompact) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    urlInstallCard(Modifier.fillMaxWidth())
+                    phoneQrCard(Modifier.fillMaxWidth())
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    urlInstallCard(Modifier.weight(1f))
+                    phoneQrCard(Modifier.weight(1f))
                 }
             }
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.xl))
