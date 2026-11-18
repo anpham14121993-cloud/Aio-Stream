@@ -24,6 +24,8 @@ internal object AbiSelector {
         for (abi in supportedAbis) {
             assets.firstOrNull { it.name == "app-full-$abi-release.apk" }?.let { return it }
         }
-        return assets.firstOrNull { it.name == "app-full-universal-release.apk" }
+        return assets.firstOrNull {
+            it.name == "AioStream-universal-release.apk" || it.name == "app-full-universal-release.apk"
+        }
     }
 }

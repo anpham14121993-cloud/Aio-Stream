@@ -19,6 +19,7 @@ jobs:
   build-universal-apk:
     name: Test & Build Universal APK (ARMv7a + ARM64v8a)
     runs-on: ubuntu-latest
+    timeout-minutes: 40
 
     steps:
       - name: Checkout repository
@@ -81,9 +82,11 @@ jobs:
           fi
 
       - name: Run fullDebug unit tests
+        timeout-minutes: 20
         run: ./gradlew :app:testFullDebugUnitTest --stacktrace --no-daemon
 
       - name: Build Universal Release APK (armeabi-v7a + arm64-v8a)
+        timeout-minutes: 20
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           MDBLIST_API_KEY: ${{ secrets.MDBLIST_API_KEY }}

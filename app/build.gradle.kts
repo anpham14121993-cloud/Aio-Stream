@@ -370,7 +370,13 @@ android {
     }
 
     testOptions {
-        unitTests.isReturnDefaultValues = true
+        unitTests {
+            isReturnDefaultValues = true
+            all {
+                it.maxHeapSize = "2048m"
+                it.forkEvery = 80
+            }
+        }
     }
 }
 
