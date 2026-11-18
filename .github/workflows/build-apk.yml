@@ -30,16 +30,14 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK, NDK 29 & CMake
-        uses: android-actions/setup-android@v3
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Install Android NDK 29.0.14206865 & SDK 36
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+          SDK_MANAGER="$(command -v sdkmanager || find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager | sort -V | tail -n 1)"
+          yes | "${SDK_MANAGER}" --licenses >/dev/null || true
+          "${SDK_MANAGER}" "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
 
       - name: Prepare build properties and signing config
         env:
