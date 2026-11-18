@@ -26,22 +26,22 @@ class NativeApkTest(unittest.TestCase):
 
     def test_complete_native_feature_set(self):
         with tempfile.TemporaryDirectory() as root:
-            result = module.verify(self.archive(root), "arm64-v8a")
-            self.assertEqual(4, len(result["nativeLibraries"]))
+            result = module.verify(self.archive(root), ["arm64-v8a"])
+            self.assertEqual(len(module.REQUIRED), len(result["nativeLibraries"]))
 
     def test_missing_bridge_and_stub_are_rejected(self):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaisesRegex(ValueError, "Missing native"):
-                module.verify(self.archive(root, missing=True), "arm64-v8a")
+                module.verify(self.archive(root, missing=True), ["arm64-v8a"])
             with self.assertRaisesRegex(ValueError, "real libdovi"):
-                module.verify(self.archive(root, real=False), "arm64-v8a")
+                module.verify(self.archive(root, real=False), ["arm64-v8a"])
 
     def test_wrong_machine_and_wrong_abi_are_rejected(self):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaisesRegex(ValueError, "architecture"):
-                module.verify(self.archive(root, machine=40), "arm64-v8a")
+                module.verify(self.archive(root, machine=40), ["arm64-v8a"])
             with self.assertRaisesRegex(ValueError, "Missing native"):
-                module.verify(self.archive(root, abi="armeabi-v7a"), "arm64-v8a")
+                module.verify(self.archive(root, abi="armeabi-v7a"), ["arm64-v8a"])
 
 if __name__ == "__main__":
     unittest.main()

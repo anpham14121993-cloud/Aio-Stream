@@ -7,7 +7,18 @@ import zipfile
 from pathlib import Path
 
 MACHINES = {"arm64-v8a": (2, 183), "armeabi-v7a": (1, 40)}
-REQUIRED = {"libdovi_bridge.so", "libffmpegJNI.so", "libass.so", "libasskt.so", "libdav1dJNI.so", "libnuvio_engine.so"}
+# nuvio-libass-release.aar statically links libass into libasskt.so (no separate libass.so).
+REQUIRED = {
+    "libdovi_bridge.so",
+    "libffmpegJNI.so",
+    "libasskt.so",
+    "libdav1dJNI.so",
+    "libnuvio_engine.so",
+    "libnuviothumb.so",
+    "libmpv.so",
+    "libmediainfo.so",
+    "libquickjs.so",
+}
 
 
 def verify(apk: Path, abis: list[str], allow_only_expected: bool = True) -> dict:
