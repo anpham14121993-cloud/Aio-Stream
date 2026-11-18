@@ -1,0 +1,120 @@
+name: Build AioStream Universal APK
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aiostream-ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build-universal-apk:
+    name: Test & Build Universal APK (ARMv7a + ARM64v8a)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK, NDK 29 & CMake
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK 29.0.14206865 & SDK 36
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare build properties and signing config
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.AIOSTREAM_KEYSTORE_BASE64 }}
+          RELEASE_KEY_ALIAS: ${{ secrets.AIOSTREAM_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.AIOSTREAM_KEY_PASSWORD }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.AIOSTREAM_STORE_PASSWORD }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          MDBLIST_API_KEY: ${{ secrets.MDBLIST_API_KEY }}
+        run: |
+          touch local.properties local.dev.properties
+          chmod +x gradlew
+
+          if [[ -n "${RELEASE_KEYSTORE_BASE64}" ]]; then
+            keystore_path="${RUNNER_TEMP}/aiostream-release.jks"
+            printf '%s' "${RELEASE_KEYSTORE_BASE64}" | base64 --decode > "${keystore_path}"
+            {
+              echo "NUVIO_RELEASE_STORE_FILE=${keystore_path}"
+              echo "NUVIO_RELEASE_KEY_ALIAS=${RELEASE_KEY_ALIAS}"
+              echo "NUVIO_RELEASE_KEY_PASSWORD=${RELEASE_KEY_PASSWORD}"
+              echo "NUVIO_RELEASE_STORE_PASSWORD=${RELEASE_STORE_PASSWORD}"
+            } >> "${GITHUB_ENV}"
+          else
+            ci_keystore="${RUNNER_TEMP}/aiostream-ci.jks"
+            keytool -genkeypair \
+              -v \
+              -keystore "${ci_keystore}" \
+              -storepass aiostream \
+              -alias aiostream \
+              -keypass aiostream \
+              -dname "CN=AioStream,O=AioStream,C=VN" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000
+            {
+              echo "NUVIO_RELEASE_STORE_FILE=${ci_keystore}"
+              echo "NUVIO_RELEASE_KEY_ALIAS=aiostream"
+              echo "NUVIO_RELEASE_KEY_PASSWORD=aiostream"
+              echo "NUVIO_RELEASE_STORE_PASSWORD=aiostream"
+            } >> "${GITHUB_ENV}"
+          fi
+
+      - name: Run fullDebug unit tests
+        run: ./gradlew :app:testFullDebugUnitTest --stacktrace --no-daemon
+
+      - name: Build Universal Release APK (armeabi-v7a + arm64-v8a)
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          MDBLIST_API_KEY: ${{ secrets.MDBLIST_API_KEY }}
+        run: ./gradlew :app:assembleFullRelease --stacktrace --no-daemon
+
+      - name: Verify Universal APK native libraries & rename output
+        run: |
+          mkdir -p dist
+          apk_path="$(find app/build/outputs/apk/full/release -maxdepth 2 -name '*.apk' | head -n 1)"
+          if [[ -z "${apk_path}" || ! -f "${apk_path}" ]]; then
+            echo "Universal Release APK was not generated!" >&2
+            find app/build/outputs -maxdepth 4 >&2 || true
+            exit 1
+          fi
+          cp "${apk_path}" dist/AioStream-universal-release.apk
+          python3 scripts/verify_native_apk.py dist/AioStream-universal-release.apk --universal
+          ls -lh dist/AioStream-universal-release.apk
+
+      - name: Upload Universal APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AioStream-universal-release
+          path: dist/AioStream-universal-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release on version tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/AioStream-universal-release.apk
+          generate_release_notes: true

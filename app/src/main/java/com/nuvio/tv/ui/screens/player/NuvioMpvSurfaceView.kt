@@ -1,0 +1,1315 @@
+package com.nuvio.tv.ui.screens.player
+
+import android.content.Context
+import android.util.AttributeSet
+import android.util.Log
+import android.view.SurfaceHolder
+import com.nuvio.tv.core.player.ImportedSubtitleFontStore
+import com.nuvio.tv.data.local.MpvHardwareDecodeMode
+import com.nuvio.tv.data.local.MpvDirectDecodeMode
+import com.nuvio.tv.data.local.NightModeLevel
+import com.nuvio.tv.data.local.SubtitleStyleSettings
+import `is`.xyz.mpv.BaseMPVView
+import `is`.xyz.mpv.MPV
+import `is`.xyz.mpv.MPVNode
+import `is`.xyz.mpv.Utils
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.pow
+import kotlin.math.roundToLong
+
+internal const val MPV_TRACK_LIST_PROPERTY = "track-list"
+
+class NuvioMpvSurfaceView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null
+) : BaseMPVView(context, attrs) {
+
+    @Volatile
+    private var initialized = false
+    private val propertyCache = MpvPropertyCache(clockMs = android.os.SystemClock::elapsedRealtime)
+
+    /** True while the mpv worker is still tearing the last core down. */
+    @Volatile
+    private var closing = false
+
+    /** Changes with every start and release, so work queued for one core never runs on the next. */
+    @Volatile
+    var coreGeneration = 0
+        private set
+    private val propertyCacheObserver = object : MPV.EventObserver {
+        override fun eventProperty(property: String) = cacheProperty(property, null)
+        override fun eventProperty(property: String, value: Long) = cacheProperty(property, value)
+        override fun eventProperty(property: String, value: Boolean) = cacheProperty(property, value)
+        override fun eventProperty(property: String, value: String) = cacheProperty(property, value)
+        override fun eventProperty(property: String, value: Double) = cacheProperty(property, value)
+        override fun eventProperty(property: String, value: MPVNode) = Unit
+        override fun event(eventId: Int, data: MPVNode) = Unit
+    }
+    private var mpvLoadedImportedFontIds: Set<String> = emptySet()
+    private var lastMpvSubFont: MpvSubFontPick? = null
+    private var appliedSoundFilterChain = ""
+    private var appliedSwresampleOptions = ""
+    private var soundGainDb = 0
+    private var soundNightMode = NightModeLevel.OFF
+    private var dialogueBoostDb = 0
+    private var stereoDownmixLimited = false
+    private var allowedSpdifCodecs = ""
+    private var appliedSpdifCodecs: String? = null
+    private var bluetoothRoute = false
+    private var playbackSpeedNow = 1f
+    private var appliedDeinterlace: String? = null
+    private var deinterlaceUnsupported = false
+    private var hasQueuedInitialMedia = false
+    private var lastMediaRequestKey: String? = null
+    private var pendingInitialMediaUrl: String? = null
+    private var pendingInitialStartOption: String? = null
+    private var deferredLoadUntilSurface: Boolean = false
+    private var requestedMediaUrl: String? = null
+    private var pathAtMediaRequest: String? = null
+    private var hardwareDecodeMode: MpvHardwareDecodeMode = MpvHardwareDecodeMode.AUTO_SAFE
+    private var directDecodeMode: MpvDirectDecodeMode = MpvDirectDecodeMode.AUTOMATIC
+    private var directRefusedOnThisBox = false
+    private var directRequestedFrom: String? = null
+    /** Records a refusal of the direct decoder for a file; returns true once the box counts as refusing it. */
+    var onDirectDecodeRefused: ((String?) -> Boolean)? = null
+    var onDirectDecodeWorked: (() -> Unit)? = null
+    private var hi10pGnextSoftwareFallbackActive = false
+    private var appliedHi10pGnextSoftwareFallback: Boolean? = null
+    @Volatile
+    private var cachedTrackList: MpvTrackListCache? = null
+    private var currentAspectMode: AspectMode = AspectMode.ORIGINAL
+    private var pendingAspectRetryCount = 0
+    private val aspectReapplyRunnable = Runnable {
+        applyAspectModeInternal(currentAspectMode, allowRetry = true)
+    }
+
+    init {
+        mpv.addObserver(propertyCacheObserver)
+    }
+
+    private fun cacheProperty(name: String, value: Any?) {
+        if (name in MpvCachedProperty.all) propertyCache.put(name, value)
+    }
+
+    fun ensureInitialized() {
+        if (initialized) return
+        check(!MpvWorker.shared.isWorkerThread) { "No mpv start on the mpv worker" }
+        // The same core is started again, so the last release must have finished first. Callers wait for that
+        // off the main thread; this only covers a short gap and fails into the normal start-failure path.
+        check(MpvWorker.shared.awaitIdle(START_RELEASE_WAIT_MS)) { "Previous libmpv is still closing" }
+        propertyCache.clear()
+        coreGeneration += 1
+        Utils.copyAssets(context)
+        initialize(
+            configDir = context.filesDir.path,
+            cacheDir = context.cacheDir.path
+        )
+        initialized = true
+    }
+
+    fun setMedia(url: String, headers: Map<String, String>, startPositionMs: Long = 0L) {
+        ensureInitialized()
+        cancelDirectRequest(restoreHwdec = true)
+        val requestKey = buildMediaRequestKey(url = url, headers = headers) +
+            "#start=${startPositionMs.coerceAtLeast(0L)}"
+        if (hasQueuedInitialMedia && requestKey == lastMediaRequestKey) {
+            return
+        }
+        applyHeaders(headers)
+        markMediaRequested(url)
+        val startOption = startPositionMs
+            .takeIf { it > 0L }
+            ?.let {
+                buildList {
+                    add(String.format(Locale.US, "start=+%.3f", it / 1000.0))
+                    // Avoid decoding forward from a distant keyframe before showing resumed Hi10P video.
+                    if (hi10pGnextSoftwareFallbackActive) add("hr-seek=no")
+                }.joinToString(",")
+            }
+        if (startOption != null && holder.surface?.isValid == true) {
+            ensureSurfaceAttachedIfAlreadyAvailable()
+            loadFileWithOptions(url, startOption)
+            hasQueuedInitialMedia = true
+            pendingInitialMediaUrl = null
+            pendingInitialStartOption = null
+            deferredLoadUntilSurface = false
+        } else if (startOption != null) {
+            pendingInitialMediaUrl = url
+            pendingInitialStartOption = startOption
+            deferredLoadUntilSurface = true
+            hasQueuedInitialMedia = true
+        } else if (hasQueuedInitialMedia) {
+            pendingInitialMediaUrl = null
+            pendingInitialStartOption = null
+            if (holder.surface?.isValid == true) {
+                ensureSurfaceAttachedIfAlreadyAvailable()
+                mpv.command("loadfile", url, "replace")
+                deferredLoadUntilSurface = false
+            } else {
+                playFile(url)
+                deferredLoadUntilSurface = true
+            }
+        } else {
+            pendingInitialMediaUrl = null
+            pendingInitialStartOption = null
+            playFile(url)
+            ensureSurfaceAttachedIfAlreadyAvailable()
+            deferredLoadUntilSurface = holder.surface?.isValid != true
+            hasQueuedInitialMedia = true
+        }
+        lastMediaRequestKey = requestKey
+        applyDefaultTrackSelectionForNewLoad()
+        scheduleAspectModeRefresh(resetRetryCount = true)
+    }
+
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        if (closing) return
+        super.surfaceCreated(holder)
+        deferredLoadUntilSurface = false
+        val url = pendingInitialMediaUrl ?: return
+        val startOption = pendingInitialStartOption
+        pendingInitialMediaUrl = null
+        pendingInitialStartOption = null
+        if (startOption != null) {
+            loadFileWithOptions(url, startOption)
+        } else {
+            mpv.command("loadfile", url, "replace")
+        }
+    }
+
+    /**
+     * mpv's `loadfile` signature is `<url> [<flags> [<index> [<options>]]]`, so the per-file option
+     * list belongs in the fifth argument. Passing it where `<index>` is expected makes mpv reject
+     * the whole command and stay idle, i.e. resuming at a position would never load the file.
+     */
+    private fun loadFileWithOptions(url: String, options: String) {
+        mpv.command("loadfile", url, "replace", LOADFILE_DEFAULT_INDEX, options)
+    }
+
+    fun setMediaUsingLoadfile(url: String, headers: Map<String, String>) {
+        ensureInitialized()
+        cancelDirectRequest(restoreHwdec = true)
+        val requestKey = buildMediaRequestKey(url = url, headers = headers)
+        applyHeaders(headers)
+        markMediaRequested(url)
+        pendingInitialMediaUrl = null
+        pendingInitialStartOption = null
+        if (holder.surface?.isValid == true) {
+            ensureSurfaceAttachedIfAlreadyAvailable()
+            mpv.command("loadfile", url, "replace")
+            deferredLoadUntilSurface = false
+        } else {
+            playFile(url)
+            deferredLoadUntilSurface = true
+        }
+        hasQueuedInitialMedia = true
+        lastMediaRequestKey = requestKey
+        applyDefaultTrackSelectionForNewLoad()
+        scheduleAspectModeRefresh(resetRetryCount = true)
+    }
+
+    private fun ensureSurfaceAttachedIfAlreadyAvailable() {
+        if (!initialized) return
+        val currentHolder = holder
+        val currentSurface = currentHolder.surface ?: return
+        if (!currentSurface.isValid) return
+        runCatching {
+            // Some fallback transitions initialize mpv after the Surface is already alive.
+            // In that path, SurfaceHolder callback may not fire again, so force attach.
+            surfaceCreated(currentHolder)
+        }.onFailure {
+            Log.w(TAG, "Failed to force MPV surface attach: ${it.message}")
+        }
+    }
+
+    private fun applyDefaultTrackSelectionForNewLoad() {
+        runCatching {
+            // Let mpv choose the default streams for every new media load.
+            mpv.setPropertyString("aid", "auto")
+            mpv.setPropertyString("sid", "auto")
+            mpv.setPropertyBoolean("sub-visibility", true)
+        }.onFailure {
+            Log.w(TAG, "Failed to reset default A/V track selection: ${it.message}")
+        }
+    }
+
+    fun setPaused(paused: Boolean) {
+        if (!initialized) return
+        mpv.setPropertyBoolean("pause", paused)
+        propertyCache.put(MpvCachedProperty.PAUSE, paused)
+    }
+
+    // State reads below come from what mpv last reported, so the main thread never waits on mpv's core.
+
+    fun isPlayingNow(): Boolean {
+        if (!initialized) return false
+        return propertyCache.boolean(MpvCachedProperty.PAUSE) == false
+    }
+
+    fun isPausedNow(): Boolean {
+        if (!initialized) return false
+        return propertyCache.boolean(MpvCachedProperty.PAUSE) == true
+    }
+
+    fun isPausedForCacheNow(): Boolean {
+        if (!initialized) return false
+        return propertyCache.boolean(MpvCachedProperty.PAUSED_FOR_CACHE) == true
+    }
+
+    fun isSeekingNow(): Boolean {
+        if (!initialized) return false
+        return propertyCache.boolean(MpvCachedProperty.SEEKING) == true
+    }
+
+    fun demuxerCacheDurationSec(): Double {
+        if (!initialized) return 0.0
+        return propertyCache.double(MpvCachedProperty.DEMUXER_CACHE_DURATION) ?: 0.0
+    }
+
+    /** MPV's own drop counts for the open file; null before it has any. */
+    internal fun frameDrops(): MpvFrameDrops? {
+        if (!initialized) return null
+        val output = propertyCache.long(MpvCachedProperty.FRAME_DROP_COUNT)?.toInt()
+        val decoder = propertyCache.long(MpvCachedProperty.DECODER_FRAME_DROP_COUNT)?.toInt()
+        if (output == null && decoder == null) return null
+        return MpvFrameDrops(outputDropped = output, decoderDropped = decoder)
+    }
+
+    fun isCoreIdleNow(): Boolean {
+        if (!initialized) return false
+        return propertyCache.boolean(MpvCachedProperty.CORE_IDLE) == true
+    }
+
+    fun markMediaRequested(url: String) {
+        val path = if (initialized) propertyCache.string(MpvCachedProperty.PATH) else null
+        pathAtMediaRequest = mpvPathBaselineForRequest(url, requestedMediaUrl, pathAtMediaRequest, path)
+        requestedMediaUrl = url
+    }
+
+    val hasPendingInitialMedia: Boolean
+        get() = pendingInitialMediaUrl != null || deferredLoadUntilSurface
+
+    val isMpvLoaded: Boolean
+        get() = initialized
+
+    fun isIdleActiveNow(): Boolean {
+        if (!initialized) return false
+        return propertyCache.boolean(MpvCachedProperty.IDLE_ACTIVE) == true
+    }
+
+    /** False while mpv still reports the path recorded at the last media request. */
+    fun isPositionFromRequestedMedia(): Boolean {
+        if (!initialized) return false
+        return isMpvPositionFromMediaRequest(
+            requestedUrl = requestedMediaUrl,
+            pathAtRequest = pathAtMediaRequest,
+            currentPath = propertyCache.string(MpvCachedProperty.PATH)
+        )
+    }
+
+    fun isEofReached(): Boolean {
+        if (!initialized) return false
+        return propertyCache.boolean(MpvCachedProperty.EOF_REACHED) == true
+    }
+
+    fun seekToMs(positionMs: Long) {
+        if (!initialized) return
+        val seconds = (positionMs.coerceAtLeast(0L) / 1000.0)
+        propertyCache.onSeekRequested(seconds)
+        mpv.setPropertyDouble("time-pos", seconds)
+    }
+
+    /** Exact even when the file was loaded with `hr-seek=no`, where [seekToMs] lands on a keyframe. */
+    fun seekToMsExact(positionMs: Long) {
+        if (!initialized) return
+        val seconds = String.format(Locale.US, "%.3f", positionMs.coerceAtLeast(0L) / 1000.0)
+        propertyCache.onSeekRequested(positionMs.coerceAtLeast(0L) / 1000.0)
+        runCatching { mpv.command("seek", seconds, "absolute+exact") }
+            .onFailure { Log.w(TAG, "Exact seek failed: ${it.message}") }
+    }
+
+    fun currentSubtitleText(): String? {
+        if (!initialized) return null
+        return propertyCache.string(MpvCachedProperty.SUB_TEXT)
+    }
+
+    fun currentPositionMs(): Long {
+        if (!initialized) return 0L
+        return propertyCache.positionMs()
+    }
+
+    /** True once mpv reported a position of its own after the last seek and is not seeking any more. */
+    fun isPositionReportedByMpv(): Boolean = initialized &&
+        propertyCache.positionReportedSinceSeek &&
+        propertyCache.boolean(MpvCachedProperty.SEEKING) != true
+
+    fun durationMs(): Long {
+        if (!initialized) return 0L
+        return propertyCache.durationMs()
+    }
+
+    /** Live HLS/DASH in mpv is typically reported as not seekable. VOD HLS is seekable. */
+    fun isLiveStreamNow(): Boolean {
+        if (!initialized) return false
+        return propertyCache.boolean(MpvCachedProperty.SEEKABLE) == false
+    }
+
+    fun hasVideoTrackSelectedNow(): Boolean {
+        if (!initialized) return false
+        val vid = propertyCache.string(MpvCachedProperty.VID)?.trim()
+        return !vid.isNullOrBlank() && !vid.equals("no", ignoreCase = true)
+    }
+
+    fun setPlaybackSpeed(speed: Float) {
+        if (!initialized) return
+        mpv.setPropertyDouble("speed", speed.toDouble())
+        playbackSpeedNow = speed
+        applySpdifCodecs()
+    }
+
+    fun applyAudioAmplificationDb(db: Int, nightMode: NightModeLevel = NightModeLevel.OFF) {
+        if (!initialized) return
+        soundGainDb = db.coerceIn(AUDIO_AMPLIFICATION_MIN_DB, AUDIO_AMPLIFICATION_MAX_DB)
+        soundNightMode = nightMode
+        applySpdifCodecs()
+        applySoundFilterChain()
+    }
+
+    val bitstreamSoundActive: Boolean get() = !appliedSpdifCodecs.isNullOrEmpty()
+
+    /** Codecs this output may take as a bitstream; cleared again while sound adjustments need decoded sound. */
+    fun setAllowedSpdifCodecs(codecs: String) {
+        allowedSpdifCodecs = codecs
+        if (!initialized) return
+        applySpdifCodecs()
+    }
+
+    private fun applySpdifCodecs() {
+        val codecs = mpvSpdifCodecsNow(
+            allowed = allowedSpdifCodecs,
+            isBluetooth = bluetoothRoute,
+            gainDb = soundGainDb,
+            nightMode = soundNightMode,
+            dialogueBoostDb = dialogueBoostDb,
+            playbackSpeed = playbackSpeedNow
+        )
+        if (codecs == appliedSpdifCodecs) return
+        runCatching {
+            mpv.setPropertyString("audio-spdif", codecs)
+            appliedSpdifCodecs = codecs
+            Log.i(TAG, "audio-spdif=[${codecs}]")
+        }.onFailure {
+            Log.w(TAG, "Failed to set mpv passthrough codecs ($codecs): ${it.message}")
+        }
+    }
+
+    fun onHwdecCurrentChanged(hwdecCurrent: String?) {
+        if (!initialized) return
+        checkDirectDecodeOutcome(hwdecCurrent)
+        if (deinterlaceUnsupported) return
+        val mode = mpvDeinterlaceFor(hwdecCurrent) ?: return
+        if (mode == appliedDeinterlace) return
+        runCatching {
+            mpv.setPropertyString("deinterlace", mode)
+            appliedDeinterlace = mode
+            Log.i(TAG, "deinterlace=$mode (hwdec=$hwdecCurrent)")
+        }.onFailure {
+            deinterlaceUnsupported = true
+            Log.w(TAG, "mpv rejected deinterlace=$mode: ${it.message}")
+        }
+    }
+
+    private fun applySoundFilterChain() {
+        val chain = mpvSoundFilterChain(soundGainDb, soundNightMode, dialogueBoostDb.takeIf { stereoDownmixLimited })
+        if (chain == appliedSoundFilterChain) return
+        runCatching {
+            mpv.setPropertyDouble("volume", 100.0)
+            mpv.setPropertyString("af", chain)
+            appliedSoundFilterChain = chain
+        }.onFailure {
+            Log.w(TAG, "Failed to apply sound adjustments on mpv (db=$soundGainDb, night=$soundNightMode): ${it.message}")
+        }
+    }
+
+    /** Dialogue boost on mpv: a louder centre in mpv's own downmix to stereo. */
+    fun applyDialogueBoostDb(db: Int) {
+        if (!initialized) return
+        dialogueBoostDb = db
+        applySpdifCodecs()
+        if (stereoDownmixLimited) applySoundFilterChain()
+        val options = mpvSwresampleOptions(db)
+        if (options == appliedSwresampleOptions) return
+        runCatching {
+            mpv.setPropertyString("audio-swresample-o", options)
+            appliedSwresampleOptions = options
+        }.onFailure {
+            Log.w(TAG, "Failed to apply dialogue boost on mpv (db=$db): ${it.message}")
+        }
+    }
+
+    /**
+     * Surround played out as stereo: the downmix moves into the filter chain so a limiter follows it (mpv's own
+     * downmix comes after every filter). Kept until the output changes, as the chain itself then outputs stereo.
+     */
+    fun limitStereoDownmix(on: Boolean) {
+        if (!initialized || stereoDownmixLimited == on) return
+        stereoDownmixLimited = on
+        Log.i(TAG, "stereo downmix limiter ${if (on) "on" else "off"}")
+        applySoundFilterChain()
+    }
+
+    fun audioOutputChannelCount(): Int {
+        if (!initialized) return 0
+        return propertyCache.long(MpvCachedProperty.AUDIO_OUT_CHANNEL_COUNT)?.toInt() ?: 0
+    }
+
+    fun applyAudioLanguagePreferences(languages: List<String>) {
+        if (!initialized) return
+        val normalized = languages
+            .mapNotNull { language ->
+                language.trim().takeIf { it.isNotBlank() }
+            }
+            .distinct()
+        runCatching {
+            // Empty value resets language preference back to default behavior.
+            mpv.setPropertyString("alang", normalized.joinToString(","))
+            // Re-run automatic audio selection with the latest preferences.
+            mpv.setPropertyString("aid", "auto")
+        }.onFailure {
+            Log.w(TAG, "Failed to set audio language preference: ${it.message}")
+        }
+    }
+
+    fun applyHardwareDecodeMode(mode: MpvHardwareDecodeMode) {
+        hardwareDecodeMode = mode
+        directRequestedFrom = null
+        if (!initialized || hi10pGnextSoftwareFallbackActive) return
+        runCatching {
+            mpv.setPropertyString("hwdec", mode.toMpvHwdecValue())
+        }.onFailure {
+            Log.w(TAG, "Failed to apply mpv hardware decode mode ($mode): ${it.message}")
+        }
+    }
+
+    fun applyDirectDecodeMode(mode: MpvDirectDecodeMode, directRefusedOnThisBox: Boolean) {
+        directDecodeMode = mode
+        this.directRefusedOnThisBox = directRefusedOnThisBox
+    }
+
+    /** A new file starts on the usual decoder; [onFileLoaded] decides again once mpv has opened it. */
+    fun onStartFile() = cancelDirectRequest(restoreHwdec = true)
+
+    private fun cancelDirectRequest(restoreHwdec: Boolean) {
+        directRequestedFrom = null
+        if (!restoreHwdec || !initialized || hi10pGnextSoftwareFallbackActive) return
+        runCatching {
+            val usual = hardwareDecodeMode.toMpvHwdecValue()
+            if (mpv.getPropertyString("hwdec") != usual) mpv.setPropertyString("hwdec", usual)
+        }
+    }
+
+    /** Called once mpv has opened a file: a video may get the direct decoder, decided by the Direct decoding setting. */
+    fun onFileLoaded() {
+        directRequestedFrom = null
+        if (!initialized || hi10pGnextSoftwareFallbackActive) return
+        runCatching {
+            val width = mpv.getPropertyInt("current-tracks/video/demux-w")
+            val height = mpv.getPropertyInt("current-tracks/video/demux-h")
+            val directDecoder = if (hasVideoTrack(width, height)) {
+                mpvHwdecForDirectMode(
+                    mode = directDecodeMode,
+                    directRefusedOnThisBox = directRefusedOnThisBox,
+                    softwareDecodeForced = hardwareDecodeMode == MpvHardwareDecodeMode.DISABLED
+                )
+            } else {
+                null
+            }
+            val wanted = directDecoder ?: hardwareDecodeMode.toMpvHwdecValue()
+            val current = mpv.getPropertyString("hwdec")
+            if (wanted == current) return@runCatching
+            val before = mpv.getPropertyString(MPV_HWDEC_CURRENT_PROPERTY)
+            mpv.setPropertyString("hwdec", wanted)
+            directRequestedFrom = if (directDecoder != null) before.orEmpty() else null
+            Log.i(TAG, "Direct decoding: ${width}x$height hwdec=$wanted (was $current, now $before, mode=$directDecodeMode)")
+        }.onFailure {
+            Log.w(TAG, "Failed to choose the direct decoder: ${it.message}")
+        }
+    }
+
+    private fun checkDirectDecodeOutcome(hwdecCurrent: String?) {
+        val before = directRequestedFrom ?: return
+        when (directDecodeOutcome(hwdecCurrent, before)) {
+            DirectDecodeOutcome.WAITING -> Unit
+            DirectDecodeOutcome.WORKED -> {
+                directRequestedFrom = null
+                Log.i(TAG, "Direct decoding: direct decoder in use")
+                onDirectDecodeWorked?.invoke()
+            }
+            DirectDecodeOutcome.REFUSED -> {
+                directRequestedFrom = null
+                Log.w(TAG, "Direct decoding: direct decoder refused (got $hwdecCurrent, before $before), mode=$directDecodeMode")
+                if (directDecodeMode == MpvDirectDecodeMode.AUTOMATIC) {
+                    runCatching { mpv.setPropertyString("hwdec", hardwareDecodeMode.toMpvHwdecValue()) }
+                    if (isCountableDirectRefusal(before) && onDirectDecodeRefused?.invoke(requestedMediaUrl) == true) {
+                        directRefusedOnThisBox = true
+                    }
+                }
+            }
+        }
+    }
+
+    fun applyHi10pGnextSoftwareFallback(active: Boolean) {
+        hi10pGnextSoftwareFallbackActive = active
+        directRequestedFrom = null
+        if (!initialized || appliedHi10pGnextSoftwareFallback == active) return
+        runCatching {
+            val videoOutput = if (active) MPV_VIDEO_OUTPUT_GPU_NEXT else MPV_VIDEO_OUTPUT_GPU
+            val hardwareDecoder = if (active) MPV_HWDEC_DISABLED else hardwareDecodeMode.toMpvHwdecValue()
+            setVo(videoOutput)
+            mpv.setPropertyString("vo", videoOutput)
+            mpv.setPropertyString("hwdec", hardwareDecoder)
+            appliedHi10pGnextSoftwareFallback = active
+        }.onFailure {
+            Log.w(TAG, "Failed to apply mpv Hi10P G-NEXT SW fallback (active=$active): ${it.message}")
+        }
+    }
+
+    fun setSubtitleDelayMs(delayMs: Int) {
+        if (!initialized) return
+        runCatching {
+            mpv.setPropertyDouble("sub-delay", delayMs / 1000.0)
+        }.onFailure {
+            Log.w(TAG, "Failed to set subtitle delay on mpv: ${it.message}")
+        }
+    }
+
+    fun setAudioDelayMs(delayMs: Int) {
+        if (!initialized) return
+        runCatching {
+            mpv.setPropertyDouble("audio-delay", audioDelayMsToSeconds(delayMs))
+        }.onFailure {
+            Log.w(TAG, "Failed to set audio delay on mpv (delayMs=$delayMs): ${it.message}")
+        }
+    }
+
+    /**
+     * Bluetooth A2DP/LE cannot carry encoded passthrough. Force a stereo PCM mix.
+     * Mid-session route changes pass [reloadOutput] so AudioTrack follows the new device
+     * without restarting video.
+     */
+    fun applyBluetoothAudioRoute(isBluetooth: Boolean, reloadOutput: Boolean = false) {
+        if (!initialized) return
+        if (reloadOutput) limitStereoDownmix(false)
+        val wasPaused = !isPlayingNow()
+        bluetoothRoute = isBluetooth
+        runCatching {
+            mpv.setPropertyString("audio-channels", MpvBluetoothAudioPolicy.audioChannels(isBluetooth))
+            applySpdifCodecs()
+            if (reloadOutput) {
+                reloadAudioOutput()
+                if (wasPaused) {
+                    mpv.setPropertyBoolean("pause", true)
+                }
+            }
+        }.onFailure {
+            Log.w(TAG, "Failed to apply bluetooth audio route on mpv (bt=$isBluetooth): ${it.message}")
+        }
+    }
+
+    private fun reloadAudioOutput() {
+        val reloaded = runCatching {
+            mpv.command("ao-reload")
+            true
+        }.getOrDefault(false)
+        if (reloaded) return
+        val aid = mpv.getPropertyString("aid")
+        if (!aid.isNullOrBlank() && !aid.equals("no", ignoreCase = true)) {
+            runCatching { mpv.setPropertyString("aid", aid) }
+        }
+    }
+
+    fun applyAspectMode(mode: AspectMode) {
+        currentAspectMode = mode
+        pendingAspectRetryCount = 0
+        removeCallbacks(aspectReapplyRunnable)
+        applyAspectModeInternal(mode, allowRetry = true)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w == oldw && h == oldh) return
+        pendingAspectRetryCount = 0
+        removeCallbacks(aspectReapplyRunnable)
+        post {
+            applyAspectModeInternal(currentAspectMode, allowRetry = true)
+        }
+    }
+
+    private fun applyAspectModeInternal(mode: AspectMode, allowRetry: Boolean) {
+        val viewAspect = readViewAspectRatio(width, height)
+        val videoAspect = readVideoAspectRatio()
+        val scale = resolveAspectScale(
+            mode = mode,
+            viewAspect = viewAspect,
+            videoAspect = videoAspect
+        )
+        scaleX = scale.scaleX
+        scaleY = scale.scaleY
+        if (
+            allowRetry &&
+            aspectModeNeedsVideoAspect(mode) &&
+            (viewAspect <= 0f || videoAspect == null || videoAspect <= 0f)
+        ) {
+            scheduleAspectModeRefresh(resetRetryCount = false)
+        }
+    }
+
+    private fun scheduleAspectModeRefresh(resetRetryCount: Boolean) {
+        if (resetRetryCount) {
+            pendingAspectRetryCount = 0
+        }
+        removeCallbacks(aspectReapplyRunnable)
+        if (pendingAspectRetryCount >= MAX_ASPECT_RETRY_COUNT) {
+            return
+        }
+        val delayMs = if (pendingAspectRetryCount == 0) 0L else ASPECT_RETRY_DELAY_MS
+        pendingAspectRetryCount += 1
+        postDelayed(aspectReapplyRunnable, delayMs)
+    }
+
+    fun isHdrVideo(): Boolean = initialized &&
+        propertyCache.string(MpvCachedProperty.VIDEO_GAMMA) in setOf("pq", "hlg", "st2084")
+    var subtitleLiftFraction: Double = 0.0
+
+    fun applySubtitleStyle(style: SubtitleStyleSettings) {
+        if (!initialized) return
+        runCatching {
+            val scale = subtitleScale(style) * plainFontScale(style)
+            val clampedOffset = style.verticalOffset.coerceIn(
+                SUBTITLE_VERTICAL_OFFSET_MIN,
+                SUBTITLE_VERTICAL_OFFSET_MAX
+            )
+            val normalizedOffset = (clampedOffset - SUBTITLE_VERTICAL_OFFSET_MIN).toDouble() /
+                (SUBTITLE_VERTICAL_OFFSET_MAX - SUBTITLE_VERTICAL_OFFSET_MIN).toDouble()
+            val subPos = MPV_SUB_POS_AT_BOTTOM -
+                (normalizedOffset * (MPV_SUB_POS_AT_BOTTOM - MPV_SUB_POS_AT_TOP))
+            val subMarginY = (MPV_SUB_MARGIN_Y_MIN +
+                (normalizedOffset * (MPV_SUB_MARGIN_Y_MAX - MPV_SUB_MARGIN_Y_MIN))).toInt()
+            val edges = mpvSubtitleEdges(style, isAssOrSsaSubtitleSelectedNow())
+            val imported = importedMpvSubtitleFont(context, style)
+            val fontPick = mpvSubtitleFontPick(
+                importedId = imported?.id,
+                importedFamily = imported?.family,
+                loadedImportedIds = mpvLoadedImportedFontIds,
+                bundled = MpvSubFontPick(style.font.mpvFontName(style.bold), style.font.mpvBold(style.bold)),
+                importedBold = style.bold,
+                previous = lastMpvSubFont
+            )
+            lastMpvSubFont = fontPick
+            mpv.setPropertyString("sub-font", fontPick.font)
+
+            mpv.setPropertyDouble("sub-scale", scale)
+            mpv.setPropertyBoolean("sub-bold", fontPick.bold)
+            mpv.setPropertyDouble("sub-outline-size", edges.outlineSize)
+            // Subtitles sit above the controls while they are shown; the user's offset still wins below that line.
+            val liftedSubPos = if (subtitleLiftFraction > 0.0) {
+                minOf(subPos, 100.0 * (1.0 - subtitleLiftFraction))
+            } else {
+                subPos
+            }
+            mpv.setPropertyDouble("sub-pos", liftedSubPos)
+            mpv.setPropertyInt("sub-margin-y", subMarginY)
+            mpv.setPropertyDouble("sub-shadow-offset", edges.shadowOffset)
+            mpv.setPropertyString("sub-border-style", edges.borderStyle)
+            mpv.setPropertyString("sub-color", toMpvColor(style.textColor))
+            mpv.setPropertyString("sub-back-color", toMpvColor(edges.backColor))
+            mpv.setPropertyString("sub-outline-color", toMpvColor(style.outlineColor))
+            mpv.setPropertyBoolean("sub-filter-sdh", style.stripSdh)
+            mpv.setPropertyBoolean("sub-filter-sdh-harder", style.stripSdh)
+        }.onFailure {
+            Log.w(TAG, "Failed to apply subtitle style on mpv: ${it.message}")
+        }
+    }
+
+    fun readPlayerMediaInfo(): PlayerMediaInfo? {
+        if (!initialized) return null
+        return mpvMediaInfo { name ->
+            runCatching { mpv.getPropertyString(name) }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+        }
+    }
+
+    /** True for PQ/HLG video, false for any other transfer, null until mpv knows the video params. */
+    fun readVideoIsHdr(): Boolean? {
+        if (!initialized) return null
+        val gamma = propertyCache.string(MpvCachedProperty.VIDEO_GAMMA)
+            ?.trim()
+            ?.lowercase(Locale.ROOT)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return gamma == "pq" || gamma == "hlg"
+    }
+
+    internal fun subtitleTextMetrics(style: SubtitleStyleSettings): SubtitleTextMetrics? {
+        if (!initialized || width <= 0 || height <= 0 || isAssOrSsaSubtitleSelectedNow()) return null
+        val fontSize = mpv.getPropertyDouble("sub-font-size") ?: return null
+        val unitPx = height / MPV_SUBTITLE_REFERENCE_HEIGHT
+        val textSizePx = (fontSize / mpvLineHeightEm(style) * subtitleScale(style) * plainFontScale(style)).toFloat() * unitPx
+        val marginXPx = (mpv.getPropertyInt("sub-margin-x") ?: MPV_SUBTITLE_DEFAULT_MARGIN_X) * unitPx
+        val location = IntArray(2)
+        getLocationInWindow(location)
+        return SubtitleTextMetrics(
+            textSizePx = textSizePx,
+            bold = style.bold,
+            scaleX = 1f,
+            innerPaddingPx = textSizePx * MPV_SUBTITLE_INNER_PADDING_RATIO,
+            wrapWidthPx = (width - marginXPx * 2f).coerceAtLeast(0f),
+            centerXPx = location[0] + width / 2f
+        )
+    }
+
+    private fun subtitleScale(style: SubtitleStyleSettings): Double = (style.size / 100.0).coerceIn(0.5, 3.0)
+
+    private fun mpvLineHeightEm(style: SubtitleStyleSettings): Double =
+        importedMpvSubtitleFont(context, style)?.lineHeightEm ?: style.font.mpvLineHeightEm()
+
+    private fun plainFontScale(style: SubtitleStyleSettings): Double {
+        if (isAssOrSsaSubtitleSelectedNow()) return 1.0
+        val metrics = resources.displayMetrics
+        return mpvPlainSubtitleScale(
+            lineHeightEm = mpvLineHeightEm(style),
+            fontSize = mpv.getPropertyDouble("sub-font-size") ?: return 1.0,
+            exoTextSizePx = android.util.TypedValue.applyDimension(
+                android.util.TypedValue.COMPLEX_UNIT_SP, EXO_SUBTITLE_BASE_SP, metrics
+            ).toDouble(),
+            screenHeightPx = metrics.heightPixels.toDouble(),
+            referenceHeight = MPV_SUBTITLE_REFERENCE_HEIGHT.toDouble()
+        )
+    }
+
+    private fun isAssOrSsaSubtitleSelectedNow(): Boolean {
+        if (!initialized) return false
+        val trackCount = mpv.getPropertyInt("track-list/count") ?: return false
+        if (trackCount <= 0) return false
+
+        val selectedSubtitleId = mpv.getPropertyString("sid")?.toIntOrNull()
+            ?: mpv.getPropertyInt("current-tracks/sub/id")
+
+        for (i in 0 until trackCount) {
+            val type = mpv.getPropertyString("track-list/$i/type")?.lowercase(Locale.US) ?: continue
+            if (type != "sub") continue
+
+            val isSelectedByFlag = mpv.getPropertyBoolean("track-list/$i/selected") == true
+            val trackId = mpv.getPropertyInt("track-list/$i/id")
+            val isSelected = isSelectedByFlag || (selectedSubtitleId != null && trackId == selectedSubtitleId)
+            if (!isSelected) continue
+
+            val codec = mpv.getPropertyString("track-list/$i/codec")
+                ?.trim()
+                ?.lowercase(Locale.US)
+                ?: return false
+            return codec.contains("ass") || codec.contains("ssa")
+        }
+        return false
+    }
+
+    fun selectAudioTrackById(trackId: Int): Boolean {
+        if (!initialized) return false
+        return runCatching {
+            mpv.setPropertyInt("aid", trackId)
+            true
+        }.getOrElse {
+            Log.w(TAG, "Failed to select audio track id=$trackId: ${it.message}")
+            false
+        }
+    }
+
+    fun selectSubtitleTrackById(trackId: Int): Boolean {
+        if (!initialized) return false
+        return runCatching {
+            mpv.setPropertyBoolean("sub-visibility", true)
+            mpv.setPropertyInt("sid", trackId)
+            true
+        }.getOrElse {
+            Log.w(TAG, "Failed to select subtitle track id=$trackId: ${it.message}")
+            false
+        }
+    }
+
+    fun disableSubtitles(): Boolean {
+        if (!initialized) return false
+        return runCatching {
+            mpv.setPropertyString("sid", "no")
+            mpv.setPropertyBoolean("sub-visibility", false)
+            true
+        }.getOrElse {
+            Log.w(TAG, "Failed to disable subtitles: ${it.message}")
+            false
+        }
+    }
+
+    fun addAndSelectExternalSubtitle(
+        url: String,
+        title: String? = null,
+        language: String? = null
+    ): Boolean {
+        if (!initialized) return false
+        if (url.isBlank()) return false
+        return runCatching {
+            // "cached" avoids duplicate re-loads for the same external subtitle.
+            val safeTitle = title?.takeIf { it.isNotBlank() }
+            val safeLanguage = language?.takeIf { it.isNotBlank() }
+            when {
+                safeTitle != null && safeLanguage != null ->
+                    mpv.command("sub-add", url, "cached", safeTitle, safeLanguage)
+                safeTitle != null ->
+                    mpv.command("sub-add", url, "cached", safeTitle)
+                else ->
+                    mpv.command("sub-add", url, "cached")
+            }
+            mpv.setPropertyBoolean("sub-visibility", true)
+            true
+        }.getOrElse {
+            Log.w(TAG, "Failed to add external subtitle: ${it.message}")
+            false
+        }
+    }
+
+    fun applySubtitleLanguagePreferences(preferred: String, secondary: String?, tertiary: String? = null) {
+        if (!initialized) return
+        val languages = listOfNotNull(
+            preferred.takeIf { it.isNotBlank() && !it.equals("none", ignoreCase = true) },
+            secondary?.takeIf { it.isNotBlank() && !it.equals("none", ignoreCase = true) },
+            tertiary?.takeIf { it.isNotBlank() && !it.equals("none", ignoreCase = true) }
+        )
+        if (languages.isEmpty()) {
+            disableSubtitles()
+            return
+        }
+        runCatching {
+            mpv.setPropertyString("slang", languages.joinToString(","))
+        }.onFailure {
+            Log.w(TAG, "Failed to set subtitle language preference: ${it.message}")
+        }
+    }
+
+    /**
+     * Polled with playback progress, so only the selection is read each time: what each track is
+     * comes from [readTrackList], read again only when the file or its track count changes (a file
+     * can carry close to a hundred tracks, a dozen properties each), or for a few ticks while an
+     * audio track still lacks its channel count.
+     */
+    fun readTrackSnapshot(generation: Int = coreGeneration): MpvTrackSnapshot {
+        if (!initialized || generation != coreGeneration) return MpvTrackSnapshot(emptyList(), emptyList())
+        val trackCount = runCatching { mpv.getPropertyInt("track-list/count") ?: 0 }
+            .getOrDefault(0)
+        if (trackCount <= 0) {
+            return MpvTrackSnapshot(emptyList(), emptyList())
+        }
+
+        val path = mpv.getPropertyString("path")
+        val cached = cachedTrackList?.takeIf { it.path == path && it.count == trackCount }
+        val tracks = if (cached != null && !cached.awaitsChannelCount()) {
+            cached.tracks
+        } else {
+            readTrackList(trackCount).also {
+                cachedTrackList = MpvTrackListCache(
+                    path = path,
+                    count = trackCount,
+                    tracks = it,
+                    channelCountRetriesLeft = cached?.let { previous -> previous.channelCountRetriesLeft - 1 }
+                        ?: TRACK_CHANNEL_COUNT_RETRIES
+                )
+            }
+        }
+
+        val selectedAudioTrackId = mpv.getPropertyString("aid")?.toIntOrNull()
+            ?: mpv.getPropertyInt("current-tracks/audio/id")
+        val selectedSubtitleTrackId = mpv.getPropertyString("sid")?.toIntOrNull()
+            ?: mpv.getPropertyInt("current-tracks/sub/id")
+
+        return MpvTrackSnapshot(
+            audioTracks = tracks.filter { it.type == "audio" }
+                .map { it.copy(isSelected = it.id == selectedAudioTrackId) },
+            subtitleTracks = tracks.filter { it.type == "sub" }
+                .map { it.copy(isSelected = it.id == selectedSubtitleTrackId) }
+        )
+    }
+
+    /** The audio and subtitle tracks of the loaded file, without their selection. */
+    private fun readTrackList(trackCount: Int): List<MpvTrack> {
+        val tracks = mutableListOf<MpvTrack>()
+        for (i in 0 until trackCount) {
+            val type = mpv.getPropertyString("track-list/$i/type")?.lowercase() ?: continue
+            if (type != "audio" && type != "sub") continue
+            val id = mpv.getPropertyInt("track-list/$i/id") ?: continue
+            val language = mpv.getPropertyString("track-list/$i/lang")
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+            val title = mpv.getPropertyString("track-list/$i/title")
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+            val codec = mpv.getPropertyString("track-list/$i/codec")
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+            val external = mpv.getPropertyBoolean("track-list/$i/external") == true
+
+            tracks += if (type == "audio") {
+                val role = when {
+                    mpv.getPropertyBoolean("track-list/$i/visual-impaired") == true -> TrackRole.AUDIO_DESCRIPTION
+                    mpv.getPropertyBoolean("track-list/$i/hearing-impaired") == true -> TrackRole.HEARING_IMPAIRED
+                    else -> null
+                }
+                MpvTrack(
+                    id = id,
+                    type = type,
+                    name = title ?: language ?: context.getString(com.nuvio.tv.R.string.player_track_audio_fallback, id),
+                    language = language,
+                    codec = codec,
+                    channelCount = mpv.getPropertyInt("track-list/$i/demux-channel-count")
+                        ?: mpv.getPropertyInt("track-list/$i/audio-channels")
+                        ?: mpv.getPropertyInt("track-list/$i/channels"),
+                    isSelected = false,
+                    isForced = false,
+                    isExternal = external,
+                    title = title,
+                    sampleRate = mpv.getPropertyInt("track-list/$i/demux-samplerate")?.takeIf { it > 0 },
+                    role = role
+                )
+            } else {
+                val forced = (mpv.getPropertyBoolean("track-list/$i/forced") == true) ||
+                    listOfNotNull(title, language).any { it.contains("forced", ignoreCase = true) }
+                MpvTrack(
+                    id = id,
+                    type = type,
+                    name = title ?: language ?: context.getString(com.nuvio.tv.R.string.player_track_subtitle_fallback, id),
+                    language = language,
+                    codec = codec,
+                    channelCount = null,
+                    isSelected = false,
+                    isForced = forced,
+                    isExternal = external
+                )
+            }
+        }
+        return tracks
+    }
+
+    fun readChapters(generation: Int = coreGeneration): List<PlayerChapter> {
+        if (!initialized || generation != coreGeneration) return emptyList()
+        val count = runCatching { mpv.getPropertyInt("chapter-list/count") ?: 0 }.getOrDefault(0)
+        if (count <= 0) return emptyList()
+        return (0 until count).mapNotNull { i ->
+            val seconds = mpv.getPropertyDouble("chapter-list/$i/time") ?: return@mapNotNull null
+            PlayerChapter(
+                number = i + 1,
+                startMs = (seconds * 1000.0).roundToLong(),
+                title = mpv.getPropertyString("chapter-list/$i/title")?.trim()?.takeIf { it.isNotBlank() }
+            )
+        }
+    }
+
+    /**
+     * The view lets go of libmpv at once; the native teardown, which waits for mpv's core and can take many
+     * seconds on a stalled stream, runs on the mpv worker thread.
+     */
+    fun releasePlayer() {
+        if (!initialized) return
+        removeCallbacks(aspectReapplyRunnable)
+        initialized = false
+        coreGeneration += 1
+        // The surface callback stays until the core is gone, so a surface going away meanwhile gives it a moment.
+        closing = true
+        MpvWorker.shared.release {
+            try {
+                releaseNativePlayer()
+            } finally {
+                holder.removeCallback(this)
+                closing = false
+            }
+        }
+        propertyCache.clear()
+        appliedSoundFilterChain = ""
+        appliedSwresampleOptions = ""
+        stereoDownmixLimited = false
+        appliedSpdifCodecs = null
+        appliedDeinterlace = null
+        directRequestedFrom = null
+        hasQueuedInitialMedia = false
+        lastMediaRequestKey = null
+        pendingInitialMediaUrl = null
+        pendingInitialStartOption = null
+        deferredLoadUntilSurface = false
+        requestedMediaUrl = null
+        pathAtMediaRequest = null
+        appliedHi10pGnextSoftwareFallback = null
+        cachedTrackList = null
+    }
+
+    private fun releaseNativePlayer() {
+        mpv.destroy()
+    }
+
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        if (closing) return
+        super.surfaceChanged(holder, format, width, height)
+    }
+
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        if (closing) {
+            // Never touches the closing core from here: that waits on the same stuck core. A short bounded wait only.
+            MpvWorker.shared.awaitIdle(SURFACE_CLOSE_WAIT_MS)
+            return
+        }
+        super.surfaceDestroyed(holder)
+    }
+
+    override fun initOptions() {
+        mpv.setOptionString("profile", "fast")
+        mpv.setOptionString("msg-level", "ffmpeg=warn,vd=warn,ad=warn,vo=warn,ao=warn,demux=warn,lavf=warn,cplayer=warn,autoconvert=warn,hwupload=warn")
+        setVo(if (hi10pGnextSoftwareFallbackActive) MPV_VIDEO_OUTPUT_GPU_NEXT else MPV_VIDEO_OUTPUT_GPU)
+        mpv.setOptionString("gpu-context", "android")
+        mpv.setOptionString("opengl-es", "yes")
+        mpv.setOptionString("user-agent", PlayerMediaSourceFactory.DEFAULT_USER_AGENT)
+        // Preserve native ASS/SSA styling behavior on MPV.
+        mpv.setOptionString("sub-ass-override", "no")
+        mpv.setOptionString("sub-codepage", "auto:utf-8")
+        mpv.setOptionString("sub-fonts-dir", prepareMpvSubtitleFonts(context).absolutePath)
+        mpvLoadedImportedFontIds = ImportedSubtitleFontStore.get(context).fonts.value.mapTo(HashSet()) { it.id }
+        lastMpvSubFont = null
+        mpv.setOptionString("sub-font", MPV_RENDERER_DEFAULT_SUBTITLE_FONT)
+        mpv.setOptionString("sub-use-margins", "yes")
+        mpv.setOptionString("sub-ass-force-margins", "yes")
+        mpv.setOptionString(
+            "hwdec",
+            if (hi10pGnextSoftwareFallbackActive) MPV_HWDEC_DISABLED else hardwareDecodeMode.toMpvHwdecValue()
+        )
+        appliedHi10pGnextSoftwareFallback = hi10pGnextSoftwareFallbackActive
+        mpv.setOptionString("hwdec-codecs", "h264,hevc,mpeg2video,vp8,vp9,av1")
+        mpv.setOptionString("ao", "audiotrack,opensles")
+        mpv.setOptionString("audio-set-media-role", "yes")
+        mpv.setOptionString("tls-verify", "yes")
+        mpv.setOptionString("tls-ca-file", "${context.filesDir.path}/cacert.pem")
+        mpv.setOptionString("input-default-bindings", "yes")
+        mpv.setOptionString("demuxer-max-bytes", "${64 * 1024 * 1024}")
+        mpv.setOptionString("demuxer-max-back-bytes", "${64 * 1024 * 1024}")
+        mpv.setOptionString("keep-open", "yes")
+        mpv.setOptionString("softvol", "yes")
+        mpv.setOptionString("volume-max", MPV_MAX_VOLUME_PERCENT.toInt().toString())
+    }
+
+    override fun postInitOptions() {
+        mpv.setOptionString("save-position-on-quit", "no")
+    }
+
+    override fun observeProperties() {
+        // Progress is polled by PlayerRuntimeController. Track-list changes are pushed so
+        // the poll can skip re-reading an unchanged track list.
+        mpv.observeProperty(MPV_TRACK_LIST_PROPERTY, MPV.mpvFormat.MPV_FORMAT_NONE)
+        mpv.observeProperty(MPV_HWDEC_CURRENT_PROPERTY, MPV.mpvFormat.MPV_FORMAT_STRING)
+        MpvCachedProperty.all.forEach { (name, format) ->
+            mpv.observeProperty(name, format.toMpvFormat())
+        }
+    }
+
+    private fun MpvCachedFormat.toMpvFormat(): Int = when (this) {
+        MpvCachedFormat.FLAG -> MPV.mpvFormat.MPV_FORMAT_FLAG
+        MpvCachedFormat.INT64 -> MPV.mpvFormat.MPV_FORMAT_INT64
+        MpvCachedFormat.DOUBLE -> MPV.mpvFormat.MPV_FORMAT_DOUBLE
+        MpvCachedFormat.STRING -> MPV.mpvFormat.MPV_FORMAT_STRING
+    }
+
+    private fun applyHeaders(headers: Map<String, String>) {
+        if (headers.isEmpty()) {
+            mpv.setPropertyString("http-header-fields", "")
+            return
+        }
+        val raw = headers.entries
+            .filter { it.key.isNotBlank() && it.value.isNotBlank() }
+            .sortedWith(compareBy({ it.key.lowercase(Locale.ROOT) }, { it.value }))
+            .joinToString(separator = ",") { (key, value) ->
+                val escapedHeader = "$key: $value"
+                    .replace("\\", "\\\\")
+                    .replace(",", "\\,")
+                escapedHeader
+            }
+        mpv.setPropertyString("http-header-fields", raw)
+    }
+
+    private fun buildMediaRequestKey(url: String, headers: Map<String, String>): String {
+        val normalizedHeaders = headers.entries
+            .filter { it.key.isNotBlank() && it.value.isNotBlank() }
+            .sortedWith(compareBy({ it.key.lowercase(Locale.ROOT) }, { it.value }))
+            .joinToString(separator = "|") { "${it.key.trim()}:${it.value.trim()}" }
+        return "$url#$normalizedHeaders"
+    }
+
+    private fun MpvHardwareDecodeMode.toMpvHwdecValue(): String {
+        return when (this) {
+            MpvHardwareDecodeMode.LEGACY_DIRECT_COPY -> "mediacodec,mediacodec-copy"
+            MpvHardwareDecodeMode.AUTO_SAFE -> "auto-safe"
+            MpvHardwareDecodeMode.HARDWARE_COPY -> "mediacodec-copy"
+            MpvHardwareDecodeMode.HARDWARE_DIRECT -> "mediacodec"
+            MpvHardwareDecodeMode.DISABLED -> "no"
+        }
+    }
+
+    private fun toMpvColor(color: Int): String {
+        return String.format(Locale.US, "#%08X", color)
+    }
+
+    private fun applyCoverAspectScale() {
+        val viewAspect = if (width > 0 && height > 0) {
+            width.toFloat() / height.toFloat()
+        } else {
+            0f
+        }
+        val videoAspect = readVideoAspectRatio()
+
+        if (videoAspect != null && videoAspect > 0f && viewAspect > 0f) {
+            if (videoAspect > viewAspect) {
+                scaleX = 1.0f
+                scaleY = videoAspect / viewAspect
+            } else {
+                scaleX = viewAspect / videoAspect
+                scaleY = 1.0f
+            }
+            return
+        }
+
+        // Fallback to a visible zoom when video metadata/aspect is unavailable.
+        scaleX = MPV_COVER_FALLBACK_SCALE
+        scaleY = MPV_COVER_FALLBACK_SCALE
+    }
+
+    private fun readVideoAspectRatio(): Float? {
+        if (!initialized) return null
+
+        val directAspect = runCatching {
+            mpv.getPropertyDouble("video-out-params/aspect")
+                ?: mpv.getPropertyDouble("video-params/aspect")
+        }.getOrNull()
+        if (directAspect != null && directAspect > 0.0) {
+            return directAspect.toFloat()
+        }
+
+        val width = runCatching {
+            mpv.getPropertyInt("video-out-params/dw")
+                ?: mpv.getPropertyInt("video-params/w")
+        }.getOrNull() ?: return null
+        val height = runCatching {
+            mpv.getPropertyInt("video-out-params/dh")
+                ?: mpv.getPropertyInt("video-params/h")
+        }.getOrNull() ?: return null
+        if (width <= 0 || height <= 0) return null
+
+        return width.toFloat() / height.toFloat()
+    }
+
+    companion object {
+        private const val TAG = "NuvioMpvSurfaceView"
+        private const val SURFACE_CLOSE_WAIT_MS = 500L
+        private const val START_RELEASE_WAIT_MS = 400L
+        private const val MPV_SUBTITLE_REFERENCE_HEIGHT = 720f
+        private const val MPV_SUBTITLE_DEFAULT_MARGIN_X = 25
+        private const val MPV_SUBTITLE_INNER_PADDING_RATIO = 0.125f
+        private const val MPV_VIDEO_OUTPUT_GPU = "gpu"
+        private const val MPV_VIDEO_OUTPUT_GPU_NEXT = "gpu-next"
+        private const val MPV_HWDEC_DISABLED = "no"
+        /** `loadfile` insertion index; only meaningful for insert-at flags, -1 is mpv's default. */
+        private const val LOADFILE_DEFAULT_INDEX = "-1"
+        private const val MPV_COVER_FALLBACK_SCALE = 1.15f
+        private const val MPV_MAX_VOLUME_PERCENT = 400.0
+        private const val ASPECT_RETRY_DELAY_MS = 120L
+        private const val MAX_ASPECT_RETRY_COUNT = 10
+        /** Track list re-reads (one per tick) while an audio track has no channel count yet. */
+        private const val TRACK_CHANNEL_COUNT_RETRIES = 10
+        private const val SUBTITLE_VERTICAL_OFFSET_MIN = -20
+        private const val SUBTITLE_VERTICAL_OFFSET_MAX = 50
+        private const val MPV_SUB_POS_AT_BOTTOM = 103.4
+        private const val MPV_SUB_POS_AT_TOP = 72.4
+        private const val MPV_SUB_MARGIN_Y_MIN = 0
+        private const val MPV_SUB_MARGIN_Y_MAX = 60
+    }
+}
+
+private class MpvTrackListCache(
+    val path: String?,
+    val count: Int,
+    val tracks: List<MpvTrack>,
+    val channelCountRetriesLeft: Int
+) {
+    fun awaitsChannelCount(): Boolean =
+        channelCountRetriesLeft > 0 && tracks.any { it.type == "audio" && it.channelCount == null }
+}
+
+data class MpvTrackSnapshot(
+    val audioTracks: List<MpvTrack>,
+    val subtitleTracks: List<MpvTrack>
+)
+
+data class MpvTrack(
+    val id: Int,
+    val type: String,
+    val name: String,
+    val language: String?,
+    val codec: String?,
+    val channelCount: Int?,
+    val isSelected: Boolean,
+    val isForced: Boolean,
+    val isExternal: Boolean,
+    val title: String? = null,
+    val sampleRate: Int? = null,
+    val role: TrackRole? = null
+)
+
+/**
+ * The path that position readings for [url] must move off. Null means none: nothing was loaded,
+ * or [url] repeats a request whose media has already loaded. A repeat of a pending request keeps
+ * its baseline.
+ */
+internal fun mpvPathBaselineForRequest(
+    url: String,
+    requestedUrl: String?,
+    pathAtRequest: String?,
+    currentPath: String?
+): String? {
+    if (url != requestedUrl) return currentPath?.takeIf { it.isNotEmpty() }
+    return if (isMpvPositionFromMediaRequest(url, pathAtRequest, currentPath)) null else pathAtRequest
+}
+
+/**
+ * mpv can keep reporting the previous file's properties until a `loadfile replace` starts the new one.
+ * Readings count once `path` equals the requested URL, or differs from the path seen at request
+ * time, since a URL that mpv loads as a playlist reports its entry as `path`.
+ */
+internal fun isMpvPositionFromMediaRequest(
+    requestedUrl: String?,
+    pathAtRequest: String?,
+    currentPath: String?
+): Boolean {
+    if (requestedUrl == null) return true
+    if (currentPath.isNullOrEmpty()) return false
+    return currentPath == requestedUrl || currentPath != pathAtRequest
+}
+
+/** How far video may trail the audio clock outside a seek before its position is distrusted. */
+internal const val MPV_VIDEO_PTS_GLITCH_MIN_SEC = 10.0
+
+/**
+ * h264_mediacodec stamps a packet that has no PTS with 0 instead of leaving it unset. On streams
+ * with such packets (seen on some HLS hosts) mpv shows that frame as `time-pos` 0 while audio keeps
+ * playing at the real position, so the position snaps to the start for a moment: the Skip Intro
+ * button flashes mid-episode and a seek made then is counted from 0. When the video position is far
+ * behind a running audio clock outside a seek, the audio clock holds the real position.
+ */
+internal fun mpvPlaybackPositionSec(
+    timePosSec: Double,
+    audioPtsSec: Double?,
+    seeking: Boolean,
+    audioDelaySec: Double
+): Double {
+    if (audioPtsSec == null || seeking) return timePosSec
+    val glitchMinSec = MPV_VIDEO_PTS_GLITCH_MIN_SEC + abs(audioDelaySec)
+    return if (audioPtsSec - timePosSec > glitchMinSec) audioPtsSec else timePosSec
+}

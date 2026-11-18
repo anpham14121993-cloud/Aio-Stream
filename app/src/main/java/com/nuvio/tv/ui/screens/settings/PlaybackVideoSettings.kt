@@ -1,0 +1,676 @@
+@file:OptIn(ExperimentalTvMaterial3Api::class)
+
+package com.nuvio.tv.ui.screens.settings
+
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Icon
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
+import com.nuvio.tv.R
+import com.nuvio.tv.core.player.DisplayCapabilities
+import com.nuvio.tv.core.player.amlfel.AmlDvOutput
+import com.nuvio.tv.core.player.amlfel.AmlFelSupport
+import com.nuvio.tv.data.local.Dv7HandlingMode
+import com.nuvio.tv.data.local.FrameRateMatchingMode
+import com.nuvio.tv.data.local.MpvHardwareDecodeMode
+import com.nuvio.tv.data.local.MpvDirectDecodeMode
+import com.nuvio.tv.data.local.PlayerPreference
+import com.nuvio.tv.data.local.PlayerSettings
+import com.nuvio.tv.ui.theme.NuvioTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+@Composable
+internal fun PlaybackVideoSection(
+    settings: PlayerSettings,
+    transparentLetterbox: Boolean,
+    onUpdate: PlaybackSettingsUpdate,
+    onOpenDialog: (PlaybackDialog) -> Unit
+) {
+    val enabled = settings.playerPreference != PlayerPreference.EXTERNAL
+    val displayCapabilities = rememberDisplayCapabilities()
+    val frameRateFocusRequester = remember { FocusRequester() }
+    val resolutionSwitchingSupported = !displayCapabilities.apiSupported ||
+        displayCapabilities.supportsResolutionSwitching
+    val showAfrWarning = (settings.frameRateMatchingMode != FrameRateMatchingMode.OFF &&
+        displayCapabilities.apiSupported &&
+        !displayCapabilities.supportsFrameRateSwitching) ||
+        (settings.resolutionMatchingEnabled && !resolutionSwitchingSupported)
+
+    SettingsToggleRow(
+        title = stringResource(R.string.playback_dim_hdr_overlays),
+        subtitle = stringResource(R.string.playback_dim_hdr_overlays_sub),
+        checked = settings.dimHdrOverlays,
+        onToggle = { onUpdate { setDimHdrOverlays(!settings.dimHdrOverlays) } },
+        enabled = enabled
+    )
+
+    SettingsSectionLabel(text = stringResource(R.string.playback_auto_frame_rate))
+    SettingsActionRow(
+        title = stringResource(R.string.playback_afr_mode),
+        subtitle = null,
+        value = frameRateMatchingLabel(settings.frameRateMatchingMode),
+        titleTrailingIcon = if (showAfrWarning) Icons.Default.Warning else null,
+        titleTrailingIconTint = NuvioTheme.colors.Warning,
+        enabled = enabled,
+        modifier = Modifier.focusRequester(frameRateFocusRequester),
+        onClick = { onOpenDialog(PlaybackDialog.FRAME_RATE_MATCHING) }
+    )
+    SettingsToggleRow(
+        title = stringResource(R.string.playback_resolution_matching),
+        subtitle = stringResource(
+            if (resolutionSwitchingSupported) R.string.playback_resolution_matching_sub
+            else R.string.playback_resolution_matching_unsupported_sub
+        ),
+        checked = settings.resolutionMatchingEnabled,
+        onToggle = { onUpdate { setResolutionMatchingEnabled(!settings.resolutionMatchingEnabled) } },
+        titleTrailingIcon = if (settings.resolutionMatchingEnabled && !resolutionSwitchingSupported) {
+            Icons.Default.Warning
+        } else {
+            null
+        },
+        titleTrailingIconTint = NuvioTheme.colors.Warning,
+        enabled = enabled
+    )
+    if (settings.frameRateMatchingMode != FrameRateMatchingMode.OFF && displayCapabilities.offersSeamlessRates) {
+        SettingsToggleRow(
+            title = stringResource(R.string.playback_afr_seamless_switch),
+            subtitle = stringResource(R.string.playback_afr_seamless_switch_sub),
+            checked = settings.afrAllowSeamlessSwitch,
+            onToggle = { onUpdate { setAfrAllowSeamlessSwitch(!settings.afrAllowSeamlessSwitch) } },
+            enabled = enabled
+        )
+    }
+    if (settings.frameRateMatchingMode != FrameRateMatchingMode.OFF) {
+        SettingsActionRow(
+            title = stringResource(R.string.playback_afr_settle_delay),
+            subtitle = stringResource(R.string.playback_afr_settle_delay_sub),
+            value = afrSettleDelayLabel(settings.afrSettleDelaySeconds),
+            enabled = enabled,
+            onClick = { onOpenDialog(PlaybackDialog.AFR_SETTLE_DELAY) }
+        )
+        SettingsToggleRow(
+            title = stringResource(R.string.playback_afr_allow_low_rates),
+            subtitle = stringResource(R.string.playback_afr_allow_low_rates_sub),
+            checked = settings.afrAllowLowRates,
+            onToggle = { onUpdate { setAfrAllowLowRates(!settings.afrAllowLowRates) } },
+            enabled = enabled
+        )
+    }
+    AfrCapabilityWarningCard(
+        snapshot = displayCapabilities,
+        afrModeOn = settings.frameRateMatchingMode != FrameRateMatchingMode.OFF,
+        resolutionMatchingOn = settings.resolutionMatchingEnabled,
+        onDisableAll = { onUpdate { disableAfrAndResolution() } },
+        onDisableAfrOnly = { onUpdate { setFrameRateMatchingMode(FrameRateMatchingMode.OFF) } },
+        onDisableResolutionOnly = { onUpdate { setResolutionMatchingEnabled(false) } },
+        focusAfterDisable = frameRateFocusRequester
+    )
+
+    if (settings.usesExoPlayerEngine) {
+        val dv81Conversion = settings.dv7HandlingMode == Dv7HandlingMode.DV81_LIBDOVI
+        SettingsSectionLabel(text = stringResource(R.string.playback_dv_hdr_label))
+        SettingsActionRow(
+            title = stringResource(R.string.dv7_handling_title),
+            subtitle = null,
+            value = dv7HandlingModeLabel(dv7ModeShown(settings.dv7HandlingMode, rememberNativeFelUsable())),
+            enabled = enabled,
+            onClick = { onOpenDialog(PlaybackDialog.DV7_HANDLING_MODE) }
+        )
+        if (rememberDvOutputRowShown()) {
+            SettingsActionRow(
+                title = stringResource(R.string.dv_output_title),
+                subtitle = stringResource(R.string.dv_output_sub),
+                value = stringResource(if (settings.dvOutputBoxHdr10) R.string.dv_output_box else R.string.dv_output_tv_short),
+                enabled = enabled,
+                onClick = { onOpenDialog(PlaybackDialog.DV_OUTPUT) }
+            )
+        }
+        if (dv81Conversion) {
+            SettingsToggleRow(
+                title = stringResource(R.string.audio_dv5_to_dv81_title),
+                subtitle = stringResource(R.string.audio_dv5_to_dv81_sub),
+                checked = settings.dv5ToDv81Enabled,
+                onToggle = { onUpdate { setDv5ToDv81Enabled(!settings.dv5ToDv81Enabled) } },
+                enabled = enabled
+            )
+        }
+        SettingsToggleRow(
+            title = stringResource(R.string.audio_strip_hdr10plus_title),
+            subtitle = stringResource(R.string.audio_strip_hdr10plus_sub),
+            checked = settings.stripHdr10PlusSei,
+            onToggle = { onUpdate { setStripHdr10PlusSei(!settings.stripHdr10PlusSei) } },
+            enabled = enabled
+        )
+        SettingsToggleRow(
+            title = stringResource(R.string.audio_inject_hdr10_sei_title),
+            subtitle = stringResource(R.string.audio_inject_hdr10_sei_sub),
+            checked = settings.injectHdr10MetadataOnStrip,
+            onToggle = { onUpdate { setInjectHdr10MetadataOnStrip(!settings.injectHdr10MetadataOnStrip) } },
+            enabled = enabled && (
+                settings.dv7HandlingMode == Dv7HandlingMode.STRIP_DV ||
+                    settings.dv7HandlingMode == Dv7HandlingMode.HDR10_BASE_LAYER
+                )
+        )
+        SettingsToggleRow(
+            title = stringResource(R.string.playback_true_black_letterbox),
+            subtitle = stringResource(R.string.playback_true_black_letterbox_sub),
+            checked = transparentLetterbox,
+            onToggle = { onUpdate { setTransparentLetterbox(!transparentLetterbox) } },
+            enabled = enabled
+        )
+
+    }
+
+    if (settings.usesMpvEngine) {
+        SettingsSectionLabel(text = stringResource(R.string.playback_mpv_decoding_label))
+        SettingsActionRow(
+            title = stringResource(R.string.audio_mpv_hwdec_title),
+            subtitle = null,
+            value = mpvHardwareDecodeModeLabel(settings.mpvHardwareDecodeMode),
+            enabled = enabled,
+            onClick = { onOpenDialog(PlaybackDialog.MPV_HARDWARE_DECODE_MODE) }
+        )
+        SettingsActionRow(
+            title = stringResource(R.string.mpv_direct_decode_title),
+            subtitle = stringResource(R.string.mpv_direct_decode_subtitle),
+            value = mpvDirectDecodeModeLabel(settings.mpvDirectDecodeMode),
+            enabled = enabled,
+            onClick = { onOpenDialog(PlaybackDialog.MPV_DIRECT_DECODE_MODE) }
+        )
+        SettingsToggleRow(
+            title = stringResource(R.string.audio_mpv_hi10p_gnext_sw_title),
+            subtitle = stringResource(R.string.audio_mpv_hi10p_gnext_sw_subtitle),
+            checked = settings.mpvHi10pGnextSoftwareFallbackEnabled,
+            onToggle = {
+                onUpdate { setMpvHi10pGnextSoftwareFallbackEnabled(!settings.mpvHi10pGnextSoftwareFallbackEnabled) }
+            },
+            enabled = enabled
+        )
+    }
+}
+
+@Composable
+private fun rememberDisplayCapabilities(): DisplayCapabilities.Snapshot {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    var snapshot by remember { mutableStateOf(DisplayCapabilities.Snapshot.Unknown) }
+    LaunchedEffect(activity) {
+        if (activity != null) {
+            snapshot = DisplayCapabilities.detect(activity)
+            DisplayCapabilities.logSummary(snapshot)
+        } else {
+            android.util.Log.w("DisplayCapabilities", "Settings: could not resolve host Activity from LocalContext")
+        }
+    }
+    return snapshot
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/** Native FEL only works on the AM9 FEL kernel. Elsewhere a saved choice plays as Auto, so it shows as Auto and stays saved. */
+internal fun dv7ModeShown(saved: Dv7HandlingMode, nativeFelUsable: Boolean?): Dv7HandlingMode =
+    if (saved == Dv7HandlingMode.NATIVE_FEL && nativeFelUsable == false) Dv7HandlingMode.AUTO else saved
+
+internal fun dv7ModeChoices(nativeFelUsable: Boolean?): List<Dv7HandlingMode> =
+    Dv7HandlingMode.entries.filter { it != Dv7HandlingMode.NATIVE_FEL || nativeFelUsable == true }
+
+@Composable
+private fun rememberDvOutputRowShown(): Boolean {
+    val context = LocalContext.current
+    val available by produceState(initialValue = AmlDvOutput.availableCached()) {
+        if (value == null) value = withContext(Dispatchers.IO) { AmlDvOutput.isAvailable() }
+    }
+    val tvTakesDv by produceState<Boolean?>(initialValue = null, available) {
+        if (available == true) value = withContext(Dispatchers.IO) { AmlDvOutput.tvTakesDolbyVision(context) }
+    }
+    return AmlDvOutput.rowShown(available, tvTakesDv)
+}
+
+@Composable
+private fun rememberNativeFelUsable(): Boolean? {
+    val usable by produceState(initialValue = AmlFelSupport.nativeFelUsableCached()) {
+        if (value == null) value = withContext(Dispatchers.IO) { AmlFelSupport.nativeFelUsableOnce() }
+    }
+    return usable
+}
+
+@Composable
+private fun frameRateMatchingLabel(mode: FrameRateMatchingMode): String = when (mode) {
+    FrameRateMatchingMode.OFF -> stringResource(R.string.playback_afr_off)
+    FrameRateMatchingMode.START -> stringResource(R.string.playback_afr_on_start)
+    FrameRateMatchingMode.START_STOP -> stringResource(R.string.playback_afr_on_start_stop)
+}
+
+@Composable
+private fun dv7HandlingModeLabel(mode: Dv7HandlingMode): String = when (mode) {
+    Dv7HandlingMode.AUTO -> stringResource(R.string.dv7_mode_auto)
+    Dv7HandlingMode.HDR10_BASE_LAYER -> stringResource(R.string.dv7_mode_hdr10_base_layer)
+    Dv7HandlingMode.DV81_LIBDOVI -> stringResource(R.string.dv7_mode_dv81_libdovi)
+    Dv7HandlingMode.STRIP_DV -> stringResource(R.string.dv7_mode_strip_dv)
+    Dv7HandlingMode.OFF -> stringResource(R.string.dv7_mode_off)
+    Dv7HandlingMode.NATIVE_FEL -> stringResource(R.string.dv7_mode_native_fel)
+}
+
+@Composable
+private fun mpvHardwareDecodeModeLabel(mode: MpvHardwareDecodeMode): String = when (mode) {
+    MpvHardwareDecodeMode.LEGACY_DIRECT_COPY -> stringResource(R.string.audio_mpv_hwdec_legacy_direct_copy)
+    MpvHardwareDecodeMode.AUTO_SAFE -> stringResource(R.string.audio_mpv_hwdec_auto_safe)
+    MpvHardwareDecodeMode.HARDWARE_COPY -> stringResource(R.string.audio_mpv_hwdec_hardware_copy)
+    MpvHardwareDecodeMode.HARDWARE_DIRECT -> stringResource(R.string.audio_mpv_hwdec_hardware_direct)
+    MpvHardwareDecodeMode.DISABLED -> stringResource(R.string.audio_mpv_hwdec_disabled)
+}
+
+@Composable
+private fun mpvDirectDecodeModeLabel(mode: MpvDirectDecodeMode): String = when (mode) {
+    MpvDirectDecodeMode.AUTOMATIC -> stringResource(R.string.mpv_direct_decode_automatic)
+    MpvDirectDecodeMode.ALWAYS -> stringResource(R.string.mpv_direct_decode_always)
+    MpvDirectDecodeMode.OFF -> stringResource(R.string.mpv_direct_decode_off)
+}
+
+@Composable
+private fun AfrCapabilityWarningCard(
+    snapshot: DisplayCapabilities.Snapshot,
+    afrModeOn: Boolean,
+    resolutionMatchingOn: Boolean,
+    onDisableAll: () -> Unit,
+    onDisableAfrOnly: () -> Unit,
+    onDisableResolutionOnly: () -> Unit,
+    focusAfterDisable: FocusRequester
+) {
+    if (!snapshot.apiSupported) return
+
+    val afrProblem = afrModeOn && !snapshot.supportsFrameRateSwitching
+    val resProblem = resolutionMatchingOn && !snapshot.supportsResolutionSwitching
+    if (!afrProblem && !resProblem) return
+
+    val bodyRes = when {
+        afrProblem && resProblem -> R.string.playback_afr_capability_both_problem_body
+        afrProblem -> R.string.playback_afr_capability_only_afr_unsupported_body
+        else -> R.string.playback_afr_capability_only_res_unsupported_body
+    }
+    val buttonRes = when {
+        afrProblem && resProblem -> R.string.playback_afr_capability_disable_both_button
+        afrProblem -> R.string.playback_afr_capability_disable_button
+        else -> R.string.playback_afr_capability_disable_resolution_button
+    }
+    val onDisable: () -> Unit = when {
+        afrProblem && resProblem -> onDisableAll
+        afrProblem -> onDisableAfrOnly
+        else -> onDisableResolutionOnly
+    }
+    val warningTone = NuvioTheme.colors.Warning
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(SettingsSecondaryCardRadius))
+            .background(NuvioTheme.colors.BackgroundCard)
+            .border(
+                width = NuvioTheme.spacing.hairline,
+                color = warningTone.copy(alpha = 0.55f),
+                shape = RoundedCornerShape(SettingsSecondaryCardRadius)
+            )
+            .padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = warningTone,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = stringResource(R.string.playback_afr_capability_unsupported_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = NuvioTheme.colors.TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = stringResource(bodyRes),
+            style = MaterialTheme.typography.bodySmall,
+            color = NuvioTheme.colors.TextSecondary
+        )
+        Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
+        SettingsActionRow(
+            title = stringResource(buttonRes),
+            subtitle = null,
+            onClick = {
+                runCatching { focusAfterDisable.requestFocus() }
+                onDisable()
+            }
+        )
+    }
+}
+
+@Composable
+internal fun VideoSettingsDialogs(
+    dialog: PlaybackDialog?,
+    settings: PlayerSettings,
+    onUpdate: PlaybackSettingsUpdate,
+    onDismiss: () -> Unit
+) {
+    when (dialog) {
+        PlaybackDialog.FRAME_RATE_MATCHING -> FrameRateMatchingDialog(
+            selectedMode = settings.frameRateMatchingMode,
+            onModeSelected = { mode ->
+                onUpdate { setFrameRateMatchingMode(mode) }
+                onDismiss()
+            },
+            onDismiss = onDismiss
+        )
+        PlaybackDialog.AFR_SETTLE_DELAY -> AfrSettleDelayDialog(
+            selectedSeconds = settings.afrSettleDelaySeconds,
+            onSelected = { seconds ->
+                onUpdate { setAfrSettleDelaySeconds(seconds) }
+                onDismiss()
+            },
+            onDismiss = onDismiss
+        )
+        PlaybackDialog.DV7_HANDLING_MODE -> Dv7HandlingModeDialog(
+            selectedMode = settings.dv7HandlingMode,
+            nativeFelUsable = rememberNativeFelUsable(),
+            onModeSelected = { mode ->
+                onUpdate { setDv7HandlingMode(mode) }
+                onDismiss()
+            },
+            onDismiss = onDismiss
+        )
+        PlaybackDialog.DV_OUTPUT -> DvOutputDialog(
+            boxHdr10 = settings.dvOutputBoxHdr10,
+            onSelected = { box ->
+                onUpdate { setDvOutputBoxHdr10(box) }
+                onDismiss()
+            },
+            onDismiss = onDismiss
+        )
+        PlaybackDialog.MPV_HARDWARE_DECODE_MODE -> MpvHardwareDecodeModeDialog(
+            selectedMode = settings.mpvHardwareDecodeMode,
+            onModeSelected = { mode ->
+                onUpdate { setMpvHardwareDecodeMode(mode) }
+                onDismiss()
+            },
+            onDismiss = onDismiss
+        )
+        PlaybackDialog.MPV_DIRECT_DECODE_MODE -> MpvDirectDecodeModeDialog(
+            selectedMode = settings.mpvDirectDecodeMode,
+            onModeSelected = { mode ->
+                onUpdate { setMpvDirectDecodeMode(mode) }
+                onDismiss()
+            },
+            onDismiss = onDismiss
+        )
+        else -> Unit
+    }
+}
+
+@Composable
+private fun FrameRateMatchingDialog(
+    selectedMode: FrameRateMatchingMode,
+    onModeSelected: (FrameRateMatchingMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val options = listOf(
+        SettingsPickerOption(
+            FrameRateMatchingMode.OFF,
+            stringResource(R.string.playback_afr_off),
+            stringResource(R.string.playback_afr_off_sub)
+        ),
+        SettingsPickerOption(
+            FrameRateMatchingMode.START,
+            stringResource(R.string.playback_afr_on_start),
+            stringResource(R.string.playback_afr_on_start_sub)
+        ),
+        SettingsPickerOption(
+            FrameRateMatchingMode.START_STOP,
+            stringResource(R.string.playback_afr_on_start_stop),
+            stringResource(R.string.playback_afr_on_start_stop_sub)
+        )
+    )
+
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.playback_afr_mode),
+        options = options,
+        selectedValue = selectedMode,
+        onOptionSelected = onModeSelected,
+        onDismiss = onDismiss,
+        width = 460.dp,
+        maxHeight = 320.dp
+    )
+}
+
+private val AFR_SETTLE_DELAY_CHOICES = listOf(0, 3, 4, 5, 6, 8, 10)
+
+@Composable
+private fun afrSettleDelayLabel(seconds: Int): String =
+    if (seconds <= 0) stringResource(R.string.playback_afr_settle_delay_auto)
+    else stringResource(R.string.playback_afr_settle_delay_seconds, seconds)
+
+@Composable
+private fun AfrSettleDelayDialog(
+    selectedSeconds: Int,
+    onSelected: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val options = AFR_SETTLE_DELAY_CHOICES.map { seconds ->
+        SettingsPickerOption(
+            seconds,
+            afrSettleDelayLabel(seconds),
+            if (seconds == 0) stringResource(R.string.playback_afr_settle_delay_auto_sub) else null
+        )
+    }
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.playback_afr_settle_delay),
+        options = options,
+        selectedValue = if (selectedSeconds in AFR_SETTLE_DELAY_CHOICES) selectedSeconds else 0,
+        onOptionSelected = onSelected,
+        onDismiss = onDismiss,
+        width = 460.dp,
+        maxHeight = 420.dp
+    )
+}
+
+@Composable
+private fun Dv7HandlingModeDialog(
+    selectedMode: Dv7HandlingMode,
+    nativeFelUsable: Boolean?,
+    onModeSelected: (Dv7HandlingMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val choices = dv7ModeChoices(nativeFelUsable)
+    val options = listOf(
+        SettingsPickerOption(
+            Dv7HandlingMode.AUTO,
+            stringResource(R.string.dv7_mode_auto),
+            stringResource(R.string.dv7_mode_auto_desc)
+        ),
+        SettingsPickerOption(
+            Dv7HandlingMode.HDR10_BASE_LAYER,
+            stringResource(R.string.dv7_mode_hdr10_base_layer),
+            stringResource(R.string.dv7_mode_hdr10_base_layer_desc)
+        ),
+        SettingsPickerOption(
+            Dv7HandlingMode.DV81_LIBDOVI,
+            stringResource(R.string.dv7_mode_dv81_libdovi),
+            stringResource(R.string.dv7_mode_dv81_libdovi_desc)
+        ),
+        SettingsPickerOption(
+            Dv7HandlingMode.STRIP_DV,
+            stringResource(R.string.dv7_mode_strip_dv),
+            stringResource(R.string.dv7_mode_strip_dv_desc)
+        ),
+        SettingsPickerOption(
+            Dv7HandlingMode.OFF,
+            stringResource(R.string.dv7_mode_off),
+            stringResource(R.string.dv7_mode_off_desc)
+        ),
+        SettingsPickerOption(
+            Dv7HandlingMode.NATIVE_FEL,
+            stringResource(R.string.dv7_mode_native_fel),
+            stringResource(R.string.dv7_mode_native_fel_desc)
+        )
+    ).filter { it.value in choices }
+
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.dv7_handling_title),
+        subtitle = stringResource(R.string.dv7_handling_dialog_subtitle),
+        options = options,
+        selectedValue = dv7ModeShown(selectedMode, nativeFelUsable),
+        onOptionSelected = onModeSelected,
+        onDismiss = onDismiss,
+        width = 460.dp,
+        maxHeight = 360.dp
+    )
+}
+
+@Composable
+private fun DvOutputDialog(
+    boxHdr10: Boolean,
+    onSelected: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val options = listOf(
+        SettingsPickerOption(
+            false,
+            stringResource(R.string.dv_output_tv),
+            stringResource(R.string.dv_output_tv_desc)
+        ),
+        SettingsPickerOption(
+            true,
+            stringResource(R.string.dv_output_box),
+            stringResource(R.string.dv_output_box_desc),
+            warning = stringResource(R.string.dv_output_box_warning)
+        )
+    )
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.dv_output_title),
+        options = options,
+        selectedValue = boxHdr10,
+        onOptionSelected = onSelected,
+        onDismiss = onDismiss,
+        width = 460.dp,
+        maxHeight = 360.dp
+    )
+}
+
+@Composable
+private fun MpvHardwareDecodeModeDialog(
+    selectedMode: MpvHardwareDecodeMode,
+    onModeSelected: (MpvHardwareDecodeMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val options = listOf(
+        SettingsPickerOption(
+            MpvHardwareDecodeMode.AUTO_SAFE,
+            stringResource(R.string.audio_mpv_hwdec_auto_safe),
+            stringResource(R.string.audio_mpv_hwdec_auto_safe_desc)
+        ),
+        SettingsPickerOption(
+            MpvHardwareDecodeMode.HARDWARE_COPY,
+            stringResource(R.string.audio_mpv_hwdec_hardware_copy),
+            stringResource(R.string.audio_mpv_hwdec_hardware_copy_desc)
+        ),
+        SettingsPickerOption(
+            MpvHardwareDecodeMode.HARDWARE_DIRECT,
+            stringResource(R.string.audio_mpv_hwdec_hardware_direct),
+            stringResource(R.string.audio_mpv_hwdec_hardware_direct_desc)
+        ),
+        SettingsPickerOption(
+            MpvHardwareDecodeMode.DISABLED,
+            stringResource(R.string.audio_mpv_hwdec_disabled),
+            stringResource(R.string.audio_mpv_hwdec_disabled_desc)
+        ),
+        SettingsPickerOption(
+            MpvHardwareDecodeMode.LEGACY_DIRECT_COPY,
+            stringResource(R.string.audio_mpv_hwdec_legacy_direct_copy),
+            stringResource(R.string.audio_mpv_hwdec_legacy_direct_copy_desc)
+        )
+    )
+
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.audio_mpv_hwdec_title),
+        subtitle = stringResource(R.string.audio_mpv_hwdec_dialog_subtitle),
+        options = options,
+        selectedValue = selectedMode,
+        onOptionSelected = onModeSelected,
+        onDismiss = onDismiss,
+        width = 460.dp,
+        maxHeight = 360.dp
+    )
+}
+
+@Composable
+private fun MpvDirectDecodeModeDialog(
+    selectedMode: MpvDirectDecodeMode,
+    onModeSelected: (MpvDirectDecodeMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val options = listOf(
+        SettingsPickerOption(
+            MpvDirectDecodeMode.AUTOMATIC,
+            stringResource(R.string.mpv_direct_decode_automatic),
+            stringResource(R.string.mpv_direct_decode_automatic_desc)
+        ),
+        SettingsPickerOption(
+            MpvDirectDecodeMode.ALWAYS,
+            stringResource(R.string.mpv_direct_decode_always),
+            stringResource(R.string.mpv_direct_decode_always_desc)
+        ),
+        SettingsPickerOption(
+            MpvDirectDecodeMode.OFF,
+            stringResource(R.string.mpv_direct_decode_off),
+            stringResource(R.string.mpv_direct_decode_off_desc)
+        )
+    )
+
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.mpv_direct_decode_title),
+        subtitle = stringResource(R.string.mpv_direct_decode_dialog_subtitle),
+        options = options,
+        selectedValue = selectedMode,
+        onOptionSelected = onModeSelected,
+        onDismiss = onDismiss,
+        width = 460.dp,
+        maxHeight = 360.dp
+    )
+}

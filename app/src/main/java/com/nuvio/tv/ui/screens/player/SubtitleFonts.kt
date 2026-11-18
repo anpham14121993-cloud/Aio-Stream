@@ -1,0 +1,247 @@
+package com.nuvio.tv.ui.screens.player
+
+import android.content.Context
+import android.graphics.Typeface
+import android.graphics.fonts.Font
+import android.graphics.fonts.FontFamily
+import android.graphics.fonts.FontStyle
+import android.os.Build
+import androidx.annotation.FontRes
+import androidx.annotation.RequiresApi
+import androidx.core.content.res.ResourcesCompat
+import com.nuvio.tv.R
+import com.nuvio.tv.core.player.ImportedSubtitleFont
+import com.nuvio.tv.core.player.ImportedSubtitleFontStore
+import com.nuvio.tv.core.player.ImportedSubtitleFonts
+import com.nuvio.tv.data.local.SubtitleStyleSettings
+import com.nuvio.tv.domain.model.AppFont
+import com.nuvio.tv.domain.model.SubtitleFont
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+
+@FontRes
+internal fun AppFont.fontResource(): Int = when (this) {
+    AppFont.INTER -> R.font.inter_variable
+    AppFont.DM_SANS -> R.font.dm_sans_variable
+    AppFont.OPEN_SANS -> R.font.opensans_variable
+    AppFont.ATKINSON_HYPERLEGIBLE_NEXT -> R.font.atkinson_hyperlegible_next_variable
+    AppFont.SOURCE_SANS_3 -> R.font.source_sans3_variable
+}
+
+/** Regular (or, for Noto, semi-bold) file of the subtitle font; may be a variable font. */
+@FontRes
+internal fun SubtitleFont.fontResource(): Int = when (this) {
+    SubtitleFont.ROBOTO -> R.font.subtitle_roboto_variable
+    SubtitleFont.MONTSERRAT -> R.font.subtitle_montserrat_regular
+    SubtitleFont.NOTO_SANS_SEMIBOLD -> R.font.subtitle_noto_sans_semibold
+    SubtitleFont.ASAP_CONDENSED -> R.font.subtitle_asap_condensed_regular
+    else -> requireNotNull(appFont).fontResource()
+}
+
+/** Separate bold file for static fonts; variable fonts take their bold from the weight axis. */
+@FontRes
+internal fun SubtitleFont.boldFontResource(): Int? = when (this) {
+    SubtitleFont.MONTSERRAT -> R.font.subtitle_montserrat_bold
+    SubtitleFont.NOTO_SANS_SEMIBOLD -> R.font.subtitle_noto_sans_bold
+    SubtitleFont.ASAP_CONDENSED -> R.font.subtitle_asap_condensed_bold
+    else -> null
+}
+
+internal fun SubtitleFont.regularWeight(): Int = if (this == SubtitleFont.NOTO_SANS_SEMIBOLD) 600 else 400
+
+internal fun subtitleFontWeight(font: SubtitleFont?, bold: Boolean): Int =
+    if (bold) 700 else font?.regularWeight() ?: 400
+
+/** File and weight drawn for a choice; [weightFromFile] is false when the file is not already that weight. */
+internal data class SubtitleFontFace(@param:FontRes val resource: Int, val weight: Int, val weightFromFile: Boolean)
+
+internal fun SubtitleFont.face(bold: Boolean): SubtitleFontFace {
+    val boldFile = boldFontResource()
+    return when {
+        bold && boldFile != null -> SubtitleFontFace(boldFile, 700, true)
+        else -> SubtitleFontFace(fontResource(), subtitleFontWeight(this, bold), boldFile != null)
+    }
+}
+
+/**
+ * Line height of each regular file (OS/2 win ascent + descent) in font sizes. libass fits this height into the size it
+ * is asked for, while ExoPlayer sizes the letters, so the same size draws smaller letters in MPV on a tall font.
+ */
+internal fun SubtitleFont?.mpvLineHeightEm(): Double = when (this) {
+    SubtitleFont.INTER -> 1.430
+    SubtitleFont.DM_SANS -> 1.322
+    SubtitleFont.OPEN_SANS -> 1.442
+    SubtitleFont.ATKINSON_HYPERLEGIBLE_NEXT -> 1.407
+    SubtitleFont.SOURCE_SANS_3 -> 1.326
+    SubtitleFont.MONTSERRAT -> 1.379
+    SubtitleFont.NOTO_SANS_SEMIBOLD -> 1.519
+    SubtitleFont.ASAP_CONDENSED -> 1.319
+    SubtitleFont.ROBOTO, null -> 1.200
+}
+
+/** sub-scale that draws plain subtitles at the letter size ExoPlayer gives them on this screen. */
+internal fun mpvPlainSubtitleScale(
+    font: SubtitleFont?,
+    fontSize: Double,
+    exoTextSizePx: Double,
+    screenHeightPx: Double,
+    referenceHeight: Double
+): Double = mpvPlainSubtitleScale(font.mpvLineHeightEm(), fontSize, exoTextSizePx, screenHeightPx, referenceHeight)
+
+internal fun mpvPlainSubtitleScale(
+    lineHeightEm: Double,
+    fontSize: Double,
+    exoTextSizePx: Double,
+    screenHeightPx: Double,
+    referenceHeight: Double
+): Double {
+    if (fontSize <= 0.0 || exoTextSizePx <= 0.0 || screenHeightPx <= 0.0 || lineHeightEm <= 0.0) return 1.0
+    val mpvLettersPx = fontSize / lineHeightEm * screenHeightPx / referenceHeight
+    return exoTextSizePx / mpvLettersPx
+}
+
+/** Noto Sans semi-bold and bold for every script the app is translated into (CJK comes from the system). */
+internal val NOTO_SUBTITLE_SCRIPT_FONTS: List<Pair<Int, Int>> = listOf(
+    R.font.subtitle_noto_sans_arabic_semibold to R.font.subtitle_noto_sans_arabic_bold,
+    R.font.subtitle_noto_sans_hebrew_semibold to R.font.subtitle_noto_sans_hebrew_bold,
+    R.font.subtitle_noto_sans_devanagari_semibold to R.font.subtitle_noto_sans_devanagari_bold,
+    R.font.subtitle_noto_sans_bengali_semibold to R.font.subtitle_noto_sans_bengali_bold,
+    R.font.subtitle_noto_sans_tamil_semibold to R.font.subtitle_noto_sans_tamil_bold,
+)
+
+/** libass has no system font lookup here; this name only reaches the library's own fallback font. */
+internal const val MPV_RENDERER_DEFAULT_SUBTITLE_FONT = "Droid Sans Fallback"
+
+/**
+ * MPV matches a font's internal family or full name, which may differ from its UI label. The bundled Noto files
+ * carry an extra full name (Latin) and family name (other scripts), so libass keeps Latin text in Noto Sans and
+ * finds the other scripts inside the same requested name.
+ */
+internal fun SubtitleFont?.mpvFontName(bold: Boolean): String = when (this) {
+    null -> MPV_RENDERER_DEFAULT_SUBTITLE_FONT
+    SubtitleFont.SOURCE_SANS_3 -> "SourceSans3VF"
+    SubtitleFont.DM_SANS -> "DM Sans 9pt"
+    SubtitleFont.NOTO_SANS_SEMIBOLD -> if (bold) "Noto Sans Subtitles Bold" else "Noto Sans Subtitles"
+    else -> displayName
+}
+
+/** Noto picks its bold file by name; asking libass for bold too would select by weight across scripts. */
+internal fun SubtitleFont?.mpvBold(bold: Boolean): Boolean = bold && this != SubtitleFont.NOTO_SANS_SEMIBOLD
+
+internal fun mpvSubtitleFontResources(): List<Int> =
+    SubtitleFont.entries.flatMap { listOfNotNull(it.fontResource(), it.boldFontResource()) } +
+        NOTO_SUBTITLE_SCRIPT_FONTS.flatMap { listOf(it.first, it.second) } +
+        listOf(R.font.atkinson_hyperlegible_next_italic, R.font.source_sans3_italic)
+
+private val notoTypefaces = ConcurrentHashMap<Boolean, Typeface>()
+
+/** The imported font when one is chosen and its file is here, else the bundled choice. */
+internal fun resolvedSubtitleTypeface(context: Context, style: SubtitleStyleSettings): Typeface =
+    importedSubtitleTypeface(context, style.importedFontId, style.bold)
+        ?: subtitleTypeface(context, style.font, style.bold)
+
+internal fun importedSubtitleTypeface(context: Context, id: String?, bold: Boolean): Typeface? {
+    if (id == null || !ImportedSubtitleFonts.isImportedId(id)) return null
+    val base = ImportedSubtitleFontStore.get(context).typeface(id) ?: return null
+    return if (bold) Typeface.create(base, Typeface.BOLD) else base
+}
+
+/** The imported font libass should draw, or null to use the bundled choice. */
+internal fun importedMpvSubtitleFont(context: Context, style: SubtitleStyleSettings): ImportedSubtitleFont? {
+    val store = ImportedSubtitleFontStore.get(context)
+    return store.font(style.importedFontId)?.takeIf { store.fontFile(it.id) != null }
+}
+
+internal data class MpvSubFontPick(val font: String, val bold: Boolean)
+
+/**
+ * libass reads the fonts folder once, when mpv starts. A font imported during playback is not there yet, so the
+ * font in use stays until the next start instead of falling back to libass's default.
+ */
+internal fun mpvSubtitleFontPick(
+    importedId: String?,
+    importedFamily: String?,
+    loadedImportedIds: Set<String>,
+    bundled: MpvSubFontPick,
+    importedBold: Boolean,
+    previous: MpvSubFontPick?
+): MpvSubFontPick = when {
+    importedId == null || importedFamily == null -> bundled
+    importedId in loadedImportedIds -> MpvSubFontPick(importedFamily, importedBold)
+    else -> previous ?: bundled
+}
+
+/** Cached Android resources; never resolved from the UI font or downloaded. */
+internal fun subtitleTypeface(context: Context?, font: SubtitleFont?, bold: Boolean): Typeface {
+    if (font == null) return if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+    val ctx = requireNotNull(context)
+    if (font == SubtitleFont.NOTO_SANS_SEMIBOLD && Build.VERSION.SDK_INT >= 29) {
+        runCatching { notoTypefaces.getOrPut(bold) { notoSubtitleTypeface(ctx, bold) } }.getOrNull()?.let { return it }
+    }
+    val face = font.face(bold)
+    val base = ResourcesCompat.getFont(ctx, face.resource)
+        ?: return if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+    if (face.weightFromFile) {
+        val asRegular = !bold && face.weight != NOTO_REGULAR_DRAWN_WEIGHT && Build.VERSION.SDK_INT >= 28
+        return if (asRegular) Typeface.create(base, NOTO_REGULAR_DRAWN_WEIGHT, false) else base
+    }
+    return if (Build.VERSION.SDK_INT >= 28) Typeface.create(base, face.weight, false)
+    else Typeface.create(base, if (bold) Typeface.BOLD else Typeface.NORMAL)
+}
+
+/**
+ * Android treats a face of weight 600 or more as bold, so an italic span on Noto's semi-bold regular asked for bold
+ * italic and drew the bold file. The semi-bold file is registered as the family's regular instead.
+ */
+internal const val NOTO_REGULAR_DRAWN_WEIGHT = 400
+
+internal fun notoDrawnWeight(bold: Boolean): Int = if (bold) 700 else NOTO_REGULAR_DRAWN_WEIGHT
+
+@RequiresApi(29)
+private fun notoSubtitleTypeface(context: Context, bold: Boolean): Typeface {
+    fun family(regular: Int, boldRes: Int) = FontFamily.Builder(
+        Font.Builder(context.resources, regular).setWeight(notoDrawnWeight(false)).build()
+    ).addFont(Font.Builder(context.resources, boldRes).setWeight(notoDrawnWeight(true)).build()).build()
+    val builder = Typeface.CustomFallbackBuilder(family(R.font.subtitle_noto_sans_semibold, R.font.subtitle_noto_sans_bold))
+    NOTO_SUBTITLE_SCRIPT_FONTS.forEach { (regular, boldRes) -> builder.addCustomFallback(family(regular, boldRes)) }
+    return builder.setSystemFallback("sans-serif")
+        .setStyle(FontStyle(notoDrawnWeight(bold), FontStyle.FONT_SLANT_UPRIGHT))
+        .build()
+}
+
+/** libass/MPV must discover the actual bundled and imported fonts, not just receive a name. */
+@Synchronized
+internal fun prepareMpvSubtitleFonts(context: Context): File {
+    val directory = File(context.filesDir, "subtitle-fonts-v1")
+    check(directory.isDirectory || directory.mkdirs())
+    syncImportedMpvSubtitleFonts(context, directory)
+    for (resource in mpvSubtitleFontResources()) {
+        val bytes = context.resources.openRawResource(resource).use { it.readBytes() }
+        val target = File(directory, "${context.resources.getResourceEntryName(resource)}.ttf")
+        if (!target.isFile || !target.readBytes().contentEquals(bytes)) {
+            val temporary = File(directory, "${target.name}.tmp")
+            temporary.writeBytes(bytes)
+            check(temporary.renameTo(target)) { "Could not install bundled subtitle font" }
+        }
+    }
+    return directory
+}
+
+private const val IMPORTED_MPV_FONT_PREFIX = "imported-"
+
+/** Imported fonts sit beside the bundled ones; copies of removed fonts are deleted. */
+private fun syncImportedMpvSubtitleFonts(context: Context, directory: File) {
+    val store = ImportedSubtitleFontStore.get(context)
+    val wanted = store.fonts.value.mapNotNull { font ->
+        store.fontFile(font.id)?.let { "$IMPORTED_MPV_FONT_PREFIX${font.id}.${font.extension}" to it }
+    }.toMap()
+    directory.listFiles { file -> file.name.startsWith(IMPORTED_MPV_FONT_PREFIX) && file.name !in wanted }
+        ?.forEach { it.delete() }
+    for ((name, source) in wanted) {
+        val target = File(directory, name)
+        if (target.isFile && target.length() == source.length()) continue
+        val temporary = File(directory, "$name.tmp")
+        source.copyTo(temporary, overwrite = true)
+        check(temporary.renameTo(target)) { "Could not install imported subtitle font" }
+    }
+}
