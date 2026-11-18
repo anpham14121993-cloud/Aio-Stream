@@ -198,6 +198,7 @@ import com.nuvio.tv.ui.components.LocalLogoOverCardTrailer
 import com.nuvio.tv.ui.components.ProfileAvatarCircle
 import com.nuvio.tv.ui.navigation.LocalNavViewModelStoreOwner
 import com.nuvio.tv.ui.navigation.NuvioNavHost
+import com.nuvio.tv.ui.monolith.applyAioOrientation
 import com.nuvio.tv.ui.navigation.Screen
 import com.nuvio.tv.ui.navigation.rememberNavSessionViewModelStoreOwner
 import com.nuvio.tv.ui.screens.calendar.openCalendarWatchTarget
@@ -777,7 +778,7 @@ open class MainActivity : ComponentActivity() {
                 LaunchedEffect(resolvedFormFactor, playbackUiActive) {
                     currentFormFactor = resolvedFormFactor
                     currentInPlayer = playbackUiActive
-                    com.nuvio.tv.ui.monolith.applyAioOrientation(resolvedFormFactor, playbackUiActive)
+                    this@MainActivity.applyAioOrientation(resolvedFormFactor, playbackUiActive)
                     hideSystemBarsOnHandheld()
                 }
                 CompositionLocalProvider(

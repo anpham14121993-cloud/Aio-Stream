@@ -308,7 +308,7 @@ private fun MonolithTopLensNavigation(
                 .focusRequester(contentFocus)
                 .focusRestorer()
                 .focusProperties {
-                    onExit = {
+                    this.onExit = {
                         if (visible && requestedFocusDirection == FocusDirection.Up && entryFocus != null) {
                             runCatching { entryFocus.requestFocus() }
                         }

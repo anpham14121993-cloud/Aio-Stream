@@ -751,7 +751,7 @@ fun SettingsScreen(
                         ) {
                             androidx.compose.material3.Icon(
                                 imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                                contentDescription = stringResource(R.string.cd_navigate_back),
+                                contentDescription = "Quay lại",
                                 tint = NuvioTheme.colors.TextPrimary,
                                 modifier = Modifier.size(18.dp)
                             )
