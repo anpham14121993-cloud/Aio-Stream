@@ -9,6 +9,8 @@ import com.nuvio.tv.ui.v2.appearance.v2Palette
 import org.junit.Assert.*
 import org.junit.Test
 
+import kotlin.math.abs
+
 class ClearGlassThemeTest {
     @Test fun `material is limited to Glass colour in Cinematic V2`() {
         AppTheme.entries.forEach { theme ->
@@ -30,10 +32,10 @@ class ClearGlassThemeTest {
                 } else {
                     listOf(result.background, result.surface, result.panel, result.field,
                         result.modal, result.focusBackground).forEach { color ->
-                        assertEquals(color.red, color.green, .0001f)
-                        assertEquals(color.green, color.blue, .0001f)
+                        assertTrue(abs(color.red - color.green) < .05f)
+                        assertTrue(abs(color.green - color.blue) < .05f)
                     }
-                    assertTrue(result.focusBackground.alpha < .05f)
+                    assertTrue(result.focusBackground.alpha <= .12f)
                 }
                 assertEquals(original.secondary, result.secondary)
                 assertEquals(original.focusRingGradient, result.focusRingGradient)

@@ -85,7 +85,7 @@ class MDBListSettingsViewModelTest {
         harness.connected()
         harness.reply(body = """{"user_id":42,"username":"viewer","is_supporter":true,"rate_limit":1000,"rate_limit_remaining":950}""")
         val store = mockk<MDBListSettingsDataStore> {
-            every { settings } returns MutableStateFlow(MDBListSettings(apiKey = "ratings-key"))
+            every { settings } returns MutableStateFlow(MDBListSettings(enabled = false, apiKey = "ratings-key"))
         }
         val api = mockk<MDBListApi>()
         val traktSettings = mockk<TraktSettingsDataStore>(relaxed = true) {

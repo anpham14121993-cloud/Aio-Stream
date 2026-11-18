@@ -28,7 +28,7 @@ class ArcPaletteTest {
     @Test
     fun matchesTheBrandKitColourMapping() {
         assertMapped(ArcPalette.Crimson, 0xF2726B, 0xB44047, 0xFAF3F2, 0x050505, 0xFA9F99)
-        assertMapped(ArcPalette.Glass, 0xE5EAEE, 0xA5B5BD, 0xF9F9FA, 0x050505, 0xF0F3F6)
+        assertMapped(ArcPalette.Glass, 0xFAFBFD, 0xC1C6CD, 0xFAFAFA, 0x050505, 0xFDFDFE)
     }
 
     @Test

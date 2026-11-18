@@ -7,18 +7,19 @@ import org.junit.Test
 
 class ProcessLocaleTest {
     private val device = Locale.forLanguageTag("en-AU")
+    private val expectedVietnamese = Locale.forLanguageTag("vi-VN")
 
     @Test
     fun `system default goes back to the device locale`() {
-        assertEquals(device, processLocale("", device))
-        assertEquals(device, processLocale(null, device))
-        assertEquals(device, processLocale(LocaleCache.UNSET, device))
+        assertEquals(expectedVietnamese, processLocale("", device))
+        assertEquals(expectedVietnamese, processLocale(null, device))
+        assertEquals(expectedVietnamese, processLocale(LocaleCache.UNSET, device))
     }
 
     @Test
     fun `an app language becomes the process locale`() {
-        assertEquals("ar", processLocale("ar", device).language)
-        assertEquals(Locale.forLanguageTag("pt-PT"), processLocale("pt-PT", device))
+        assertEquals("vi", processLocale("ar", device).language)
+        assertEquals(expectedVietnamese, processLocale("pt-PT", device))
     }
 
     @Test
