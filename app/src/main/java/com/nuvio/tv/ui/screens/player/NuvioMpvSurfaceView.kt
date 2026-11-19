@@ -79,6 +79,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     @Volatile
     private var cachedTrackList: MpvTrackListCache? = null
     private var currentAspectMode: AspectMode = AspectMode.ORIGINAL
+    private var mobileResizeModes: Boolean = false
     private var pendingAspectRetryCount = 0
     private val aspectReapplyRunnable = Runnable {
         applyAspectModeInternal(currentAspectMode, allowRetry = true)
@@ -512,7 +513,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     /** Called once mpv has opened a file: a video may get the direct decoder, decided by the Direct decoding setting. */
     fun onFileLoaded() {
         directRequestedFrom = null
-        if (!initialized || hi10pGnextSoftwareFallbackActive) return
+        if (!initialized) return
+        if (mobileResizeModes) {
+            applyAspectModeInternal(currentAspectMode, allowRetry = false)
+        }
+        if (hi10pGnextSoftwareFallbackActive) return
         runCatching {
             val width = mpv.getPropertyInt("current-tracks/video/demux-w")
             val height = mpv.getPropertyInt("current-tracks/video/demux-h")
@@ -629,6 +634,14 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         }
     }
 
+    fun setMobileResizeModes(enabled: Boolean) {
+        if (mobileResizeModes == enabled) return
+        mobileResizeModes = enabled
+        pendingAspectRetryCount = 0
+        removeCallbacks(aspectReapplyRunnable)
+        applyAspectModeInternal(currentAspectMode, allowRetry = true)
+    }
+
     fun applyAspectMode(mode: AspectMode) {
         currentAspectMode = mode
         pendingAspectRetryCount = 0
@@ -647,6 +660,19 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     }
 
     private fun applyAspectModeInternal(mode: AspectMode, allowRetry: Boolean) {
+        if (mobileResizeModes) {
+            scaleX = 1.0f
+            scaleY = 1.0f
+            if (initialized) {
+                runCatching {
+                    mpv.setPropertyDouble("panscan", mobileMpvPanscan(mode))
+                    mpv.setPropertyString("video-aspect-override", "no")
+                }.onFailure {
+                    Log.w(TAG, "Failed to apply mobile mpv resize mode ($mode): ${it.message}")
+                }
+            }
+            return
+        }
         val viewAspect = readViewAspectRatio(width, height)
         val videoAspect = readVideoAspectRatio()
         val scale = resolveAspectScale(
@@ -1100,6 +1126,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     override fun postInitOptions() {
         mpv.setOptionString("save-position-on-quit", "no")
+        if (mobileResizeModes) {
+            mpv.setOptionString("panscan", mobileMpvPanscan(currentAspectMode).toString())
+            mpv.setOptionString("video-aspect-override", "no")
+        }
     }
 
     override fun observeProperties() {

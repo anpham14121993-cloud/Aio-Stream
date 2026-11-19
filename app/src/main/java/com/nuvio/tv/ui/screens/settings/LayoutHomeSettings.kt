@@ -8,22 +8,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
-import com.nuvio.tv.domain.model.DiscoverLocation
-import com.nuvio.tv.domain.model.HomeImdbRatingsVisibility
 import com.nuvio.tv.domain.model.HomeLayout
 import com.nuvio.tv.domain.model.NavigationStyle
-import com.nuvio.tv.domain.model.WatchedTitlesMode
 import com.nuvio.tv.ui.v2.appearance.LocalV2Appearance
 
 @Composable
@@ -31,17 +23,6 @@ internal fun LayoutHomeLayoutSection(
     uiState: LayoutSettingsUiState,
     onEvent: (LayoutSettingsEvent) -> Unit
 ) {
-    if (uiState.selectedLayout == HomeLayout.MODERN) {
-        SettingsToggleRow(
-            title = stringResource(R.string.layout_fullscreen_hero_backdrop),
-            subtitle = stringResource(R.string.layout_fullscreen_hero_backdrop_sub),
-            checked = uiState.modernHeroFullScreenBackdropEnabled,
-            onToggle = {
-                onEvent(LayoutSettingsEvent.SetModernHeroFullScreenBackdropEnabled(!uiState.modernHeroFullScreenBackdropEnabled))
-            }
-        )
-    }
-
     if (uiState.selectedLayout == HomeLayout.CLASSIC) {
         SettingsToggleRow(
             title = stringResource(R.string.layout_classic_focus_gradient),
@@ -91,12 +72,6 @@ internal fun LayoutHomeContentSection(
     uiState: LayoutSettingsUiState,
     onEvent: (LayoutSettingsEvent) -> Unit
 ) {
-    SettingsToggleRow(
-        title = stringResource(R.string.layout_poster_labels),
-        subtitle = stringResource(R.string.layout_poster_labels_sub),
-        checked = uiState.posterLabelsEnabled,
-        onToggle = { onEvent(LayoutSettingsEvent.SetPosterLabelsEnabled(!uiState.posterLabelsEnabled)) }
-    )
     if (uiState.selectedLayout != HomeLayout.MODERN) {
         SettingsToggleRow(
             title = stringResource(R.string.layout_addon_name),
@@ -105,65 +80,7 @@ internal fun LayoutHomeContentSection(
             onToggle = { onEvent(LayoutSettingsEvent.SetCatalogAddonNameEnabled(!uiState.catalogAddonNameEnabled)) }
         )
     }
-    SettingsToggleRow(
-        title = stringResource(R.string.layout_catalog_type),
-        subtitle = stringResource(R.string.layout_catalog_type_sub),
-        checked = uiState.catalogTypeSuffixEnabled,
-        onToggle = { onEvent(LayoutSettingsEvent.SetCatalogTypeSuffixEnabled(!uiState.catalogTypeSuffixEnabled)) }
-    )
-    SettingsToggleRow(
-        title = stringResource(R.string.layout_hide_unreleased),
-        subtitle = stringResource(R.string.layout_hide_unreleased_sub),
-        checked = uiState.hideUnreleasedContent,
-        onToggle = { onEvent(LayoutSettingsEvent.SetHideUnreleasedContent(!uiState.hideUnreleasedContent)) }
-    )
-    WatchedTitlesRow(
-        selectedMode = uiState.watchedTitlesMode,
-        onModeSelected = { mode -> onEvent(LayoutSettingsEvent.SetWatchedTitlesMode(mode)) }
-    )
-    SettingsToggleRow(
-        title = stringResource(R.string.layout_hide_plan_to_watch),
-        subtitle = stringResource(R.string.layout_hide_plan_to_watch_sub),
-        checked = uiState.hidePlanToWatch,
-        onToggle = { onEvent(LayoutSettingsEvent.SetHidePlanToWatch(!uiState.hidePlanToWatch)) }
-    )
-    SettingsToggleRow(
-        title = stringResource(R.string.layout_hide_watching),
-        subtitle = stringResource(R.string.layout_hide_watching_sub),
-        checked = uiState.hideWatching,
-        onToggle = { onEvent(LayoutSettingsEvent.SetHideWatching(!uiState.hideWatching)) }
-    )
     CalendarComingUpRowSetting()
-    SettingsToggleRow(
-        title = stringResource(R.string.layout_overall_ratings),
-        subtitle = stringResource(
-            if (uiState.homeImdbRatingsVisibility.showRatings) {
-                R.string.layout_overall_ratings_sub_on
-            } else {
-                R.string.layout_overall_ratings_sub_off
-            }
-        ),
-        checked = uiState.homeImdbRatingsVisibility.showRatings,
-        onToggle = {
-            val visibility = if (uiState.homeImdbRatingsVisibility.showRatings) {
-                HomeImdbRatingsVisibility.HIDE_ALL
-            } else {
-                HomeImdbRatingsVisibility.SHOW_ALL
-            }
-            onEvent(LayoutSettingsEvent.SetHomeImdbRatingsVisibility(visibility))
-        }
-    )
-    // Classic and Grid only show descriptions in the hero carousel.
-    if (uiState.selectedLayout == HomeLayout.MODERN || uiState.heroSectionEnabled) {
-        SettingsToggleRow(
-            title = stringResource(R.string.layout_hero_description_auto_scroll),
-            subtitle = stringResource(R.string.layout_hero_description_auto_scroll_sub),
-            checked = uiState.heroDescriptionAutoScrollEnabled,
-            onToggle = {
-                onEvent(LayoutSettingsEvent.SetHeroDescriptionAutoScrollEnabled(!uiState.heroDescriptionAutoScrollEnabled))
-            }
-        )
-    }
 }
 
 @Composable
@@ -203,142 +120,4 @@ internal fun LayoutSidebarSection(
             onToggle = { onEvent(LayoutSettingsEvent.SetSidebarCollapsed(!uiState.sidebarCollapsedByDefault)) }
         )
     }
-    DiscoverLocationRow(
-        selectedLocation = uiState.discoverLocation,
-        rememberedLocation = uiState.lastNonOffDiscoverLocation,
-        onLocationSelected = { location -> onEvent(LayoutSettingsEvent.SetDiscoverLocation(location)) }
-    )
-}
-
-@Composable
-private fun WatchedTitlesRow(
-    selectedMode: WatchedTitlesMode,
-    onModeSelected: (WatchedTitlesMode) -> Unit
-) {
-    var dialogOpen by remember { mutableStateOf(false) }
-    val options = listOf(
-        SettingsPickerOption(
-            WatchedTitlesMode.SHOW,
-            stringResource(R.string.layout_watched_titles_show),
-            stringResource(R.string.layout_watched_titles_show_desc)
-        ),
-        SettingsPickerOption(
-            WatchedTitlesMode.DIM,
-            stringResource(R.string.layout_watched_titles_dim),
-            stringResource(R.string.layout_watched_titles_dim_desc)
-        ),
-        SettingsPickerOption(
-            WatchedTitlesMode.HIDE,
-            stringResource(R.string.layout_watched_titles_hide),
-            stringResource(R.string.layout_watched_titles_hide_desc)
-        )
-    )
-
-    SettingsActionRow(
-        title = stringResource(R.string.layout_watched_titles),
-        subtitle = stringResource(R.string.layout_watched_titles_sub),
-        value = options.first { it.value == selectedMode }.title,
-        onClick = { dialogOpen = true }
-    )
-
-    if (dialogOpen) {
-        SettingsSingleChoiceDialog(
-            title = stringResource(R.string.layout_watched_titles_dialog_title),
-            options = options,
-            selectedValue = selectedMode,
-            onOptionSelected = { mode ->
-                onModeSelected(mode)
-                dialogOpen = false
-            },
-            onDismiss = { dialogOpen = false },
-            width = 460.dp,
-            maxHeight = 400.dp
-        )
-    }
-}
-
-@Composable
-private fun DiscoverLocationRow(
-    selectedLocation: DiscoverLocation,
-    rememberedLocation: DiscoverLocation,
-    onLocationSelected: (DiscoverLocation) -> Unit
-) {
-    val sectionEnabled = selectedLocation != DiscoverLocation.OFF
-    var dialogOpen by remember { mutableStateOf(false) }
-
-    SettingsToggleRow(
-        title = stringResource(R.string.layout_show_discover),
-        subtitle = stringResource(R.string.layout_show_discover_sub),
-        checked = sectionEnabled,
-        onToggle = {
-            onLocationSelected(
-                when (selectedLocation) {
-                    DiscoverLocation.OFF -> rememberedLocation
-                    DiscoverLocation.IN_SEARCH,
-                    DiscoverLocation.IN_SIDEBAR -> DiscoverLocation.OFF
-                }
-            )
-        }
-    )
-    if (sectionEnabled) {
-        val currentLabel = when (selectedLocation) {
-            DiscoverLocation.IN_SIDEBAR -> stringResource(R.string.layout_discover_location_in_sidebar)
-            DiscoverLocation.IN_SEARCH -> stringResource(R.string.layout_discover_location_in_search)
-            DiscoverLocation.OFF -> ""
-        }
-        SettingsActionRow(
-            title = stringResource(R.string.layout_discover_location_action),
-            subtitle = null,
-            value = currentLabel,
-            onClick = { dialogOpen = true }
-        )
-    }
-
-    if (dialogOpen) {
-        DiscoverLocationDialog(
-            selectedLocation = selectedLocation,
-            onLocationSelected = { location ->
-                onLocationSelected(location)
-                dialogOpen = false
-            },
-            onDismiss = { dialogOpen = false }
-        )
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun DiscoverLocationDialog(
-    selectedLocation: DiscoverLocation,
-    onLocationSelected: (DiscoverLocation) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val options = listOf(
-        SettingsPickerOption(
-            DiscoverLocation.IN_SEARCH,
-            stringResource(R.string.layout_discover_location_in_search),
-            stringResource(R.string.layout_discover_location_in_search_desc)
-        ),
-        SettingsPickerOption(
-            DiscoverLocation.IN_SIDEBAR,
-            stringResource(R.string.layout_discover_location_in_sidebar),
-            stringResource(R.string.layout_discover_location_in_sidebar_desc)
-        )
-    )
-
-    val effectiveSelected = if (selectedLocation == DiscoverLocation.OFF) {
-        DiscoverLocation.IN_SEARCH
-    } else {
-        selectedLocation
-    }
-
-    SettingsSingleChoiceDialog(
-        title = stringResource(R.string.layout_discover_location_dialog_title),
-        options = options,
-        selectedValue = effectiveSelected,
-        onOptionSelected = onLocationSelected,
-        onDismiss = onDismiss,
-        width = 460.dp,
-        maxHeight = 320.dp
-    )
 }

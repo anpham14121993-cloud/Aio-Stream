@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.CatalogDescriptor
 import com.nuvio.tv.domain.model.CatalogRow
-import com.nuvio.tv.domain.model.listedTitles
 import com.nuvio.tv.domain.model.WatchedTitlesMode
 import com.nuvio.tv.domain.model.legacyKey
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -17,10 +16,8 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -48,63 +45,17 @@ internal class HomeWatchedTitlesState {
 }
 
 internal fun HomeViewModel.observeWatchedTitlesPipeline() {
-    viewModelScope.launch {
-        layoutPreferenceDataStore.watchedTitlesMode
-            .distinctUntilChanged()
-            .collect { mode ->
-                val previous = watchedTitles.filter.value
-                if (mode == WatchedTitlesMode.HIDE) {
-                    val keptIds = previous?.ids?.takeIf { previous.mode == WatchedTitlesMode.HIDE }
-                    watchedTitles.filter.value = HomeWatchedFilter(mode, keptIds)
-                    if (watchedTitles.idsJob?.isActive != true) startWatchedIdsObserver()
-                } else {
-                    watchedTitles.idsJob?.cancel()
-                    watchedTitles.idsJob = null
-                    watchedTitles.filter.value = HomeWatchedFilter(mode)
-                }
-                _uiState.update { state ->
-                    if (state.watchedTitlesMode == mode) state else state.copy(watchedTitlesMode = mode)
-                }
-                val wasHiding = previous?.mode == WatchedTitlesMode.HIDE
-                if (previous != null && wasHiding != (mode == WatchedTitlesMode.HIDE)) {
-                    watchedTitles.refillPages.clear()
-                    scheduleWatchedRowsUpdate()
-                }
-            }
+    watchedTitles.idsJob?.cancel()
+    watchedTitles.idsJob = null
+    watchedTitles.filter.value = HomeWatchedFilter(WatchedTitlesMode.SHOW)
+    _uiState.update { state ->
+        if (state.watchedTitlesMode == WatchedTitlesMode.SHOW) state else state.copy(watchedTitlesMode = WatchedTitlesMode.SHOW)
     }
 }
 
-/** Reads the lists only while a switch is on, so people who don't use them pay nothing. */
-@OptIn(ExperimentalCoroutinesApi::class)
+/** Plan-to-watch and Watching list hiding has been removed; keep rows unfiltered. */
 internal fun HomeViewModel.observeListedTitlesPipeline() {
-    viewModelScope.launch {
-        combine(layoutPreferenceDataStore.hidePlanToWatch, layoutPreferenceDataStore.hideWatching) { plan, watching ->
-            plan to watching
-        }
-            .distinctUntilChanged()
-            .flatMapLatest { (plan, watching) ->
-                if (!plan && !watching) return@flatMapLatest flowOf(HomeListedFilter(false, false))
-                combine(
-                    libraryRepository.listTabs,
-                    libraryRepository.libraryItems,
-                    watchProgressRepository.allProgress
-                ) { tabs, items, progress ->
-                    val inProgress = progress.filter { it.isInProgress() }.map { it.contentId }
-                    HomeListedFilter(plan, watching, listedTitles(tabs, items, inProgress))
-                }.onStart { emit(HomeListedFilter(plan, watching)) }
-            }
-            .distinctUntilChanged()
-            .collect { filter ->
-                val previous = watchedTitles.listed.value
-                watchedTitles.listed.value = filter
-                if (previous != null) {
-                    if (previous.hidePlan != filter.hidePlan || previous.hideWatching != filter.hideWatching) {
-                        watchedTitles.refillPages.clear()
-                    }
-                    scheduleWatchedRowsUpdate()
-                }
-            }
-    }
+    watchedTitles.listed.value = HomeListedFilter(hidePlan = false, hideWatching = false)
 }
 
 /** Reads list rows again when their titles change, while at least one of them is switched on. */
@@ -134,25 +85,6 @@ private fun Addon.enabledHomeCatalogs(viewModel: HomeViewModel): List<CatalogDes
         catalogId = catalog.id,
         catalogName = catalog.name
     )
-}
-
-private fun HomeViewModel.startWatchedIdsObserver() {
-    watchedTitles.idsJob = viewModelScope.launch {
-        watchedSeriesStateHolder.loadFromDisk()
-        combine(
-            watchProgressRepository.observeWatchedMovieIds(),
-            watchedSeriesStateHolder.fullyWatchedSeriesIds
-        ) { movieIds, seriesIds ->
-            HomeWatchedIds(movieIds = movieIds, seriesIds = seriesIds)
-        }
-            .distinctUntilChanged()
-            .collect { ids ->
-                watchedTitles.filter.update { current ->
-                    if (current?.mode == WatchedTitlesMode.HIDE) current.copy(ids = ids) else current
-                }
-                scheduleWatchedRowsUpdate()
-            }
-    }
 }
 
 private fun HomeViewModel.scheduleWatchedRowsUpdate() {

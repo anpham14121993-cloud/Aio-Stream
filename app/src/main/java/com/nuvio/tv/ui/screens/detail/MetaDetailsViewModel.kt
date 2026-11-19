@@ -470,7 +470,7 @@ class MetaDetailsViewModel @Inject constructor(
     private var suppressSeasonAutoSwitch = false
 
     private var isPlayButtonFocused = false
-    private var hideUnreleasedContent = false
+    private var hideUnreleasedContent = true
     private var traktCommentsEnabled = false
     private var traktAuthenticated = false
     private var moreLikeThisSourcePreference = com.nuvio.tv.data.local.MoreLikeThisSourcePreference.TRAKT

@@ -90,6 +90,11 @@ jobs:
             --tests 'com.nuvio.tv.domain.model.*' \
             --tests 'com.nuvio.tv.launcher.*' \
             --tests 'com.nuvio.tv.ui.screens.settings.*' \
+            --tests 'com.nuvio.tv.ui.screens.player.MobilePlayerAspectPolicyTest' \
+            --tests 'com.nuvio.tv.ui.screens.player.TunneledSurfaceResizeModeTest' \
+            --tests 'com.nuvio.tv.core.sync.ProfileSettingsCredentialPolicyTest' \
+            --tests 'com.nuvio.tv.core.sync.ProfileSettingsSubtitleLanguageSyncTest' \
+            --tests 'com.nuvio.tv.core.backup.BackupCatalogTest' \
             --tests 'com.nuvio.tv.ui.v2.*' \
             --tests 'com.nuvio.tv.ui.monolith.*' \
             --tests 'com.nuvio.tv.ui.brand.*' \

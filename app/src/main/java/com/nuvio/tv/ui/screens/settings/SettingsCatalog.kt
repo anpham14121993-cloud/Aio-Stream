@@ -36,8 +36,9 @@ internal fun visibleSettingsCategories(
 ): List<SettingsCategory> = SettingsCategory.entries.filter { category ->
     when (category) {
         SettingsCategory.ACCOUNT,
-        SettingsCategory.PROFILES,
-        SettingsCategory.BACKUP -> isPrimaryProfile
+        SettingsCategory.PROFILES -> isPrimaryProfile
+        SettingsCategory.SEARCH,
+        SettingsCategory.BACKUP -> false
         SettingsCategory.DEBUG -> isDebugBuild && !isEssentialMode
         SettingsCategory.EXPERIENCE -> false
         SettingsCategory.SCOUT -> com.nuvio.tv.domain.model.ScoutFeature.available

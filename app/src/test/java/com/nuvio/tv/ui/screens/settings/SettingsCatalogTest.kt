@@ -26,12 +26,13 @@ class SettingsCatalogTest {
                 SettingsCategory.INTEGRATION,
                 SettingsCategory.TRACKING,
                 SettingsCategory.ADVANCED,
-                SettingsCategory.BACKUP,
                 SettingsCategory.ABOUT,
                 SettingsCategory.DEBUG
             ),
-            categories - SettingsCategory.SCOUT - SettingsCategory.SEARCH
+            categories - SettingsCategory.SCOUT
         )
+        assertFalse(SettingsCategory.SEARCH in categories)
+        assertFalse(SettingsCategory.BACKUP in categories)
         assertEquals(com.nuvio.tv.domain.model.ScoutFeature.available, SettingsCategory.SCOUT in categories)
     }
 
@@ -45,8 +46,10 @@ class SettingsCatalogTest {
 
         assertFalse(SettingsCategory.ACCOUNT in categories)
         assertFalse(SettingsCategory.PROFILES in categories)
-        assertEquals(SettingsCategory.SEARCH, categories.first())
-        assertEquals(SettingsCategory.APPEARANCE, categories[1])
+        assertFalse(SettingsCategory.SEARCH in categories)
+        assertFalse(SettingsCategory.BACKUP in categories)
+        assertEquals(SettingsCategory.APPEARANCE, categories.first())
+        assertEquals(SettingsCategory.LAYOUT, categories[1])
     }
 
     @Test
@@ -99,7 +102,6 @@ class SettingsCatalogTest {
 
         assertEquals(
             listOf(
-                SettingsCategory.ACCOUNT,
                 SettingsCategory.APPEARANCE,
                 SettingsCategory.CONTENT_DISCOVERY,
                 SettingsCategory.INTEGRATION,

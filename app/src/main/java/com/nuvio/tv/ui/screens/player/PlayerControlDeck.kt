@@ -148,7 +148,15 @@ internal fun PlayerControlDeck(
 internal fun PlayerControlChrome(v2: Boolean, modifier: Modifier = Modifier, rightInset: Dp = 0.dp,
     gap: Dp = 4.dp, title: @Composable () -> Unit, timeline: @Composable () -> Unit,
     time: @Composable () -> Unit, deck: @Composable () -> Unit) {
-    Column(modifier.fillMaxWidth().padding(start = if (v2) 32.dp else 48.dp,
+    val isHandheld = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current != com.nuvio.tv.ui.monolith.DeviceFormFactor.TV
+    val chromeModifier = if (isHandheld) {
+        modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+    } else {
+        modifier.fillMaxWidth()
+    }
+    Column(chromeModifier.padding(start = if (v2) 32.dp else 48.dp,
         end = (if (v2) 32.dp else 48.dp) + rightInset, bottom = if (v2) 14.dp else 28.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Column(if (v2) Modifier.padding(horizontal = 12.dp) else Modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) { title() }

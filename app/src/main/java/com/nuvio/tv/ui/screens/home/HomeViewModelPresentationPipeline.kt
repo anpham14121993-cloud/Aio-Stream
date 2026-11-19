@@ -115,16 +115,16 @@ internal fun HomeViewModel.observeLayoutPreferencesPipeline() {
             layoutPreferenceDataStore.heroSectionEnabled,
             layoutPreferenceDataStore.posterLabelsEnabled,
             layoutPreferenceDataStore.catalogAddonNameEnabled
-        ) { layout, heroCatalogKeys, heroSectionEnabled, posterLabelsEnabled, catalogAddonNameEnabled ->
+        ) { layout, heroCatalogKeys, heroSectionEnabled, _, catalogAddonNameEnabled ->
             CoreLayoutPrefs(
                 layout = layout,
                 heroCatalogKeys = heroCatalogKeys,
                 heroSectionEnabled = heroSectionEnabled,
-                posterLabelsEnabled = posterLabelsEnabled,
+                posterLabelsEnabled = true,
                 catalogAddonNameEnabled = catalogAddonNameEnabled,
                 catalogTypeSuffixEnabled = true,
                 classicFocusGradientEnabled = false,
-                hideUnreleasedContent = false,
+                hideUnreleasedContent = true,
                 showFullReleaseDate = true
             )
         },
@@ -159,7 +159,6 @@ internal fun HomeViewModel.observeLayoutPreferencesPipeline() {
 
     val modernLayoutPrefsFlow = combine(
         layoutPreferenceDataStore.modernLandscapePostersEnabled,
-        layoutPreferenceDataStore.modernHeroFullScreenBackdropEnabled,
         layoutPreferenceDataStore.homeImdbRatingsVisibility,
         combine(
             layoutPreferenceDataStore.alwaysShowLandscapeClearlogo,
@@ -167,11 +166,11 @@ internal fun HomeViewModel.observeLayoutPreferencesPipeline() {
             ::Pair
         ),
         layoutPreferenceDataStore.detailImdbRatingsVisibility
-    ) { landscapePosters, fullScreenBackdrop, homeImdbRatingsVisibility, (alwaysShowLandscapeClearlogo, addonLandscapeBackdropLogo), detailImdbRatingsVisibility ->
+    ) { landscapePosters, _, (alwaysShowLandscapeClearlogo, addonLandscapeBackdropLogo), detailImdbRatingsVisibility ->
         ModernLayoutPrefs(
             landscapePosters = landscapePosters,
-            fullScreenBackdrop = fullScreenBackdrop,
-            homeImdbRatingsVisibility = homeImdbRatingsVisibility,
+            fullScreenBackdrop = false,
+            homeImdbRatingsVisibility = HomeImdbRatingsVisibility.SHOW_ALL,
             alwaysShowLandscapeClearlogo = alwaysShowLandscapeClearlogo,
             addonLandscapeBackdropLogo = addonLandscapeBackdropLogo,
             detailImdbRatingsVisibility = detailImdbRatingsVisibility,
@@ -215,15 +214,18 @@ internal fun HomeViewModel.observeLayoutPreferencesPipeline() {
             baseLayoutUiPrefsFlow,
             modernLayoutPrefsFlow,
             layoutPreferenceDataStore.heroDescriptionAutoScrollEnabled
-        ) { basePrefs, modernPrefs, heroDescriptionAutoScrollEnabled ->
+        ) { basePrefs, modernPrefs, _ ->
             basePrefs.copy(
+                posterLabelsEnabled = true,
+                catalogTypeSuffixEnabled = true,
+                hideUnreleasedContent = true,
                 modernLandscapePostersEnabled = modernPrefs.landscapePosters,
-                modernHeroFullScreenBackdropEnabled = modernPrefs.fullScreenBackdrop,
-                homeImdbRatingsVisibility = modernPrefs.homeImdbRatingsVisibility,
+                modernHeroFullScreenBackdropEnabled = false,
+                homeImdbRatingsVisibility = HomeImdbRatingsVisibility.SHOW_ALL,
                 alwaysShowLandscapeClearlogo = modernPrefs.alwaysShowLandscapeClearlogo,
                 addonLandscapeBackdropLogo = modernPrefs.addonLandscapeBackdropLogo,
                 detailImdbRatingsVisibility = modernPrefs.detailImdbRatingsVisibility,
-                heroDescriptionAutoScrollEnabled = heroDescriptionAutoScrollEnabled,
+                heroDescriptionAutoScrollEnabled = true,
             )
         }
             .distinctUntilChanged()

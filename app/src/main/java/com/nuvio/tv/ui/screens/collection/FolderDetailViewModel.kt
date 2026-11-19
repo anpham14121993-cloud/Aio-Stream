@@ -80,12 +80,12 @@ data class FolderDetailUiState(
     val posterLabelsEnabled: Boolean = true,
     val catalogAddonNameEnabled: Boolean = true,
     val catalogTypeSuffixEnabled: Boolean = true,
-    val hideUnreleasedContent: Boolean = false,
+    val hideUnreleasedContent: Boolean = true,
     val showFullReleaseDate: Boolean = true,
     val modernLandscapePostersEnabled: Boolean = false,
     val modernHeroFullScreenBackdropEnabled: Boolean = false,
     val alwaysShowLandscapeClearlogo: Boolean = false,
-    val heroDescriptionAutoScrollEnabled: Boolean = false,
+    val heroDescriptionAutoScrollEnabled: Boolean = true,
     val focusedPosterBackdropExpandEnabled: Boolean = false,
     val focusedPosterBackdropExpandDelaySeconds: Int = 3,
     val focusedPosterBackdropTrailerEnabled: Boolean = true,
@@ -279,16 +279,16 @@ class FolderDetailViewModel @Inject constructor(
 
             val addons = addonRepository.getInstalledAddons().first().enabledAddons() + serverCatalog.addons.first()
             val homeLayout = layoutPreferenceDataStore.selectedLayout.first()
-            val homeImdbRatingsVisibility = layoutPreferenceDataStore.homeImdbRatingsVisibility.first()
-            val posterLabelsEnabled = layoutPreferenceDataStore.posterLabelsEnabled.first()
+            val homeImdbRatingsVisibility = HomeImdbRatingsVisibility.SHOW_ALL
+            val posterLabelsEnabled = true
             val catalogAddonNameEnabled = layoutPreferenceDataStore.catalogAddonNameEnabled.first()
-            val catalogTypeSuffixEnabled = layoutPreferenceDataStore.catalogTypeSuffixEnabled.first()
-            val hideUnreleasedContent = layoutPreferenceDataStore.hideUnreleasedContent.first()
+            val catalogTypeSuffixEnabled = true
+            val hideUnreleasedContent = true
             val showFullReleaseDate = layoutPreferenceDataStore.showFullReleaseDate.first()
             val modernLandscapePosters = layoutPreferenceDataStore.landscapePosterScope.first().onAllScreens
-            val modernFullScreenBackdrop = layoutPreferenceDataStore.modernHeroFullScreenBackdropEnabled.first()
+            val modernFullScreenBackdrop = false
             val alwaysShowLandscapeClearlogo = layoutPreferenceDataStore.alwaysShowLandscapeClearlogo.first()
-            val heroDescriptionAutoScrollEnabled = layoutPreferenceDataStore.heroDescriptionAutoScrollEnabled.first()
+            val heroDescriptionAutoScrollEnabled = true
             val focusedPosterBackdropExpandEnabled = layoutPreferenceDataStore.focusedPosterBackdropExpandEnabled.first()
             val focusedPosterBackdropExpandDelaySeconds = layoutPreferenceDataStore.focusedPosterBackdropExpandDelaySeconds.first()
             val focusedPosterBackdropTrailerEnabled = layoutPreferenceDataStore.focusedPosterBackdropTrailerEnabled.first()
@@ -599,7 +599,7 @@ class FolderDetailViewModel @Inject constructor(
                         isLoading = anyLoading,
                         homeLayout = s.homeLayout,
                         homeImdbRatingsVisibility = s.homeImdbRatingsVisibility,
-                        posterLabelsEnabled = if (s.homeLayout == HomeLayout.MODERN) false else s.posterLabelsEnabled,
+                        posterLabelsEnabled = s.posterLabelsEnabled,
                         modernLandscapePostersEnabled = s.modernLandscapePostersEnabled,
                         modernHeroFullScreenBackdropEnabled = s.modernHeroFullScreenBackdropEnabled,
                         alwaysShowLandscapeClearlogo = s.alwaysShowLandscapeClearlogo,

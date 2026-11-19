@@ -274,32 +274,24 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[heroSectionEnabledKey] ?: true
     }
 
-    val discoverLocation: Flow<DiscoverLocation> = profileFlow { prefs ->
-        val stored = prefs[discoverLocationKey] ?: DiscoverLocation.IN_SEARCH.name
-        runCatching { DiscoverLocation.valueOf(stored) }
-            .getOrDefault(DiscoverLocation.IN_SEARCH)
+    val discoverLocation: Flow<DiscoverLocation> = profileFlow { _ ->
+        DiscoverLocation.IN_SIDEBAR
     }
 
-    val lastNonOffDiscoverLocation: Flow<DiscoverLocation> = profileFlow { prefs ->
-        val stored = prefs[lastNonOffDiscoverLocationKey]
-            ?.takeIf { it != DiscoverLocation.OFF.name }
-        val fallback = prefs[discoverLocationKey]
-            ?.takeIf { it != DiscoverLocation.OFF.name }
-        val source = stored ?: fallback ?: DiscoverLocation.IN_SEARCH.name
-        runCatching { DiscoverLocation.valueOf(source) }
-            .getOrDefault(DiscoverLocation.IN_SEARCH)
+    val lastNonOffDiscoverLocation: Flow<DiscoverLocation> = profileFlow { _ ->
+        DiscoverLocation.IN_SIDEBAR
     }
 
-    val posterLabelsEnabled: Flow<Boolean> = profileFlow { prefs ->
-        prefs[posterLabelsEnabledKey] ?: true
+    val posterLabelsEnabled: Flow<Boolean> = profileFlow { _ ->
+        true
     }
 
     val catalogAddonNameEnabled: Flow<Boolean> = profileFlow { prefs ->
         prefs[catalogAddonNameEnabledKey] ?: true
     }
 
-    val catalogTypeSuffixEnabled: Flow<Boolean> = profileFlow { prefs ->
-        prefs[catalogTypeSuffixEnabledKey] ?: true
+    val catalogTypeSuffixEnabled: Flow<Boolean> = profileFlow { _ ->
+        true
     }
 
     val classicFocusGradientEnabled: Flow<Boolean> = profileFlow { prefs ->
@@ -388,8 +380,8 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[addonLandscapeBackdropLogoKey] ?: false
     }
 
-    val heroDescriptionAutoScrollEnabled: Flow<Boolean> = profileFlow { prefs ->
-        prefs[heroDescriptionAutoScrollEnabledKey] ?: false
+    val heroDescriptionAutoScrollEnabled: Flow<Boolean> = profileFlow { _ ->
+        true
     }
 
     val episodeOptionsOverlayStyle: Flow<EpisodeOptionsOverlayStyle> = profileFlow { prefs ->
@@ -402,10 +394,8 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[episodeSynopsisUnderRowKey] ?: true
     }
 
-    val homeImdbRatingsVisibility: Flow<HomeImdbRatingsVisibility> = profileFlow { prefs ->
-        val stored = prefs[homeImdbRatingsVisibilityKey] ?: HomeImdbRatingsVisibility.SHOW_ALL.name
-        runCatching { HomeImdbRatingsVisibility.valueOf(stored) }
-            .getOrDefault(HomeImdbRatingsVisibility.SHOW_ALL)
+    val homeImdbRatingsVisibility: Flow<HomeImdbRatingsVisibility> = profileFlow { _ ->
+        HomeImdbRatingsVisibility.SHOW_ALL
     }
 
     val detailImdbRatingsVisibility: Flow<DetailImdbRatingsVisibility> = profileFlow { prefs ->
@@ -455,17 +445,17 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[preferExternalMetaAddonDetailKey] ?: true
     }.stateIn(scope, SharingStarted.Eagerly, true)
 
-    val hideUnreleasedContent: Flow<Boolean> = profileFlow { prefs ->
-        prefs[hideUnreleasedContentKey] ?: false
+    val hideUnreleasedContent: Flow<Boolean> = profileFlow { _ ->
+        true
     }
 
-    val watchedTitlesMode: Flow<WatchedTitlesMode> = profileFlow { prefs ->
-        WatchedTitlesMode.fromStored(prefs[watchedTitlesModeKey])
+    val watchedTitlesMode: Flow<WatchedTitlesMode> = profileFlow { _ ->
+        WatchedTitlesMode.SHOW
     }
 
-    val hidePlanToWatch: Flow<Boolean> = profileFlow { prefs -> prefs[hidePlanToWatchKey] ?: false }
+    val hidePlanToWatch: Flow<Boolean> = profileFlow { _ -> false }
 
-    val hideWatching: Flow<Boolean> = profileFlow { prefs -> prefs[hideWatchingKey] ?: false }
+    val hideWatching: Flow<Boolean> = profileFlow { _ -> false }
 
     val showFullReleaseDate: Flow<Boolean> = profileFlow { prefs ->
         prefs[showFullReleaseDateKey] ?: true
@@ -1078,10 +1068,10 @@ class LayoutPreferenceDataStore @Inject constructor(
             orderKeys = parseCatalogKeys(prefs.getStringOrMigrateSet(homeCatalogOrderKeysKey)),
             disabledKeys = parseCatalogKeys(prefs.getStringOrMigrateSet(disabledHomeCatalogKeysKey)).toSet(),
             customTitles = parseCustomTitles(prefs.getStringOrMigrateSet(customCatalogTitlesKey)),
-            hideUnreleasedContent = prefs[hideUnreleasedContentKey] ?: false,
-            watchedTitlesMode = WatchedTitlesMode.fromStored(prefs[watchedTitlesModeKey]),
-            hidePlanToWatch = prefs[hidePlanToWatchKey] ?: false,
-            hideWatching = prefs[hideWatchingKey] ?: false
+            hideUnreleasedContent = true,
+            watchedTitlesMode = WatchedTitlesMode.SHOW,
+            hidePlanToWatch = false,
+            hideWatching = false
         )
     }
 }

@@ -100,8 +100,35 @@ class ProfileSettingsCredentialPolicyTest {
     }
 
     @Test
-    fun `an imported subtitle font stays on the TV that has the file`() {
-        assertTrue(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "subtitle_font_id"))
-        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "subtitle_shadow_size"))
+    fun `subtitle appearance size and offset stay device local across phone tablet and tv`() {
+        listOf(
+            "subtitle_font_id",
+            "subtitle_font",
+            "subtitle_size",
+            "subtitle_bitmap_size",
+            "subtitle_vertical_offset",
+            "subtitle_bold",
+            "subtitle_text_color",
+            "subtitle_background_color",
+            "subtitle_outline_enabled",
+            "subtitle_outline_color",
+            "subtitle_outline_width",
+            "subtitle_edge_style",
+            "subtitle_outline_size",
+            "subtitle_shadow_enabled",
+            "subtitle_shadow_opacity",
+            "subtitle_shadow_size",
+            "subtitle_hdr_style_enabled",
+            "subtitle_hdr_text_color",
+            "subtitle_hdr_brightness",
+            "subtitle_hdr_dim_player_controls",
+            "libass_render_mode",
+            "libass_render_scale"
+        ).forEach { key ->
+            assertTrue(key, shouldExcludePreferenceFromProfileSettingsSync("player_settings", key))
+        }
+        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "subtitle_preferred_language"))
+        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "subtitle_secondary_language"))
+        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "subtitle_tertiary_language"))
     }
 }

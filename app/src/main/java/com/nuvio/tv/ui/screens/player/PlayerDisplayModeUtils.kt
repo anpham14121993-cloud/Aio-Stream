@@ -20,10 +20,30 @@ internal object PlayerDisplayModeUtils {
      * scale modes keep a video-sized frame.
      */
     fun exoSurfaceResizeMode(tunnelingEnabled: Boolean, tunneledSurfaceFill: Boolean): Int {
-        return if (tunnelingEnabled && tunneledSurfaceFill) {
-            AspectRatioFrameLayout.RESIZE_MODE_FILL
-        } else {
-            AspectRatioFrameLayout.RESIZE_MODE_FIT
+        return exoSurfaceResizeMode(
+            tunnelingEnabled = tunnelingEnabled,
+            tunneledSurfaceFill = tunneledSurfaceFill,
+            aspectMode = AspectMode.ORIGINAL,
+            useMobileResizeModes = false
+        )
+    }
+
+    fun exoSurfaceResizeMode(
+        tunnelingEnabled: Boolean,
+        tunneledSurfaceFill: Boolean,
+        aspectMode: AspectMode,
+        useMobileResizeModes: Boolean
+    ): Int {
+        return when {
+            tunnelingEnabled -> {
+                if (tunneledSurfaceFill) {
+                    AspectRatioFrameLayout.RESIZE_MODE_FILL
+                } else {
+                    AspectRatioFrameLayout.RESIZE_MODE_FIT
+                }
+            }
+            useMobileResizeModes -> mobileExoResizeMode(aspectMode)
+            else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
         }
     }
 

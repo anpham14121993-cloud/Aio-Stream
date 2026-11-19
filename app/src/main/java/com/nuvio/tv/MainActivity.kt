@@ -705,7 +705,7 @@ open class MainActivity : ComponentActivity() {
             val installedAddons by remember(addonRepository) {
                 addonRepository.getInstalledAddons()
             }.collectAsState(initial = null)
-            val discoverLocation = mainUiPrefs.discoverLocation
+            val discoverLocation = DiscoverLocation.IN_SIDEBAR
 
             val uiScalePercent by remember {
                 com.nuvio.tv.data.local.UiScalePreference.flow(applicationContext)
@@ -714,8 +714,13 @@ open class MainActivity : ComponentActivity() {
                 .collectAsState(initial = null)
             val appearancePreferences by remember { V2AppearancePreferenceStore.flow(applicationContext) }
                 .collectAsState(initial = null)
-            val device = devicePreferences
-            val appearance = appearancePreferences
+            val device = devicePreferences?.copy(
+                interfaceExperience = com.nuvio.tv.domain.model.InterfaceExperience.NUVIO_V2
+            )
+            val appearance = appearancePreferences?.copy(
+                introAnimationEnabled = true,
+                introSoundEnabled = true
+            )
             val originalScale = uiScalePercent
             // Resolve the device snapshot before profile selection's first themed frame.
             if (device == null || appearance == null || originalScale == null) {
@@ -1845,6 +1850,18 @@ open class MainActivity : ComponentActivity() {
         val isTv = currentFormFactor == com.nuvio.tv.ui.monolith.DeviceFormFactor.TV && detectedTv
         if (isTv) return
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(currentWindow, false)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            val targetCutoutMode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else {
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            val layoutParams = currentWindow.attributes
+            if (layoutParams.layoutInDisplayCutoutMode != targetCutoutMode) {
+                layoutParams.layoutInDisplayCutoutMode = targetCutoutMode
+                currentWindow.attributes = layoutParams
+            }
+        }
         currentWindow.statusBarColor = android.graphics.Color.TRANSPARENT
         currentWindow.navigationBarColor = android.graphics.Color.TRANSPARENT
         androidx.core.view.WindowCompat.getInsetsController(currentWindow, currentWindow.decorView).apply {

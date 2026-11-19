@@ -7,6 +7,7 @@ import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import androidx.annotation.StringRes
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.nuvio.tv.R
 import kotlin.math.roundToInt
@@ -28,14 +29,59 @@ internal fun aspectModeAppliedToExoSurface(
     return if (tunnelingEnabled) AspectMode.ORIGINAL else aspectMode
 }
 
-internal fun nextAspectMode(current: AspectMode): AspectMode {
+internal fun normalizeMobileAspectMode(mode: AspectMode): AspectMode =
+    when (mode) {
+        AspectMode.ORIGINAL -> AspectMode.ORIGINAL
+        AspectMode.STRETCH -> AspectMode.STRETCH
+        AspectMode.FULL_SCREEN,
+        AspectMode.SLIGHT_ZOOM,
+        AspectMode.CINEMA_ZOOM,
+        AspectMode.VERTICAL_STRETCH,
+        AspectMode.HORIZONTAL_STRETCH -> AspectMode.FULL_SCREEN
+    }
+
+internal fun mobileExoResizeMode(mode: AspectMode): Int =
+    when (normalizeMobileAspectMode(mode)) {
+        AspectMode.ORIGINAL -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+        AspectMode.STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+        else -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+    }
+
+internal fun mobileMpvPanscan(mode: AspectMode): Double =
+    when (normalizeMobileAspectMode(mode)) {
+        AspectMode.ORIGINAL -> 0.0
+        AspectMode.STRETCH -> 1.0
+        else -> 0.5
+    }
+
+internal fun nextAspectMode(
+    current: AspectMode,
+    useMobileResizeModes: Boolean = false
+): AspectMode {
+    if (useMobileResizeModes) {
+        return when (normalizeMobileAspectMode(current)) {
+            AspectMode.ORIGINAL -> AspectMode.STRETCH
+            AspectMode.STRETCH -> AspectMode.FULL_SCREEN
+            else -> AspectMode.ORIGINAL
+        }
+    }
     val modes = AspectMode.entries
     val nextIndex = (modes.indexOf(current) + 1) % modes.size
     return modes[nextIndex]
 }
 
-internal fun aspectModeLabel(mode: AspectMode, getString: (Int) -> String): String =
-    getString(mode.labelResId)
+internal fun aspectModeLabel(
+    mode: AspectMode,
+    getString: (Int) -> String,
+    useMobileResizeModes: Boolean = false
+): String {
+    if (!useMobileResizeModes) return getString(mode.labelResId)
+    return when (normalizeMobileAspectMode(mode)) {
+        AspectMode.ORIGINAL -> getString(R.string.player_mobile_resize_fit)
+        AspectMode.STRETCH -> getString(R.string.player_mobile_resize_fill)
+        else -> getString(R.string.player_mobile_resize_zoom)
+    }
+}
 
 internal data class AspectScale(val scaleX: Float, val scaleY: Float)
 

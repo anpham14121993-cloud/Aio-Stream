@@ -66,17 +66,23 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
@@ -262,7 +268,7 @@ fun PlayerScreen(
     val savedUiState by viewModel.uiState.collectAsState()
     val isV2 = LocalV2Appearance.current != null
     val uiState = savedUiState.copy(controlLayout = com.nuvio.tv.data.local.PlayerControlLayout.effective(savedUiState.controlLayout, isV2))
-    val playerBadges = rememberPlayerBadges(viewModel, uiState)
+    val playerBadges = emptyList<PlayerBadge>()
     PartyPlayerBinding(viewModel)
     val partyState by rememberPartyRuntime().state.collectAsState()
     val cinematicGlass = LocalV2Appearance.current?.visualStyle == com.nuvio.tv.domain.model.VisualStyle.CINEMATIC_GLASS
@@ -1698,18 +1704,29 @@ fun PlayerScreen(
                 controlsTitleRightPx = 0f
             }
         }
+        val useMobileResizeModes = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current !=
+            com.nuvio.tv.ui.monolith.DeviceFormFactor.TV
+        LaunchedEffect(useMobileResizeModes) {
+            viewModel.onEvent(PlayerEvent.OnSetMobileAspectPolicy(useMobileResizeModes))
+        }
         val fallbackSubtitleLiftPx = with(LocalDensity.current) { SUBTITLE_CONTROLS_LIFT.toPx() }
-        val playerSurfaceModifier = Modifier
-            .align(Alignment.TopEnd)
-            .padding(end = postPlayRecommendationPlayerPadding, top = postPlayRecommendationPlayerPadding)
-            .fillMaxWidth(postPlayRecommendationPlayerWidth)
-            .aspectRatio(16f / 9f)
-            .clip(playerSurfaceShape)
-            .border(
-                BorderStroke(1.dp, Color.White.copy(alpha = postPlayRecommendationPlayerBorderAlpha)),
-                playerSurfaceShape
-            )
-            .then(if (transparentLetterbox && playerSurfaceIsFullscreen) Modifier else Modifier.background(Color.Black))
+        val playerSurfaceModifier = if (playerSurfaceIsFullscreen) {
+            Modifier
+                .fillMaxSize()
+                .then(if (transparentLetterbox) Modifier else Modifier.background(Color.Black))
+        } else {
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = postPlayRecommendationPlayerPadding, top = postPlayRecommendationPlayerPadding)
+                .fillMaxWidth(postPlayRecommendationPlayerWidth)
+                .aspectRatio(16f / 9f)
+                .clip(playerSurfaceShape)
+                .border(
+                    BorderStroke(1.dp, Color.White.copy(alpha = postPlayRecommendationPlayerBorderAlpha)),
+                    playerSurfaceShape
+                )
+                .background(Color.Black)
+        }
             .zIndex(
                 if (postPlayRecommendationState.isVisible || postPlayRecommendationPlayerWidth < 0.999f) {
                     2.2f
@@ -1836,6 +1853,7 @@ fun PlayerScreen(
                         isPlaying = uiState.isPlaying,
                         isBuffering = uiState.isBuffering,
                         aspectMode = uiState.aspectMode,
+                        useMobileResizeModes = useMobileResizeModes,
                         subtitleStyle = uiState.effectiveSubtitleStyle,
                         subtitleLiftPx = subtitleLiftPx,
                         subtitleTrackKey = subtitleWidthKey.take(2),
@@ -1850,6 +1868,7 @@ fun PlayerScreen(
                             isPlaying = uiState.isPlaying,
                             isBuffering = uiState.isBuffering,
                             aspectMode = uiState.aspectMode,
+                            useMobileResizeModes = useMobileResizeModes,
                             tunnelingEnabled = uiState.tunnelingEnabled,
                             tunneledSurfaceFill = uiState.tunneledSurfaceFill,
                             useLibass = uiState.useLibass,
@@ -2222,8 +2241,9 @@ fun PlayerScreen(
                         .padding(
                             top = with(LocalDensity.current) {
                                 val belowStats = NuvioTheme.spacing.lg + (if (statsOverlayShown) statsOverlayHeightPx else 0).toDp()
+                                val clockTopPadding = if (useMobileResizeModes) 6.dp else NuvioTheme.spacing.xl
                                 val belowClock = if (clockOverlayHeightPx > 0) {
-                                    NuvioTheme.spacing.xl + clockOverlayHeightPx.toDp() + NuvioTheme.spacing.sm
+                                    clockTopPadding + clockOverlayHeightPx.toDp() + NuvioTheme.spacing.sm
                                 } else {
                                     0.dp
                                 }
@@ -2406,7 +2426,19 @@ fun PlayerScreen(
                 exit = fadeOut(animationSpec = tween(150)),
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(end = 28.dp, top = NuvioTheme.spacing.xl)
+                    .then(
+                        if (useMobileResizeModes) {
+                            Modifier.windowInsetsPadding(
+                                WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .padding(
+                        end = if (useMobileResizeModes) 16.dp else 28.dp,
+                        top = if (useMobileResizeModes) 6.dp else NuvioTheme.spacing.xl
+                    )
                     .onSizeChanged { clockOverlayHeightPx = it.height }
                     .zIndex(2.15f)
             ) {
@@ -2977,6 +3009,7 @@ private fun MpvPlayerSurface(
     isPlaying: Boolean,
     isBuffering: Boolean,
     aspectMode: AspectMode,
+    useMobileResizeModes: Boolean,
     subtitleStyle: SubtitleStyleSettings,
     subtitleLiftPx: Float,
     subtitleTrackKey: Any?,
@@ -2985,6 +3018,7 @@ private fun MpvPlayerSurface(
 ) {
     val context = LocalContext.current
     val latestAspectMode by rememberUpdatedState(aspectMode)
+    val latestUseMobileResizeModes by rememberUpdatedState(useMobileResizeModes)
     val latestSubtitleStyle by rememberUpdatedState(subtitleStyle)
     val latestMetricsCallback by rememberUpdatedState(onSubtitleTextMetricsChanged)
     val mpvView = remember(context) {
@@ -2995,8 +3029,16 @@ private fun MpvPlayerSurface(
     }
 
     AndroidView(
-        factory = { mpvView },
-        modifier = modifier.focusProperties { canFocus = false }
+        factory = {
+            mpvView.apply {
+                setMobileResizeModes(useMobileResizeModes)
+                applyAspectMode(aspectMode)
+            }
+        },
+        modifier = modifier.focusProperties { canFocus = false },
+        update = {
+            it.setMobileResizeModes(latestUseMobileResizeModes)
+        }
     )
 
     DisposableEffect(viewModel, mpvView) {
@@ -3008,6 +3050,7 @@ private fun MpvPlayerSurface(
 
     DisposableEffect(mpvView) {
         val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            mpvView.setMobileResizeModes(latestUseMobileResizeModes)
             mpvView.applyAspectMode(latestAspectMode)
             latestMetricsCallback(mpvView.subtitleTextMetrics(latestSubtitleStyle))
         }
@@ -3024,7 +3067,8 @@ private fun MpvPlayerSurface(
         }
     }
 
-    LaunchedEffect(mpvView, aspectMode) {
+    LaunchedEffect(mpvView, aspectMode, useMobileResizeModes) {
+        mpvView.setMobileResizeModes(useMobileResizeModes)
         mpvView.applyAspectMode(aspectMode)
     }
 
@@ -3050,6 +3094,7 @@ private fun ExoPlayerSurface(
     isPlaying: Boolean,
     isBuffering: Boolean,
     aspectMode: AspectMode,
+    useMobileResizeModes: Boolean,
     tunnelingEnabled: Boolean,
     tunneledSurfaceFill: Boolean,
     useLibass: Boolean,
@@ -3064,6 +3109,7 @@ private fun ExoPlayerSurface(
 ) {
     val context = LocalContext.current
     val latestAspectMode by rememberUpdatedState(aspectMode)
+    val latestUseMobileResizeModes by rememberUpdatedState(useMobileResizeModes)
     val latestTunnelingEnabled by rememberUpdatedState(tunnelingEnabled)
     val latestTunneledSurfaceFill by rememberUpdatedState(tunneledSurfaceFill)
     val latestBindSubtitleView by rememberUpdatedState(onBindSubtitleView)
@@ -3137,7 +3183,8 @@ private fun ExoPlayerSurface(
                     playerView.syncExoSurfaceLayout(
                         tunnelingEnabled = latestTunnelingEnabled,
                         tunneledSurfaceFill = latestTunneledSurfaceFill,
-                        aspectMode = latestAspectMode
+                        aspectMode = latestAspectMode,
+                        useMobileResizeModes = latestUseMobileResizeModes
                     )
                     controller.refreshVideoBottomFraction()
                 }
@@ -3148,7 +3195,8 @@ private fun ExoPlayerSurface(
                     playerView.syncExoSurfaceLayout(
                         tunnelingEnabled = latestTunnelingEnabled,
                         tunneledSurfaceFill = latestTunneledSurfaceFill,
-                        aspectMode = latestAspectMode
+                        aspectMode = latestAspectMode,
+                        useMobileResizeModes = latestUseMobileResizeModes
                     )
                     controller.refreshVideoBottomFraction()
                 }
@@ -3177,7 +3225,8 @@ private fun ExoPlayerSurface(
             playerView.syncExoSurfaceLayout(
                 tunnelingEnabled = latestTunnelingEnabled,
                 tunneledSurfaceFill = latestTunneledSurfaceFill,
-                aspectMode = latestAspectMode
+                aspectMode = latestAspectMode,
+                useMobileResizeModes = latestUseMobileResizeModes
             )
         }
         onDispose {
@@ -3221,7 +3270,8 @@ private fun ExoPlayerSurface(
                 playerView.syncExoSurfaceLayout(
                     tunnelingEnabled = latestTunnelingEnabled,
                     tunneledSurfaceFill = latestTunneledSurfaceFill,
-                    aspectMode = latestAspectMode
+                    aspectMode = latestAspectMode,
+                    useMobileResizeModes = latestUseMobileResizeModes
                 )
             }
         }
@@ -3238,11 +3288,12 @@ private fun ExoPlayerSurface(
         }
     }
 
-    LaunchedEffect(playerView, aspectMode, tunnelingEnabled, tunneledSurfaceFill) {
+    LaunchedEffect(playerView, aspectMode, tunnelingEnabled, tunneledSurfaceFill, useMobileResizeModes) {
         playerView.syncExoSurfaceLayout(
             tunnelingEnabled = tunnelingEnabled,
             tunneledSurfaceFill = tunneledSurfaceFill,
-            aspectMode = aspectMode
+            aspectMode = aspectMode,
+            useMobileResizeModes = useMobileResizeModes
         )
     }
 
@@ -3288,16 +3339,23 @@ private fun PlayerView.applyExoAspectMode(mode: AspectMode) {
 private fun PlayerView.syncExoSurfaceLayout(
     tunnelingEnabled: Boolean,
     tunneledSurfaceFill: Boolean,
-    aspectMode: AspectMode
+    aspectMode: AspectMode,
+    useMobileResizeModes: Boolean = false
 ) {
     val targetResizeMode = PlayerDisplayModeUtils.exoSurfaceResizeMode(
         tunnelingEnabled = tunnelingEnabled,
-        tunneledSurfaceFill = tunneledSurfaceFill
+        tunneledSurfaceFill = tunneledSurfaceFill,
+        aspectMode = aspectMode,
+        useMobileResizeModes = useMobileResizeModes
     )
     if (resizeMode != targetResizeMode) {
         resizeMode = targetResizeMode
     }
-    val appliedAspectMode = aspectModeAppliedToExoSurface(tunnelingEnabled, aspectMode)
+    val appliedAspectMode = if (useMobileResizeModes && !tunnelingEnabled) {
+        AspectMode.ORIGINAL
+    } else {
+        aspectModeAppliedToExoSurface(tunnelingEnabled, aspectMode)
+    }
     applyExoAspectMode(appliedAspectMode)
     setTag(
         R.id.player_view_libass_geometry_context_tag,
@@ -3842,6 +3900,13 @@ private fun PlayerControlsOverlay(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(
+                    if (handheldTouchChrome) {
+                        Modifier.windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+                    } else {
+                        Modifier
+                    }
+                )
                 .align(Alignment.BottomCenter)
                 .onGloballyPositioned { coordinates ->
                     val rootHeight = coordinates.findRootCoordinates().size.height

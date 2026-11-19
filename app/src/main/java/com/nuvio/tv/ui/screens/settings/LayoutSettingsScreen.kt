@@ -198,8 +198,6 @@ private fun LayoutSectionContent(
             onShowAddonLogoChange = viewModel::setShowAddonLogo,
             onBadgePlacementSelected = viewModel::setStreamBadgePlacement,
             onConfigureBadges = viewModel::startStreamBadgeQrMode,
-            onShowInPlayerChange = viewModel::setShowBadgesInPlayer,
-            onPlayerBadgeSourceSelected = viewModel::setPlayerBadgeSource,
             configureBadgesFocusRequester = streamBadgeQrFocusRequester
         )
     }

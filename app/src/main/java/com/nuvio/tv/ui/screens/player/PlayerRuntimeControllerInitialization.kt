@@ -572,6 +572,11 @@ internal fun PlayerRuntimeController.initializePlayer(
             flushPendingPlaybackRawEventLines()
             val deviceAspectMode = deviceLocalPlayerPreferences.aspectMode.first()
             val tunneledSurfaceFill = deviceLocalPlayerPreferences.tunneledSurfaceFill.first()
+            val hardwareMobilePolicy =
+                com.nuvio.tv.ui.monolith.AdaptiveDeviceDetector.detectHardwareFormFactor(
+                    context,
+                    context.resources.configuration
+                ) != com.nuvio.tv.ui.monolith.DeviceFormFactor.TV
             runCatching { deviceLocalPlayerPreferences.tunnelFrameReportDecoders.first() }
                 .getOrNull()?.let { PlayerTunnelAvSyncPolicy.frameReportDecoders.addAll(it) }
             if (initializationGeneration != playbackRecoveryGate.generation) return@launch
@@ -581,6 +586,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     frameRateMatchingMode = playerSettings.frameRateMatchingMode,
                     resizeMode = playerSettings.resizeMode,
                     aspectMode = deviceAspectMode,
+                    mobileAspectPolicyActive = it.mobileAspectPolicyActive ?: hardwareMobilePolicy,
                     tunneledSurfaceFill = tunneledSurfaceFill,
                     playbackIssueReportsEnabled = IssueReports.available && playerSettings.playbackIssueReportsEnabled,
                     tunnelingEnabled = tunnelingActive &&

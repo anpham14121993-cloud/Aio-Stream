@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,7 +35,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -123,8 +122,8 @@ private object MonolithChromePalette {
 /**
  * Adaptive Tri-Mode Obsidian Monolith navigation chrome for AioStream:
  * - TV / TV Box: Floating Top Lens Pill with D-Pad Up/Down focus sync & clock
- * - Mobile: Slim Top Brand/Search Header + Floating Bottom Obsidian Glass Dock
- * - Tablet: Floating Left Micro-Rail capsule supporting both Touch and D-Pad
+ * - Mobile: Floating Bottom Obsidian Glass Dock (full horizontal width)
+ * - Tablet: Centered compact Floating Bottom Obsidian Glass Dock
  */
 @Composable
 fun MonolithAdaptiveNavigation(
@@ -159,9 +158,10 @@ fun MonolithAdaptiveNavigation(
             profile = profile,
             onNavigate = onNavigate,
             onSwitchProfile = onSwitchProfile,
-            onExit = onExit
+            onExit = onExit,
+            compactFloatingDock = false
         )
-        DeviceFormFactor.TABLET -> MonolithMicroRailNavigation(
+        DeviceFormFactor.TABLET -> MonolithBottomDockNavigation(
             navigationContent = navigationContent,
             currentRoute = currentRoute,
             rootRoutes = rootRoutes,
@@ -170,7 +170,8 @@ fun MonolithAdaptiveNavigation(
             profile = profile,
             onNavigate = onNavigate,
             onSwitchProfile = onSwitchProfile,
-            onExit = onExit
+            onExit = onExit,
+            compactFloatingDock = true
         )
     }
 }
@@ -525,7 +526,8 @@ private fun MonolithBottomDockNavigation(
     profile: AvatarModel?,
     onNavigate: (String) -> Unit,
     onSwitchProfile: () -> Unit,
-    onExit: () -> Unit
+    onExit: () -> Unit,
+    compactFloatingDock: Boolean = false
 ) {
     val visible = currentRoute in rootRoutes
     val contentFocus = remember { FocusRequester() }
@@ -589,10 +591,12 @@ private fun MonolithBottomDockNavigation(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
+                val dockShape = RoundedCornerShape(if (compactFloatingDock) 18.dp else 22.dp)
+                val itemShape = RoundedCornerShape(if (compactFloatingDock) 14.dp else 16.dp)
                 BoxWithConstraints(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(22.dp))
+                        .then(if (compactFloatingDock) Modifier.wrapContentWidth() else Modifier.fillMaxWidth())
+                        .clip(dockShape)
                         .background(
                             Brush.verticalGradient(
                                 listOf(
@@ -601,14 +605,31 @@ private fun MonolithBottomDockNavigation(
                                 )
                             )
                         )
-                        .border(0.75.dp, MonolithChromePalette.HairlineBorderBrush, RoundedCornerShape(22.dp))
+                        .border(0.75.dp, MonolithChromePalette.HairlineBorderBrush, dockShape)
                 ) {
-                    val tightWidth = maxWidth < 340.dp && dockItems.size > 5
+                    val tabletItemWidth = when {
+                        dockItems.size <= 4 -> 68.dp
+                        dockItems.size == 5 -> 66.dp
+                        else -> 62.dp
+                    }
+                    val tabletHorizSpacing = 2.dp
+                    val tabletRowPadH = 6.dp
+                    val tabletRequiredWidth = (tabletItemWidth * dockItems.size) +
+                        (tabletHorizSpacing * (dockItems.size - 1).coerceAtLeast(0)) +
+                        (tabletRowPadH * 2)
+                    val tightWidth = if (compactFloatingDock) {
+                        tabletRequiredWidth > maxWidth
+                    } else {
+                        maxWidth < 340.dp && dockItems.size > 5
+                    }
                     Row(
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .then(if (compactFloatingDock) Modifier.wrapContentWidth() else Modifier.fillMaxWidth())
                             .then(if (tightWidth) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
-                            .padding(horizontal = 4.dp, vertical = 5.dp),
+                            .padding(
+                                horizontal = if (compactFloatingDock) tabletRowPadH else 4.dp,
+                                vertical = if (compactFloatingDock) 4.dp else 5.dp
+                            ),
                         horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -619,10 +640,14 @@ private fun MonolithBottomDockNavigation(
                                 animationSpec = tween(160),
                                 label = "mobile_dock_tint"
                             )
+                            val itemWidthModifier = when {
+                                compactFloatingDock -> Modifier.width(tabletItemWidth)
+                                tightWidth -> Modifier.width(62.dp)
+                                else -> Modifier.weight(1f)
+                            }
                             Box(
-                                modifier = Modifier
-                                    .then(if (tightWidth) Modifier.width(62.dp) else Modifier.weight(1f))
-                                    .clip(RoundedCornerShape(16.dp))
+                                modifier = itemWidthModifier
+                                    .clip(itemShape)
                                     .background(
                                         if (isSelected) MonolithChromePalette.ActivePillBrush
                                         else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
@@ -632,7 +657,7 @@ private fun MonolithBottomDockNavigation(
                                             Modifier.border(
                                                 0.6.dp,
                                                 MonolithChromePalette.SilverRimTop,
-                                                RoundedCornerShape(16.dp)
+                                                itemShape
                                             )
                                         } else {
                                             Modifier
@@ -643,19 +668,23 @@ private fun MonolithBottomDockNavigation(
                                         indication = null,
                                         onClick = { onNavigate(item.route) }
                                     )
-                                    .padding(vertical = 7.dp, horizontal = 2.dp),
+                                    .padding(vertical = if (compactFloatingDock) 5.dp else 7.dp, horizontal = 2.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
-                                    MonolithNavItemIcon(item = item, tint = tint, size = 20.dp)
+                                    MonolithNavItemIcon(
+                                        item = item,
+                                        tint = tint,
+                                        size = if (compactFloatingDock) 18.dp else 20.dp
+                                    )
                                     Text(
                                         text = item.label,
                                         color = tint,
-                                        fontSize = if (dockItems.size > 5) 9.5.sp else 10.5.sp,
-                                        lineHeight = 14.sp,
+                                        fontSize = if (compactFloatingDock || dockItems.size > 5) 9.5.sp else 10.5.sp,
+                                        lineHeight = if (compactFloatingDock) 12.sp else 14.sp,
                                         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                         maxLines = 1,
                                         softWrap = false,
@@ -663,184 +692,6 @@ private fun MonolithBottomDockNavigation(
                                     )
                                 }
                             }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MonolithCircleActionButton(
-    selected: Boolean,
-    onClick: () -> Unit,
-    content: @Composable () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            .background(
-                if (selected) MonolithChromePalette.SlateElevated
-                else MonolithChromePalette.DockObsidian.copy(alpha = 0.85f)
-            )
-            .border(
-                0.75.dp,
-                if (selected) MonolithChromePalette.SilverBright.copy(alpha = 0.45f)
-                else MonolithChromePalette.SilverRimBottom,
-                CircleShape
-            )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        content()
-    }
-}
-
-@Composable
-private fun MonolithMicroRailNavigation(
-    navigationContent: @Composable (Boolean) -> Unit,
-    currentRoute: String?,
-    rootRoutes: Set<String>,
-    items: List<DrawerItem>,
-    selectedRoute: String?,
-    profile: AvatarModel?,
-    onNavigate: (String) -> Unit,
-    onSwitchProfile: () -> Unit,
-    onExit: () -> Unit
-) {
-    val visible = currentRoute in rootRoutes
-    val contentFocus = remember { FocusRequester() }
-    val routes = remember(items) { items.map { it.route } }
-    val routeFocus = remember(routes) { routes.associateWith { FocusRequester() } }
-    var railFocused by remember { mutableStateOf(false) }
-
-    val startPadding by animateDpAsState(
-        targetValue = if (visible) 90.dp else 0.dp,
-        animationSpec = tween(200, easing = FastOutSlowInEasing),
-        label = "tablet_rail_inset"
-    )
-
-    BackHandler(enabled = visible) {
-        if (currentRoute != Screen.Home.route) {
-            onNavigate(Screen.Home.route)
-        } else {
-            onExit()
-        }
-    }
-
-    Box(Modifier.fillMaxSize()) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .padding(start = startPadding)
-                .focusRequester(contentFocus)
-                .focusRestorer()
-                .focusGroup()
-        ) {
-            CompositionLocalProvider(
-                LocalContentFocusRequester provides contentFocus,
-                LocalSidebarExpanded provides railFocused,
-                LocalV2TopChrome provides false,
-                LocalMonolithTopInset provides 0.dp,
-                LocalMonolithBottomInset provides 0.dp
-            ) {
-                navigationContent(true)
-            }
-        }
-
-        if (visible) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical + WindowInsetsSides.Start))
-                    .padding(start = 12.dp, top = 16.dp, bottom = 16.dp)
-                    .width(72.dp)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(26.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                MonolithChromePalette.DockObsidian.copy(alpha = 0.94f),
-                                MonolithChromePalette.DeepObsidian.copy(alpha = 0.96f)
-                            )
-                        )
-                    )
-                    .border(0.75.dp, MonolithChromePalette.HairlineBorderBrush, RoundedCornerShape(26.dp))
-                    .onFocusChanged { railFocused = it.hasFocus }
-                    .focusGroup()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(vertical = 14.dp, horizontal = 6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    MonolithBrandEmblem(compact = true, showText = false)
-
-                    LazyColumn(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        items(items, key = { it.route }) { item ->
-                            val isSelected = item.route == selectedRoute
-                            var focused by remember { mutableStateOf(false) }
-                            val tint by animateColorAsState(
-                                targetValue = when {
-                                    focused || isSelected -> MonolithChromePalette.SilverBright
-                                    else -> MonolithChromePalette.SilverMuted
-                                },
-                                animationSpec = tween(140),
-                                label = "rail_tint"
-                            )
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .then(routeFocus[item.route]?.let { Modifier.focusRequester(it) } ?: Modifier)
-                                    .focusProperties { right = contentFocus }
-                                    .onFocusChanged { focused = it.isFocused }
-                                    .nuvioV2Focus(focused, RoundedCornerShape(16.dp))
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(
-                                        when {
-                                            focused || isSelected -> MonolithChromePalette.ActivePillBrush
-                                            else -> Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
-                                        }
-                                    )
-                                    .clickable { onNavigate(item.route) }
-                                    .focusable()
-                                    .padding(vertical = 8.dp, horizontal = 2.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(3.dp)
-                            ) {
-                                MonolithNavItemIcon(item = item, tint = tint, size = 22.dp)
-                                Text(
-                                    text = item.label,
-                                    color = tint,
-                                    fontSize = 10.5.sp,
-                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-
-                    if (profile != null) {
-                        var profileFocused by remember { mutableStateOf(false) }
-                        Box(
-                            modifier = Modifier
-                                .onFocusChanged { profileFocused = it.isFocused }
-                                .clip(CircleShape)
-                                .clickable(onClick = onSwitchProfile)
-                                .focusable()
-                        ) {
-                            NuvioAvatar(avatar = profile, size = 36.dp, focused = profileFocused)
                         }
                     }
                 }

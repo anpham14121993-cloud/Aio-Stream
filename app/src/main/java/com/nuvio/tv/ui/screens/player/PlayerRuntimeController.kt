@@ -39,7 +39,6 @@ import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
 import com.nuvio.tv.data.local.DeviceLocalPlayerPreferences
 import com.nuvio.tv.data.local.StreamLinkCacheDataStore
-import com.nuvio.tv.core.streams.StreamBadgeMatcher
 import com.nuvio.tv.data.local.StreamBadgeSettingsDataStore
 import com.nuvio.tv.data.local.BingeGroupCacheDataStore
 import com.nuvio.tv.data.local.StreamAutoPlayMode
@@ -71,7 +70,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import com.nuvio.tv.core.util.withAppLocale
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
@@ -1173,20 +1171,13 @@ class PlayerRuntimeController(
     private fun observeStreamBadgeSettings() {
         scope.launch {
             streamBadgeSettingsDataStore.settings.collect { settings ->
-                val filters = if (settings.showInPlayer) {
-                    withContext(Dispatchers.Default) {
-                        StreamBadgeMatcher.compileCached(settings.rules.forPlayer(settings.playerBadgeSource))
-                    }
-                } else {
-                    emptyList()
-                }
                 _uiState.update {
                     it.copy(
                         showFileSizeBadges = settings.showFileSizeBadges,
                         showAddonLogo = settings.showAddonLogo,
                         streamBadgePlacement = settings.badgePlacement,
-                        showPlayerBadges = settings.showInPlayer,
-                        playerBadgeFilters = filters
+                        showPlayerBadges = false,
+                        playerBadgeFilters = emptyList()
                     )
                 }
             }

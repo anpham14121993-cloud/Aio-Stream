@@ -26,7 +26,10 @@ class BackupCatalogTest {
         assertEquals(BackupPart.DEVICE, BackupCatalog.partFor(player, "dv7_handling_mode"))
         assertEquals(BackupPart.DEVICE, BackupCatalog.partFor(player, "night_mode"))
         assertEquals(BackupPart.DEVICE, BackupCatalog.partFor(player, "subtitle_font_id"))
-        assertEquals(BackupPart.SETTINGS, BackupCatalog.partFor(player, "subtitle_font"))
+        assertEquals(BackupPart.DEVICE, BackupCatalog.partFor(player, "subtitle_font"))
+        assertEquals(BackupPart.DEVICE, BackupCatalog.partFor(player, "subtitle_size"))
+        assertEquals(BackupPart.DEVICE, BackupCatalog.partFor(player, "subtitle_vertical_offset"))
+        assertEquals(BackupPart.SETTINGS, BackupCatalog.partFor(player, "subtitle_preferred_language"))
         assertEquals(BackupPart.SETTINGS, BackupCatalog.partFor(player, "player_chapters_enabled"))
         assertEquals(BackupPart.DEVICE, BackupCatalog.partFor(spec(BackupStoreKind.PROFILE_STORE, "trailer_settings"), "trailer_allow_4k"))
         assertEquals(BackupPart.DEVICE, BackupCatalog.partFor(spec(BackupStoreKind.BOX_STORE, "ui_scale_prefs"), "ui_scale"))
@@ -97,13 +100,15 @@ class BackupCatalogTest {
         val parts = BackupCatalog.split(
             player,
             mapOf(
+                "subtitle_preferred_language" to BackupValue.Text("vi"),
                 "subtitle_font" to BackupValue.Text("inter"),
+                "subtitle_size" to BackupValue.Whole(120),
                 "night_mode" to BackupValue.Flag(true),
                 "migration_vod_cache_split_done" to BackupValue.Flag(true)
             )
         )
-        assertEquals(setOf("subtitle_font"), parts[BackupPart.SETTINGS]?.keys)
-        assertEquals(setOf("night_mode"), parts[BackupPart.DEVICE]?.keys)
+        assertEquals(setOf("subtitle_preferred_language"), parts[BackupPart.SETTINGS]?.keys)
+        assertEquals(setOf("subtitle_font", "subtitle_size", "night_mode"), parts[BackupPart.DEVICE]?.keys)
         assertEquals(2, parts.size)
     }
 }

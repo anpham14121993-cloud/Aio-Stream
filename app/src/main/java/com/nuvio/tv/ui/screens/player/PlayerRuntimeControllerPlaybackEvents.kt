@@ -2706,8 +2706,15 @@ fun PlayerRuntimeController.onEvent(
                 }
             }
         }
+        is PlayerEvent.OnSetMobileAspectPolicy -> {
+            if (_uiState.value.mobileAspectPolicyActive != event.active) {
+                _uiState.update { it.copy(mobileAspectPolicyActive = event.active) }
+            }
+            mpvView?.setMobileResizeModes(event.active)
+        }
         PlayerEvent.OnToggleAspectRatio -> {
             val state = _uiState.value
+            val useMobileResizeModes = state.mobileAspectPolicyActive == true
             if (state.tunnelingEnabled) {
                 val fill = !state.tunneledSurfaceFill
                 val label = PlayerDisplayModeUtils.resizeModeLabel(
@@ -2738,8 +2745,8 @@ fun PlayerRuntimeController.onEvent(
                 }
                 return
             }
-            val newMode = nextAspectMode(state.aspectMode)
-            val label = aspectModeLabel(newMode, context::getString)
+            val newMode = nextAspectMode(state.aspectMode, useMobileResizeModes = useMobileResizeModes)
+            val label = aspectModeLabel(newMode, context::getString, useMobileResizeModes = useMobileResizeModes)
             Log.d(PlayerRuntimeController.TAG, "Aspect mode toggled by user: ${state.aspectMode} -> $newMode ($label)")
             _uiState.update {
                 it.copy(

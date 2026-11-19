@@ -56,8 +56,8 @@ data class LayoutSettingsUiState(
     val landscapePosterScope: LandscapePosterScope = LandscapePosterScope.OFF,
     val modernHeroFullScreenBackdropEnabled: Boolean = false,
     val heroSectionEnabled: Boolean = true,
-    val discoverLocation: DiscoverLocation = DiscoverLocation.IN_SEARCH,
-    val lastNonOffDiscoverLocation: DiscoverLocation = DiscoverLocation.IN_SEARCH,
+    val discoverLocation: DiscoverLocation = DiscoverLocation.IN_SIDEBAR,
+    val lastNonOffDiscoverLocation: DiscoverLocation = DiscoverLocation.IN_SIDEBAR,
     val posterLabelsEnabled: Boolean = true,
     val catalogAddonNameEnabled: Boolean = true,
     val catalogTypeSuffixEnabled: Boolean = true,
@@ -89,7 +89,7 @@ data class LayoutSettingsUiState(
     val detailPageTrailerPlayInBackground: Boolean = false,
     val detailPageTrailerPauseOnScroll: Boolean = true,
     val preferExternalMetaAddonDetail: Boolean = false,
-    val hideUnreleasedContent: Boolean = false,
+    val hideUnreleasedContent: Boolean = true,
     val watchedTitlesMode: WatchedTitlesMode = WatchedTitlesMode.SHOW,
     val hidePlanToWatch: Boolean = false,
     val hideWatching: Boolean = false,
@@ -105,7 +105,7 @@ data class LayoutSettingsUiState(
         com.nuvio.tv.core.poster.CustomPosterScreen.ALL,
     val alwaysShowLandscapeClearlogo: Boolean = false,
     val addonLandscapeBackdropLogo: Boolean = false,
-    val heroDescriptionAutoScrollEnabled: Boolean = false,
+    val heroDescriptionAutoScrollEnabled: Boolean = true,
 ) {
     val modernLandscapePostersEnabled: Boolean get() = landscapePosterScope.onHome
 }

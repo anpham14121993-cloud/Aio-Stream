@@ -21,7 +21,6 @@ import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
 import com.nuvio.tv.data.local.DeviceUiPreferenceStore
 import com.nuvio.tv.data.local.V2AppearancePreferenceStore
-import com.nuvio.tv.domain.model.InterfaceExperience
 import com.nuvio.tv.domain.model.AccentMode
 import com.nuvio.tv.domain.model.FormFactorOverride
 import com.nuvio.tv.domain.model.GlassPreset
@@ -46,23 +45,11 @@ internal fun V2PreferenceControls(initialFocusRequester: FocusRequester? = null)
     val scope = rememberCoroutineScope()
     val device = LocalDeviceUiPreferences.current
     val appearance = LocalV2Appearance.current
-    SettingsGroupCard(title = stringResource(R.string.v2_experience_title)) {
-        V2ChoiceRow(
-            title = stringResource(R.string.v2_experience_title),
-            subtitle = stringResource(R.string.v2_experience_subtitle),
-            initialFocusRequester = initialFocusRequester,
-            selected = device.interfaceExperience,
-            options = listOf(
-                InterfaceExperience.NUVIO_V2 to stringResource(R.string.v2_experience_v2),
-                InterfaceExperience.ORIGINAL_NUVIO to stringResource(R.string.v2_experience_original)
-            ),
-            onSelect = { value ->
-                DeviceUiPreferenceStore.update(context) { it.copy(interfaceExperience = value) }
-            }
-        )
+    SettingsGroupCard(title = stringResource(R.string.appearance_title)) {
         V2ChoiceRow(
             title = stringResource(R.string.aio_device_mode_title),
             subtitle = stringResource(R.string.aio_device_mode_subtitle),
+            initialFocusRequester = initialFocusRequester,
             selected = device.formFactorOverride,
             options = listOf(
                 FormFactorOverride.AUTO to stringResource(R.string.aio_device_mode_auto),
@@ -75,24 +62,6 @@ internal fun V2PreferenceControls(initialFocusRequester: FocusRequester? = null)
             }
         )
         if (appearance != null) {
-            SettingsToggleRow(
-                title = stringResource(R.string.v2_intro_animation_title),
-                subtitle = stringResource(R.string.v2_intro_animation_subtitle),
-                checked = appearance.introAnimationEnabled,
-                onToggle = { scope.launch {
-                    V2AppearancePreferenceStore.update(context) { it.copy(introAnimationEnabled = !it.introAnimationEnabled) }
-                } }
-            )
-            if (appearance.introAnimationEnabled) {
-                SettingsToggleRow(
-                    title = stringResource(R.string.v2_intro_sound_title),
-                    subtitle = stringResource(R.string.v2_intro_sound_subtitle),
-                    checked = appearance.introSoundEnabled,
-                    onToggle = { scope.launch {
-                        V2AppearancePreferenceStore.update(context) { it.copy(introSoundEnabled = !it.introSoundEnabled) }
-                    } }
-                )
-            }
             V2ChoiceRow(
                 title = stringResource(R.string.v2_visual_style_title),
                 selected = appearance.visualStyle,

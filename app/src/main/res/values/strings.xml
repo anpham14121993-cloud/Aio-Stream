@@ -324,7 +324,7 @@
     <string name="appearance_font_subtitle">Chọn phông chữ ưu tiên</string>
     <string name="appearance_font_dialog_title">Chọn phông chữ</string>
 
-    <string name="appearance_title">Giao diện &amp; Thẩm mỹ</string>
+    <string name="appearance_title">Giao diện</string>
     <string name="appearance_subtitle">Chọn màu chủ đề, phông chữ và ngôn ngữ</string>
     <string name="appearance_color_theme">Màu chủ đề</string>
     <string name="appearance_color_theme_subtitle">Chọn màu nhấn dùng cho toàn bộ ứng dụng</string>
@@ -409,8 +409,8 @@
     <string name="cd_selected">Đã chọn</string>
 
     <string name="about_title">Giới thiệu</string>
-    <string name="about_subtitle">Trình phát đa phương tiện đa nền tảng (Mobile, Tablet &amp; TV)</string>
-    <string name="about_made_with_love">Phát triển bởi anpham14121993-cloud • Nền tảng mã nguồn mở Tapframe / NuvioTV</string>
+    <string name="about_subtitle">Ứng dụng xem phim đa nền tảng (Điện thoại, Máy tính bảng, TV)</string>
+    <string name="about_made_with_love">Phát triển bởi NothingP</string>
     <string name="about_version">Phiên bản %1$s</string>
     <string name="about_update_banner_title">Bảng thông báo cập nhật tự động</string>
     <string name="about_update_banner_subtitle">Hiển thị bảng thông báo khi có phiên bản mới</string>
@@ -1985,6 +1985,9 @@
     <string name="player_aspect_tunneling_unavailable">Không khả dụng khi phát lại qua đường hầm</string>
     <string name="player_aspect_mode_slight_zoom">Thu phóng nhẹ</string>
     <string name="player_aspect_mode_cinema_zoom">Thu phóng điện ảnh</string>
+    <string name="player_mobile_resize_fit">Vừa màn hình</string>
+    <string name="player_mobile_resize_fill">Lấp đầy</string>
+    <string name="player_mobile_resize_zoom">Phóng to</string>
 
     <string name="audio_dialog_title">Âm thanh</string>
     <string name="audio_dialog_tab_tracks">Âm thanh</string>
@@ -4656,9 +4659,9 @@
     <string name="aio_device_mode_title">Chế độ thiết bị</string>
     <string name="aio_device_mode_subtitle">Tự thích ứng giữa cảm ứng Điện thoại / Máy tính bảng và điều khiển Remote TV Box</string>
     <string name="aio_device_mode_auto">Tự động nhận diện</string>
-    <string name="aio_device_mode_mobile">Điện thoại (Cảm ứng)</string>
-    <string name="aio_device_mode_tablet">Máy tính bảng (Thanh cạnh)</string>
-    <string name="aio_device_mode_tv">TV / TV Box (Remote D-Pad)</string>
+    <string name="aio_device_mode_mobile">Điện thoại</string>
+    <string name="aio_device_mode_tablet">Máy tính bảng</string>
+    <string name="aio_device_mode_tv">TV / TV Box</string>
     <string name="exit_confirm_title">Thoát AioStream?</string>
     <string name="exit_confirm_message">Bạn có đồng ý thoát ứng dụng không?</string>
     <string name="exit_confirm_ok">OK</string>

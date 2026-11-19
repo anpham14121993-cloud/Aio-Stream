@@ -34,6 +34,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -99,6 +100,43 @@ class ProfileSettingsSubtitleLanguageSyncTest {
         assertNull(harness.playerStore.value[stringPreferencesKey("subtitle_tertiary_language")])
     }
 
+    @Test
+    fun `subtitle style size and vertical offset are neither pushed nor overwritten by remote sync`() = runTest(dispatcher) {
+        val harness = harness()
+        harness.player.setSubtitlePreferredLanguage("vi")
+        harness.player.setSubtitleSize(85)
+        harness.player.setSubtitleBitmapSize(90)
+        harness.player.setSubtitleVerticalOffset(12)
+        harness.service.pushCurrentProfileToRemote().getOrThrow()
+
+        val uploaded = harness.remote.getValue(1).getValue("features").jsonObject
+            .getValue("player_settings").jsonObject
+        assertEquals("vi", uploaded.getValue("subtitle_preferred_language").jsonObject.getValue("value").jsonPrimitive.content)
+        assertFalse(uploaded.containsKey("subtitle_size"))
+        assertFalse(uploaded.containsKey("subtitle_bitmap_size"))
+        assertFalse(uploaded.containsKey("subtitle_vertical_offset"))
+
+        harness.remote[1] = buildJsonObject {
+            put("version", 1)
+            put("features", buildJsonObject {
+                put("player_settings", buildJsonObject {
+                    put("subtitle_preferred_language", encodedString("en"))
+                    put("subtitle_size", encodedInt(160))
+                    put("subtitle_bitmap_size", encodedInt(150))
+                    put("subtitle_vertical_offset", encodedInt(25))
+                })
+            })
+        }
+
+        harness.service.pullCurrentProfileFromRemote().getOrThrow()
+
+        val style = harness.player.playerSettings.first().subtitleStyle
+        assertEquals("en", style.preferredLanguage)
+        assertEquals(85, style.size)
+        assertEquals(90, style.bitmapSize)
+        assertEquals(12, style.verticalOffset)
+    }
+
     private fun harness(): Harness {
         val stores = mutableMapOf<Pair<Int, String>, TestPreferencesStore>()
         val factory = mockk<ProfileDataStoreFactory>()
@@ -154,6 +192,11 @@ class ProfileSettingsSubtitleLanguageSyncTest {
 
     private fun encodedString(value: String) = buildJsonObject {
         put("type", "string")
+        put("value", value)
+    }
+
+    private fun encodedInt(value: Int) = buildJsonObject {
+        put("type", "int")
         put("value", value)
     }
 
