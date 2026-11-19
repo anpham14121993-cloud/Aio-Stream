@@ -794,7 +794,7 @@ private fun LibraryViewModeRow(
     ) {
         Row(
             modifier = if (isCompactLibModes) {
-                Modifier.weight(1f).then(androidx.compose.foundation.horizontalScroll(androidx.compose.foundation.rememberScrollState()))
+                Modifier.weight(1f).horizontalScroll(androidx.compose.foundation.rememberScrollState())
             } else Modifier,
             horizontalArrangement = Arrangement.spacedBy(if (isCompactLibModes) 8.dp else NuvioTheme.spacing.md)
         ) {

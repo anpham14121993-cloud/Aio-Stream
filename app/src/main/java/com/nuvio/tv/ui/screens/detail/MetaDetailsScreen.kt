@@ -3687,9 +3687,7 @@ private fun PeopleSectionTabs(
 
         Row(
             modifier = if (compactTabs) {
-                Modifier.fillMaxWidth().then(
-                    androidx.compose.foundation.horizontalScroll(androidx.compose.foundation.rememberScrollState())
-                )
+                Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState())
             } else Modifier,
             verticalAlignment = Alignment.CenterVertically,
         ) {
