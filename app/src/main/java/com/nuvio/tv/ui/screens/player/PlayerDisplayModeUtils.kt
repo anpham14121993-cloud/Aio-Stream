@@ -1,6 +1,8 @@
 import android.content.Context
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.nuvio.tv.R
+import com.nuvio.tv.ui.screens.player.AspectMode
+import com.nuvio.tv.ui.screens.player.mobileExoResizeMode
 
 internal object PlayerDisplayModeUtils {
     fun nextResizeMode(currentMode: Int): Int {
