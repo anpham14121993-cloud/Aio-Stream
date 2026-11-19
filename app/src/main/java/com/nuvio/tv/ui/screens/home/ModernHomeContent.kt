@@ -1041,9 +1041,14 @@ fun ModernHomeContent(
                 if (useLandscapePosters) landscapeCatalogCardHeight else portraitCatalogCardHeight,
                 continueWatchingCardHeight
             )
-            val rowsViewportHeight = remember(screenHeight, rowsViewportHeightFraction, tallestRowCardHeight, monolithBottomInset, isCompactPhone) {
-                val base = modernRowsViewportHeight(screenHeight, rowsViewportHeightFraction, tallestRowCardHeight)
-                if (isCompactPhone) (base + monolithBottomInset * 0.35f).coerceAtMost(screenHeight * 0.64f) else base
+            val useMobileScrollableHero = com.nuvio.tv.ui.monolith.isMobileFormFactor()
+            val rowsViewportHeight = remember(screenHeight, rowsViewportHeightFraction, tallestRowCardHeight, monolithBottomInset, isCompactPhone, uiState.heroSectionEnabled, useMobileScrollableHero) {
+                if (!uiState.heroSectionEnabled && !useMobileScrollableHero) {
+                    (screenHeight * 0.88f).coerceAtLeast(tallestRowCardHeight)
+                } else {
+                    val base = modernRowsViewportHeight(screenHeight, rowsViewportHeightFraction, tallestRowCardHeight)
+                    if (isCompactPhone) (base + monolithBottomInset * 0.35f).coerceAtMost(screenHeight * 0.64f) else base
+                }
             }
             val rowTitleLineHeight = MaterialTheme.typography.titleMedium.lineHeight
             val rowTitleHeight = remember(rowTitleLineHeight, localDensity) {
@@ -1156,7 +1161,6 @@ fun ModernHomeContent(
             val heroTrailerShowing = remember {
                 { !isRapidHorizontalNav.value && shouldPlayTrailerLambda() && heroTrailerRenderedLambda() }
             }
-            val useMobileScrollableHero = com.nuvio.tv.ui.monolith.isMobileFormFactor()
             val mobileHeroHeight = remember(screenHeight, monolithTopInset) {
                 if (screenHeight < 520.dp) {
                     (screenHeight * 0.62f).coerceIn(220.dp, 280.dp)
@@ -1179,7 +1183,7 @@ fun ModernHomeContent(
                     }
                 }
             }
-            if (!useMobileScrollableHero) {
+            if (!useMobileScrollableHero && uiState.heroSectionEnabled) {
                 ModernHomeHero(
                     liveScene = liveHeroSceneState,
                     heroMediaWidthPx = heroMediaWidthPx,
@@ -1200,41 +1204,58 @@ fun ModernHomeContent(
                     titleModifier = heroMetadataModifier
                 )
             }
-            val mobileHeroContentLambda: (@Composable () -> Unit)? = if (useMobileScrollableHero) {
+            val mobileHeroContentLambda: (@Composable () -> Unit)? = if (useMobileScrollableHero && uiState.heroSectionEnabled) {
                 {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(mobileHeroHeight)
-                            .clickable(onClick = onMobileHeroClick)
-                    ) {
-                        ModernHomeHero(
-                            liveScene = liveHeroSceneState,
-                            heroMediaWidthPx = heroMediaWidthPx,
-                            heroMediaHeightPx = mobileHeroHeightPx,
-                            artworkAccent = artworkAccent,
-                            isFullScreen = { false },
-                            trailerBottomLimit = mobileHeroHeight,
-                            mediaModifier = Modifier.fillMaxSize(),
-                            onTrailerEnded = onTrailerEndedLambda,
-                            onFirstFrameRendered = onFirstFrameRenderedLambda,
-                            portraitMode = !useLandscapePosters,
+                    if (uiState.heroItems.isNotEmpty()) {
+                        com.nuvio.tv.ui.components.HeroCarousel(
+                            items = uiState.heroItems.asStable(),
                             showImdbRatings = uiState.homeImdbRatingsVisibility.showRatings,
                             mdbListShowOnHero = uiState.mdbListShowOnHero,
                             mdbListRatingOrder = uiState.mdbListRatingOrder,
-                            trailerShowing = heroTrailerShowing,
-                            descriptionMaxLines = heroDescriptionMaxLines,
                             descriptionAutoScrollEnabled = uiState.heroDescriptionAutoScrollEnabled,
-                            titleModifier = Modifier
-                                .align(Alignment.BottomStart)
+                            onItemClick = { item ->
+                                onNavigateToDetail(item.id, item.apiType, "")
+                            },
+                            onItemFocus = { item -> onItemFocus(item) },
+                            modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(
-                                    start = 16.dp,
-                                    end = 16.dp,
-                                    top = monolithTopInset + 8.dp,
-                                    bottom = 14.dp
-                                )
+                                .height(mobileHeroHeight)
                         )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(mobileHeroHeight)
+                                .clickable(onClick = onMobileHeroClick)
+                        ) {
+                            ModernHomeHero(
+                                liveScene = liveHeroSceneState,
+                                heroMediaWidthPx = heroMediaWidthPx,
+                                heroMediaHeightPx = mobileHeroHeightPx,
+                                artworkAccent = artworkAccent,
+                                isFullScreen = { false },
+                                trailerBottomLimit = mobileHeroHeight,
+                                mediaModifier = Modifier.fillMaxSize(),
+                                onTrailerEnded = onTrailerEndedLambda,
+                                onFirstFrameRendered = onFirstFrameRenderedLambda,
+                                portraitMode = !useLandscapePosters,
+                                showImdbRatings = uiState.homeImdbRatingsVisibility.showRatings,
+                                mdbListShowOnHero = uiState.mdbListShowOnHero,
+                                mdbListRatingOrder = uiState.mdbListRatingOrder,
+                                trailerShowing = heroTrailerShowing,
+                                descriptionMaxLines = heroDescriptionMaxLines,
+                                descriptionAutoScrollEnabled = uiState.heroDescriptionAutoScrollEnabled,
+                                titleModifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = 16.dp,
+                                        end = 16.dp,
+                                        top = monolithTopInset + 8.dp,
+                                        bottom = 14.dp
+                                    )
+                            )
+                        }
                     }
                 }
             } else {
