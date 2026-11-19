@@ -15,6 +15,7 @@ import com.nuvio.tv.ui.v2.appearance.LocalV2Appearance
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -96,6 +97,7 @@ internal fun AudioSelectionOverlay(
     onCenterMixLevelChange: (Int) -> Unit,
     onPersistAmplificationChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
+    onBackgroundDismiss: () -> Unit = onDismiss,
     modifier: Modifier = Modifier
 ) {
     val tracksFocusRequester = remember { FocusRequester() }
@@ -183,6 +185,8 @@ internal fun AudioSelectionOverlay(
         onDismiss = onDismiss,
         modifier = modifier,
         captureKeys = false,
+        dismissOnBackgroundClick = true,
+        onBackgroundDismiss = onBackgroundDismiss,
         contentPadding = PaddingValues(start = 44.dp, end = 44.dp, top = 28.dp, bottom = 28.dp)
     ) {
         var editorOpen by remember { mutableStateOf(false) }
@@ -204,6 +208,11 @@ internal fun AudioSelectionOverlay(
                 .align(Alignment.BottomEnd)
                 .heightIn(max = 620.dp)
                 .v2PlayerPanel()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
                 .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
             PanelEyebrow(text = stringResource(R.string.audio_dialog_title))

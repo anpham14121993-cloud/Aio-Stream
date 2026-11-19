@@ -298,12 +298,15 @@ fun CatalogRowSection(
             }
         } else Modifier
     )) {
+        val isCompactRow = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+        val sectionLeadingInset = if (isCompactRow) 16.dp else NuvioTheme.spacing.xxxl
+        val sectionTrailingInset = if (isCompactRow) 16.dp else NuvioTheme.spacing.xxxl
         val headerSeeAllEnabled = showSeeAll && catalogTitle.isNotBlank()
         val tvFocusHeader = com.nuvio.tv.ui.monolith.isTvFocusMode()
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.md)
+                .padding(start = sectionLeadingInset, end = sectionTrailingInset, bottom = NuvioTheme.spacing.md)
                 .then(
                     if (headerSeeAllEnabled && !tvFocusHeader) {
                         Modifier.clickable { latestOnSeeAll() }
@@ -384,8 +387,8 @@ fun CatalogRowSection(
         val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
         val layoutDirection = LocalLayoutDirection.current
         val isRtl = layoutDirection == LayoutDirection.Rtl
-        val horizontalBringIntoViewSpec = remember(density, defaultBringIntoViewSpec, isRtl) {
-            val startPx = with(density) { NuvioTheme.spacing.xxxl.roundToPx() }
+        val horizontalBringIntoViewSpec = remember(density, defaultBringIntoViewSpec, isRtl, sectionLeadingInset) {
+            val startPx = with(density) { sectionLeadingInset.roundToPx() }
             @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
             object : BringIntoViewSpec {
                 override val scrollAnimationSpec: AnimationSpec<Float> =
@@ -451,7 +454,7 @@ fun CatalogRowSection(
                     }
                 }
                 .focusGroup(),
-            contentPadding = PaddingValues(start = NuvioTheme.spacing.xxxl, end = 200.dp),
+            contentPadding = PaddingValues(start = sectionLeadingInset, end = if (isCompactRow) 24.dp else 200.dp),
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
         ) {
             itemsIndexed(

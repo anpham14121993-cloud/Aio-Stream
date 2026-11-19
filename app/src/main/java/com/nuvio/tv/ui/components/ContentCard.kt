@@ -775,22 +775,35 @@ fun ContentCard(
                     }
                     } // Column (expanded)
                 } else {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                    FocusMarqueeText(
-                        text = item.name,
-                        focused = isFocused,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = NuvioTheme.colors.TextPrimary,
-                    )
-                    item.releaseInfo?.let { info ->
-                        Spacer(modifier = Modifier.height(2.dp))
-                        FocusMarqueeText(
-                            text = info,
-                            focused = isFocused,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = NuvioTheme.extendedColors.textSecondary,
-                        )
+                    val releaseYear = remember(item.releaseInfo) {
+                        item.releaseInfo?.trim()?.let { raw ->
+                            Regex("""\b(19|20)\d{2}(?:\s*[–-]\s*(?:19|20)\d{2})?\b""").find(raw)?.value ?: raw
+                        }.orEmpty()
                     }
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = item.name,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            textDirection = item.name.contentTextDirection()
+                        ),
+                        color = NuvioTheme.colors.TextPrimary,
+                        minLines = 2,
+                        maxLines = 2,
+                        softWrap = true,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = releaseYear,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            textDirection = releaseYear.contentTextDirection()
+                        ),
+                        color = NuvioTheme.extendedColors.textSecondary,
+                        minLines = 1,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     if (effectiveExpandEnabled) {
                         Spacer(modifier = Modifier.height(15.dp))
                     }

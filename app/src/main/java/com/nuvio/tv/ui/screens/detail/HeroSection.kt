@@ -348,11 +348,11 @@ fun HeroContentSection(
     // on screens taller than the hero (lower-density TV boxes).
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
-    val compactShowcaseHeight = (screenWidth * 0.68f).coerceIn(260.dp, 340.dp)
+    val compactShowcaseHeight = maxOf(screenWidth * 0.90f, screenHeight * 0.44f).coerceIn(340.dp, 460.dp)
     val heroHeight by animateDpAsState(
         targetValue = when {
             isCompactPhone && isTrailerPlaying -> maxOf(340.dp, screenHeight * 0.52f)
-            isCompactPhone -> (compactShowcaseHeight + 96.dp).coerceAtLeast(356.dp)
+            isCompactPhone -> (compactShowcaseHeight + 96.dp).coerceAtLeast(436.dp)
             isTrailerPlaying -> maxOf(540.dp, screenHeight)
             else -> 540.dp
         },
@@ -360,7 +360,7 @@ fun HeroContentSection(
         label = "heroHeight"
     )
     val compactBackdropClearance = if (isCompactPhone && !isTrailerPlaying) {
-        (compactShowcaseHeight - 88.dp).coerceIn(175.dp, 252.dp)
+        (compactShowcaseHeight - 96.dp).coerceIn(244.dp, 364.dp)
     } else {
         0.dp
     }

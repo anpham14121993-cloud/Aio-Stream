@@ -23,6 +23,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -120,6 +122,7 @@ internal fun SubtitleSelectionOverlay(
     onDisableSubtitles: () -> Unit,
     onEvent: (PlayerEvent) -> Unit,
     onDismiss: () -> Unit,
+    onBackgroundDismiss: () -> Unit = onDismiss,
     modifier: Modifier = Modifier
 ) {
     val noneLabel = stringResource(R.string.subtitle_none)
@@ -283,6 +286,8 @@ internal fun SubtitleSelectionOverlay(
         onDismiss = onDismiss,
         modifier = modifier,
         captureKeys = false,
+        dismissOnBackgroundClick = true,
+        onBackgroundDismiss = onBackgroundDismiss,
         contentPadding = if (compactSubOverlay) {
             PaddingValues(horizontal = 16.dp, vertical = 16.dp)
         } else {
@@ -295,6 +300,11 @@ internal fun SubtitleSelectionOverlay(
                 .align(Alignment.BottomEnd)
                 .heightIn(max = 620.dp)
                 .v2PlayerPanel()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
                 .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
             PanelEyebrow(text = stringResource(R.string.subtitle_dialog_title))

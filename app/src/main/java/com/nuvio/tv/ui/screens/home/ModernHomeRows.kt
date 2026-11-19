@@ -2255,32 +2255,41 @@ private fun ModernCarouselCard(
         }
 
         if (showLabels && !isBackdropExpanded && item.title.isNotBlank() && payload?.scoutMix == null) {
+            val titleText = item.title.trim()
+            val rawYear = item.subtitle?.takeIf { it.isNotBlank() } ?: item.metaPreview?.releaseInfo
+            val yearText = remember(rawYear) {
+                rawYear?.trim()?.let { raw ->
+                    Regex("""\b(19|20)\d{2}(?:\s*[–-]\s*(?:19|20)\d{2})?\b""").find(raw)?.value ?: raw
+                }.orEmpty()
+            }
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = NuvioTheme.spacing.xs)
             ) {
                 Text(
-                    text = item.title,
+                    text = titleText,
                     style = titleStyle.copy(
-                        textDirection = item.title.contentTextDirection()
+                        textDirection = titleText.contentTextDirection()
                     ),
                     color = NuvioTheme.colors.TextPrimary,
-                    maxLines = 1,
+                    minLines = 2,
+                    maxLines = 2,
+                    softWrap = true,
                     overflow = TextOverflow.Ellipsis
                 )
-                item.subtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
-                    Spacer(modifier = Modifier.height(NuvioTheme.spacing.xxs))
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            textDirection = subtitle.contentTextDirection()
-                        ),
-                        color = NuvioTheme.colors.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = yearText,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        textDirection = yearText.contentTextDirection()
+                    ),
+                    color = NuvioTheme.colors.TextSecondary,
+                    minLines = 1,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

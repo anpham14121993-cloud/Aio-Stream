@@ -2867,6 +2867,10 @@ fun PlayerScreen(
                     viewModel.onEvent(PlayerEvent.OnSetCenterMixLevelDb(it))
                 },
                 onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay) },
+                onBackgroundDismiss = {
+                    viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay)
+                    viewModel.hideControls()
+                },
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(2.6f)
@@ -2894,6 +2898,10 @@ fun PlayerScreen(
                 onDisableSubtitles = { viewModel.onEvent(PlayerEvent.OnDisableSubtitles) },
                 onEvent = { viewModel.onEvent(it) },
                 onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay) },
+                onBackgroundDismiss = {
+                    viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay)
+                    viewModel.hideControls()
+                },
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(2.6f)
@@ -3754,11 +3762,18 @@ private fun PlayerControlsOverlay(
         )
 
         // playerMetaChips
+        val handheldTouchChrome = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current !=
+            com.nuvio.tv.ui.monolith.DeviceFormFactor.TV ||
+            com.nuvio.tv.ui.monolith.LocalInputInteractionMode.current ==
+            com.nuvio.tv.ui.monolith.InputInteractionMode.TOUCH
         uiState.streamInfoData?.let { info ->
             Row(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(start = NuvioTheme.spacing.xxl, top = NuvioTheme.spacing.xl),
+                    .padding(
+                        start = if (handheldTouchChrome) 16.dp else NuvioTheme.spacing.xxl,
+                        top = if (handheldTouchChrome) 64.dp else NuvioTheme.spacing.xl
+                    ),
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -4474,7 +4489,7 @@ private fun ProgressBar(
             }
         }
     }
-    val displayedPlayedFraction = if (touchScrubbing && geometry.hasDuration) previewFraction else animatedProgress
+    val displayedPlayedFraction = if ((touchScrubbing || geometry.isPreviewing) && geometry.hasDuration) previewFraction else animatedProgress
 
     BoxWithConstraints(
         modifier = Modifier
@@ -4676,7 +4691,7 @@ private fun ProgressBar(
         if (geometry.hasDuration) {
             val markerSize = when {
                 touchScrubbing -> 14.dp
-                isFocused && !geometry.isPreviewing -> 12.dp
+                isFocused || geometry.isPreviewing -> 12.dp
                 else -> 8.dp
             }
             Box(
@@ -4691,21 +4706,6 @@ private fun ProgressBar(
                     }
                     .size(markerSize).clip(CircleShape).background(Color.White)
             )
-            if (geometry.isPreviewing && !touchScrubbing) {
-                // A hollow seek cursor leaves the solid marker at actual playback.
-                Box(
-                    modifier = Modifier.align(Alignment.CenterStart)
-                        .offset {
-                            val track = trackWidth.toPx()
-                            val cursor = 12.dp.toPx()
-                            IntOffset(
-                                (track * previewFraction - cursor / 2).coerceIn(0f, (track - cursor).coerceAtLeast(0f)).roundToInt(),
-                                0
-                            )
-                        }
-                        .size(12.dp).border(2.dp, Color.White, CircleShape)
-                )
-            }
         }
     }
 }

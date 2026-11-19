@@ -59,6 +59,7 @@ import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.domain.model.CardDepthSurface
 import androidx.compose.ui.platform.LocalContext
+import com.nuvio.tv.ui.util.contentTextDirection
 import com.nuvio.tv.ui.util.recompositionHighlighter
 import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import coil3.compose.AsyncImage
@@ -81,6 +82,7 @@ fun GridContentCard(
     downFocusRequester: FocusRequester? = null,
     depthSurface: CardDepthSurface = CardDepthSurface.POSTERS,
     showReleaseInfo: Boolean = false,
+    fillWidth: Boolean = false,
     onLongPress: (() -> Unit)? = null,
     onFocused: () -> Unit = {}
 ) {
@@ -118,7 +120,7 @@ fun GridContentCard(
 
     Column(
         modifier = modifier
-            .width(landscapeCardWidth)
+            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier.width(landscapeCardWidth))
             .recompositionHighlighter()
     ) {
         Card(
@@ -131,8 +133,11 @@ fun GridContentCard(
             },
             modifier = Modifier
                 .then(
-                    if (globalLandscape) Modifier.fillMaxWidth().aspectRatio(PosterShape.LANDSCAPE.aspectRatio())
-                    else Modifier.width(posterCardStyle.width).height(cardHeight)
+                    when {
+                        fillWidth -> Modifier.fillMaxWidth().aspectRatio(effectivePosterShape.aspectRatio())
+                        globalLandscape -> Modifier.fillMaxWidth().aspectRatio(PosterShape.LANDSCAPE.aspectRatio())
+                        else -> Modifier.width(posterCardStyle.width).height(cardHeight)
+                    }
                 )
                 .nuvioV2Focus(isFocused, cardShape, stationary = true)
                 .then(
@@ -403,23 +408,41 @@ fun GridContentCard(
         }
 
         if (showLabel && (!showLogo || item.logo.isNullOrBlank())) {
-            FocusMarqueeText(
+            val releaseYear = remember(item.releaseInfo) {
+                item.releaseInfo?.trim()?.let { raw ->
+                    Regex("""\b(19|20)\d{2}(?:\s*[–-]\s*(?:19|20)\d{2})?\b""").find(raw)?.value ?: raw
+                }.orEmpty()
+            }
+            val labelWidthModifier = if (fillWidth || globalLandscape) {
+                Modifier.fillMaxWidth()
+            } else {
+                Modifier.width(posterCardStyle.width)
+            }
+            Text(
                 text = item.name,
-                focused = isFocused,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    textDirection = item.name.contentTextDirection()
+                ),
                 color = NuvioTheme.colors.TextPrimary,
-                modifier = Modifier
-                    .then(if (globalLandscape) Modifier.fillMaxWidth() else Modifier.width(posterCardStyle.width))
+                minLines = 2,
+                maxLines = 2,
+                softWrap = true,
+                overflow = TextOverflow.Ellipsis,
+                modifier = labelWidthModifier
                     .padding(top = NuvioTheme.spacing.sm, start = NuvioTheme.spacing.xxs, end = NuvioTheme.spacing.xxs)
             )
-            item.releaseInfo?.takeIf { showReleaseInfo }?.let { info ->
-                FocusMarqueeText(
-                    text = info,
-                    focused = isFocused,
-                    style = MaterialTheme.typography.labelMedium,
+            if (showReleaseInfo) {
+                Text(
+                    text = releaseYear,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        textDirection = releaseYear.contentTextDirection()
+                    ),
                     color = NuvioTheme.extendedColors.textSecondary,
-                    modifier = Modifier
-                        .then(if (globalLandscape) Modifier.fillMaxWidth() else Modifier.width(posterCardStyle.width))
+                    minLines = 1,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = labelWidthModifier
                         .padding(top = 2.dp, start = NuvioTheme.spacing.xxs, end = NuvioTheme.spacing.xxs)
                 )
             }

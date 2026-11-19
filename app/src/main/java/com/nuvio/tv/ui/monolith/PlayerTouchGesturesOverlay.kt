@@ -13,7 +13,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -50,6 +49,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,8 +67,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.nuvio.tv.ui.screens.player.PlaybackTimelineState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 private sealed interface TouchHudFeedback {
@@ -150,6 +153,7 @@ fun BoxScope.PlayerTouchGesturesOverlay(
     var feedback by remember { mutableStateOf<TouchHudFeedback?>(null) }
     var feedbackSeq by remember { mutableLongStateOf(0L) }
     val latestScreenLocked by rememberUpdatedState(screenLocked)
+    val latestControlsVisible by rememberUpdatedState(controlsVisible)
     val latestTimelineProvider by rememberUpdatedState(timelineProvider)
     val latestOnToggleControls by rememberUpdatedState(onToggleControls)
     val latestOnHideControls by rememberUpdatedState(onHideControls)
@@ -157,6 +161,13 @@ fun BoxScope.PlayerTouchGesturesOverlay(
     val latestOnSeekBy by rememberUpdatedState(onSeekBy)
     val latestOnSeekTo by rememberUpdatedState(onSeekTo)
     val latestOnBack by rememberUpdatedState(onBack)
+    val gestureScope = rememberCoroutineScope()
+    var pendingSingleTapJob by remember { mutableStateOf<Job?>(null) }
+    var lastTapTimestampMs by remember { mutableLongStateOf(0L) }
+
+    DisposableEffect(Unit) {
+        onDispose { pendingSingleTapJob?.cancel() }
+    }
 
     LaunchedEffect(feedbackSeq) {
         if (feedbackSeq > 0L && feedback != null) {
@@ -199,145 +210,155 @@ fun BoxScope.PlayerTouchGesturesOverlay(
                 .fillMaxSize()
                 .zIndex(if (screenLocked) 3.8f else 0.2f)
                 .pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = {
-                                if (latestScreenLocked) {
-                                    unlockButtonVisible = !unlockButtonVisible
-                                } else {
-                                    latestOnToggleControls()
+                    val tapSlopPx = touchSlop * 1.8f
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val startX = down.position.x
+                        val startY = down.position.y
+                        val totalWidth = size.width.coerceAtLeast(1).toFloat()
+                        val totalHeight = size.height.coerceAtLeast(1).toFloat()
+                        var totalDx = 0f
+                        var totalDy = 0f
+                        var maxTravel = 0f
+                        var multiTouch = false
+                        var axis = ActiveDragAxis.UNDECIDED
+
+                        var brightnessValue by mutableFloatStateOf(readInitialBrightness())
+                        val maxVol = (audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15).coerceAtLeast(1)
+                        val startVol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: (maxVol / 2)
+                        var volFraction = startVol.toFloat() / maxVol.toFloat()
+
+                        val timeline = latestTimelineProvider()
+                        var pendingSeekTargetMs: Long? = null
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val activeChange = event.changes.firstOrNull { it.id == down.id }
+                            if (activeChange == null || !activeChange.pressed) {
+                                if (!latestScreenLocked && axis == ActiveDragAxis.HORIZONTAL_SEEK && pendingSeekTargetMs != null && !timeline.isLive) {
+                                    latestOnSeekTo(pendingSeekTargetMs!!)
                                 }
-                            },
-                            onDoubleTap = { offset ->
-                                if (latestScreenLocked) {
-                                    unlockButtonVisible = true
-                                    return@detectTapGestures
-                                }
-                                val width = size.width.coerceAtLeast(1)
-                                val ratio = offset.x / width.toFloat()
-                                val timeline = latestTimelineProvider()
-                                when {
-                                    ratio < 0.38f && !timeline.isLive -> {
-                                        latestOnSeekBy(-10_000L)
-                                        feedback = TouchHudFeedback.DoubleTapAction(
-                                            Icons.Rounded.FastRewind,
-                                            "-10 giây"
-                                        )
-                                        feedbackSeq++
-                                    }
-                                    ratio > 0.62f && !timeline.isLive -> {
-                                        latestOnSeekBy(10_000L)
-                                        feedback = TouchHudFeedback.DoubleTapAction(
-                                            Icons.Rounded.FastForward,
-                                            "+10 giây"
-                                        )
-                                        feedbackSeq++
-                                    }
-                                    else -> {
-                                        latestOnPlayPause()
-                                        feedback = TouchHudFeedback.DoubleTapAction(
-                                            Icons.Rounded.Pause,
-                                            "Phát / Tạm dừng"
-                                        )
-                                        feedbackSeq++
-                                    }
-                                }
-                            }
-                        )
-                    }
-                    .then(
-                        if (!screenLocked) {
-                            Modifier.pointerInput(Unit) {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    val startX = down.position.x
-                                    val startY = down.position.y
-                                    val totalWidth = size.width.coerceAtLeast(1).toFloat()
-                                    val totalHeight = size.height.coerceAtLeast(1).toFloat()
-                                    var totalDx = 0f
-                                    var totalDy = 0f
-                                    var axis = ActiveDragAxis.UNDECIDED
-
-                                    var brightnessValue by mutableFloatStateOf(readInitialBrightness())
-                                    val maxVol = (audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15).coerceAtLeast(1)
-                                    val startVol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: (maxVol / 2)
-                                    var volFraction = startVol.toFloat() / maxVol.toFloat()
-
-                                    val timeline = latestTimelineProvider()
-                                    var pendingSeekTargetMs: Long? = null
-
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val activeChange = event.changes.firstOrNull { it.id == down.id }
-                                        if (activeChange == null || !activeChange.pressed) {
-                                            if (!latestScreenLocked && axis == ActiveDragAxis.HORIZONTAL_SEEK && pendingSeekTargetMs != null && !timeline.isLive) {
-                                                latestOnSeekTo(pendingSeekTargetMs!!)
-                                            }
-                                            if (axis != ActiveDragAxis.UNDECIDED) {
-                                                feedbackSeq++
-                                            }
-                                            break
-                                        }
-
-                                        if (event.changes.count { it.pressed } > 1) {
-                                            break
-                                        }
-
-                                        val delta = activeChange.positionChange()
-                                        totalDx += delta.x
-                                        totalDy += delta.y
-
-                                        if (axis == ActiveDragAxis.UNDECIDED) {
-                                            if (abs(totalDx) > touchSlop * 1.4f && abs(totalDx) > abs(totalDy) * 1.25f) {
-                                                if (!timeline.isLive && timeline.duration > 0L) {
-                                                    axis = ActiveDragAxis.HORIZONTAL_SEEK
-                                                    activeChange.consume()
+                                if (axis != ActiveDragAxis.UNDECIDED) {
+                                    feedbackSeq++
+                                } else if (!multiTouch && maxTravel <= tapSlopPx) {
+                                    activeChange?.consume()
+                                    if (latestScreenLocked) {
+                                        unlockButtonVisible = !unlockButtonVisible
+                                    } else if (latestControlsVisible) {
+                                        pendingSingleTapJob?.cancel()
+                                        pendingSingleTapJob = null
+                                        lastTapTimestampMs = 0L
+                                        latestOnToggleControls()
+                                    } else {
+                                        val nowMs = android.os.SystemClock.uptimeMillis()
+                                        if (lastTapTimestampMs > 0L && nowMs - lastTapTimestampMs <= 240L) {
+                                            pendingSingleTapJob?.cancel()
+                                            pendingSingleTapJob = null
+                                            lastTapTimestampMs = 0L
+                                            val ratio = startX / totalWidth
+                                            val currentTimeline = latestTimelineProvider()
+                                            when {
+                                                ratio < 0.38f && !currentTimeline.isLive -> {
+                                                    latestOnSeekBy(-10_000L)
+                                                    feedback = TouchHudFeedback.DoubleTapAction(
+                                                        Icons.Rounded.FastRewind,
+                                                        "-10 giây"
+                                                    )
+                                                    feedbackSeq++
                                                 }
-                                            } else if (abs(totalDy) > touchSlop * 1.4f && abs(totalDy) > abs(totalDx) * 1.25f) {
-                                                axis = if (startX < totalWidth * 0.5f) {
-                                                    ActiveDragAxis.LEFT_BRIGHTNESS
-                                                } else {
-                                                    ActiveDragAxis.RIGHT_VOLUME
+                                                ratio > 0.62f && !currentTimeline.isLive -> {
+                                                    latestOnSeekBy(10_000L)
+                                                    feedback = TouchHudFeedback.DoubleTapAction(
+                                                        Icons.Rounded.FastForward,
+                                                        "+10 giây"
+                                                    )
+                                                    feedbackSeq++
                                                 }
-                                                activeChange.consume()
+                                                else -> {
+                                                    latestOnPlayPause()
+                                                    feedback = TouchHudFeedback.DoubleTapAction(
+                                                        Icons.Rounded.Pause,
+                                                        "Phát / Tạm dừng"
+                                                    )
+                                                    feedbackSeq++
+                                                }
                                             }
                                         } else {
-                                            activeChange.consume()
-                                            when (axis) {
-                                                ActiveDragAxis.LEFT_BRIGHTNESS -> {
-                                                    val fractionDelta = (-delta.y / (totalHeight * 0.65f))
-                                                    brightnessValue = (brightnessValue + fractionDelta).coerceIn(0.02f, 1f)
-                                                    applyWindowBrightness(brightnessValue)
-                                                    feedback = TouchHudFeedback.Brightness((brightnessValue * 100f).roundToInt())
+                                            lastTapTimestampMs = nowMs
+                                            pendingSingleTapJob?.cancel()
+                                            pendingSingleTapJob = gestureScope.launch {
+                                                delay(240L)
+                                                lastTapTimestampMs = 0L
+                                                if (!latestScreenLocked && !latestControlsVisible) {
+                                                    latestOnToggleControls()
                                                 }
-                                                ActiveDragAxis.RIGHT_VOLUME -> {
-                                                    val fractionDelta = (-delta.y / (totalHeight * 0.65f))
-                                                    volFraction = (volFraction + fractionDelta).coerceIn(0f, 1f)
-                                                    val targetVol = (volFraction * maxVol).roundToInt().coerceIn(0, maxVol)
-                                                    audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
-                                                    feedback = TouchHudFeedback.Volume(((targetVol.toFloat() / maxVol.toFloat()) * 100f).roundToInt())
-                                                }
-                                                ActiveDragAxis.HORIZONTAL_SEEK -> {
-                                                    val maxSwipeWindowMs = timeline.duration.coerceAtMost(150_000L)
-                                                    val seekDeltaMs = ((totalDx / totalWidth) * maxSwipeWindowMs).toLong()
-                                                    val clampedTarget = (timeline.currentPosition + seekDeltaMs).coerceIn(0L, timeline.duration)
-                                                    pendingSeekTargetMs = clampedTarget
-                                                    feedback = TouchHudFeedback.SeekPreview(
-                                                        deltaMs = clampedTarget - timeline.currentPosition,
-                                                        targetMs = clampedTarget
-                                                    )
-                                                }
-                                                ActiveDragAxis.UNDECIDED -> Unit
                                             }
                                         }
                                     }
                                 }
+                                break
                             }
-                        } else {
-                            Modifier
+
+                            if (event.changes.count { it.pressed } > 1) {
+                                multiTouch = true
+                                break
+                            }
+
+                            val delta = activeChange.positionChange()
+                            totalDx += delta.x
+                            totalDy += delta.y
+                            maxTravel = maxOf(maxTravel, hypot(totalDx, totalDy))
+
+                            if (!latestScreenLocked) {
+                                if (axis == ActiveDragAxis.UNDECIDED) {
+                                    if (abs(totalDx) > tapSlopPx && abs(totalDx) > abs(totalDy) * 1.25f) {
+                                        if (!timeline.isLive && timeline.duration > 0L) {
+                                            axis = ActiveDragAxis.HORIZONTAL_SEEK
+                                            activeChange.consume()
+                                        }
+                                    } else if (abs(totalDy) > tapSlopPx && abs(totalDy) > abs(totalDx) * 1.25f) {
+                                        axis = if (startX < totalWidth * 0.5f) {
+                                            ActiveDragAxis.LEFT_BRIGHTNESS
+                                        } else {
+                                            ActiveDragAxis.RIGHT_VOLUME
+                                        }
+                                        activeChange.consume()
+                                    }
+                                } else {
+                                    activeChange.consume()
+                                    when (axis) {
+                                        ActiveDragAxis.LEFT_BRIGHTNESS -> {
+                                            val fractionDelta = (-delta.y / (totalHeight * 0.65f))
+                                            brightnessValue = (brightnessValue + fractionDelta).coerceIn(0.02f, 1f)
+                                            applyWindowBrightness(brightnessValue)
+                                            feedback = TouchHudFeedback.Brightness((brightnessValue * 100f).roundToInt())
+                                        }
+                                        ActiveDragAxis.RIGHT_VOLUME -> {
+                                            val fractionDelta = (-delta.y / (totalHeight * 0.65f))
+                                            volFraction = (volFraction + fractionDelta).coerceIn(0f, 1f)
+                                            val targetVol = (volFraction * maxVol).roundToInt().coerceIn(0, maxVol)
+                                            audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                                            feedback = TouchHudFeedback.Volume(((targetVol.toFloat() / maxVol.toFloat()) * 100f).roundToInt())
+                                        }
+                                        ActiveDragAxis.HORIZONTAL_SEEK -> {
+                                            val maxSwipeWindowMs = timeline.duration.coerceAtMost(150_000L)
+                                            val seekDeltaMs = ((totalDx / totalWidth) * maxSwipeWindowMs).toLong()
+                                            val clampedTarget = (timeline.currentPosition + seekDeltaMs).coerceIn(0L, timeline.duration)
+                                            pendingSeekTargetMs = clampedTarget
+                                            feedback = TouchHudFeedback.SeekPreview(
+                                                deltaMs = clampedTarget - timeline.currentPosition,
+                                                targetMs = clampedTarget
+                                            )
+                                        }
+                                        ActiveDragAxis.UNDECIDED -> Unit
+                                    }
+                                }
+                            }
                         }
-                    )
-            )
-        }
+                    }
+                }
+        )
+    }
 
         // Floating HUD Feedback Pill (Brightness / Volume / Double-Tap / Horizontal Seek)
         AnimatedVisibility(
@@ -359,10 +380,10 @@ fun BoxScope.PlayerTouchGesturesOverlay(
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
-                .align(Alignment.TopCenter)
+                .align(Alignment.TopStart)
                 .zIndex(2.25f)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(top = 14.dp)
+                .padding(start = 16.dp, top = 14.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,

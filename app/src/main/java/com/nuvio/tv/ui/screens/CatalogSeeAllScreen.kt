@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -191,12 +192,40 @@ fun CatalogSeeAllScreen(
         }
     }
 
-    val compactSeeAll = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val screenConfig = androidx.compose.ui.platform.LocalConfiguration.current
+    val formFactor = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current
+    val globalLandscape = com.nuvio.tv.ui.components.LocalLandscapePosterMode.current
+    val compactSeeAll = screenConfig.screenWidthDp < 600
+    val isLandscapeScreen = screenConfig.screenWidthDp > screenConfig.screenHeightDp
     val seeAllHorizPad = if (compactSeeAll) 16.dp else NuvioTheme.spacing.xxxl
+    val adaptiveColumns = when (formFactor) {
+        com.nuvio.tv.ui.monolith.DeviceFormFactor.MOBILE -> when {
+            isLandscapeScreen -> if (globalLandscape) 3 else 5
+            else -> if (globalLandscape) 2 else 3
+        }
+        com.nuvio.tv.ui.monolith.DeviceFormFactor.TABLET -> when {
+            isLandscapeScreen -> if (globalLandscape) 4 else 5
+            else -> if (globalLandscape) 3 else 4
+        }
+        com.nuvio.tv.ui.monolith.DeviceFormFactor.TV -> {
+            val cellMinDp = if (globalLandscape) 230 else 155
+            (screenConfig.screenWidthDp / cellMinDp).coerceIn(4, 7)
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(vertical = if (compactSeeAll) 14.dp else NuvioTheme.spacing.xl)
+            .then(
+                if (formFactor != com.nuvio.tv.ui.monolith.DeviceFormFactor.TV) {
+                    Modifier.statusBarsPadding()
+                } else {
+                    Modifier
+                }
+            )
+            .padding(
+                top = if (formFactor != com.nuvio.tv.ui.monolith.DeviceFormFactor.TV) 18.dp else NuvioTheme.spacing.xl,
+                bottom = NuvioTheme.spacing.xl
+            )
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = seeAllHorizPad),
@@ -230,12 +259,9 @@ fun CatalogSeeAllScreen(
                 catalogRow?.stableItemKeys().orEmpty()
             }
             Box(modifier = Modifier.fillMaxSize()) {
-                val baseCellSize = if (com.nuvio.tv.ui.components.LocalLandscapePosterMode.current) posterCardStyle.height else posterCardStyle.width
                 LazyVerticalGrid(
                     state = gridState,
-                    columns = GridCells.Adaptive(
-                        minSize = if (compactSeeAll) minOf(baseCellSize, 104.dp) else baseCellSize
-                    ),
+                    columns = GridCells.Fixed(adaptiveColumns),
                     modifier = Modifier.dpadRepeatThrottle(),
                     contentPadding = PaddingValues(
                         start = seeAllHorizPad,
@@ -243,8 +269,8 @@ fun CatalogSeeAllScreen(
                         top = NuvioTheme.spacing.md,
                         bottom = NuvioTheme.spacing.xxl + com.nuvio.tv.ui.monolith.LocalMonolithBottomInset.current
                     ),
-                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
-                    verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
+                    horizontalArrangement = Arrangement.spacedBy(if (compactSeeAll) 10.dp else NuvioTheme.spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(if (compactSeeAll) 14.dp else NuvioTheme.spacing.lg)
                 ) {
                     itemsIndexed(
                         items = catalogRow.items,
@@ -264,6 +290,8 @@ fun CatalogSeeAllScreen(
                             item = item,
                             posterCardStyle = posterCardStyle,
                             showLabel = uiState.posterLabelsEnabled,
+                            showReleaseInfo = true,
+                            fillWidth = true,
                             isWatched = isWatched,
                             focusRequester = if (index == focusedItemIndex) restoreFocusRequester else null,
                             onFocused = {
@@ -298,18 +326,17 @@ fun CatalogSeeAllScreen(
                                 androidx.compose.foundation.shape.RoundedCornerShape(posterCardStyle.cornerRadius)
                             }
                             val cardDepthStyle = com.nuvio.tv.ui.components.LocalCardDepthStyle.current
-                            val globalLandscape = com.nuvio.tv.ui.components.LocalLandscapePosterMode.current
-                            Column(
-                                modifier = Modifier
-                                    .then(if (globalLandscape) Modifier.fillMaxWidth() else Modifier.width(posterCardStyle.width))
-                            ) {
+                            val loadingAspect = if (globalLandscape) {
+                                com.nuvio.tv.domain.model.PosterShape.LANDSCAPE.aspectRatio()
+                            } else {
+                                com.nuvio.tv.domain.model.PosterShape.POSTER.aspectRatio()
+                            }
+                            Column(modifier = Modifier.fillMaxWidth()) {
                                 com.nuvio.tv.ui.tvhybrid.Card(
                                     onClick = {},
                                     modifier = Modifier
-                                        .then(
-                                            if (globalLandscape) Modifier.fillMaxWidth().aspectRatio(com.nuvio.tv.domain.model.PosterShape.LANDSCAPE.aspectRatio())
-                                            else Modifier.width(posterCardStyle.width).height(posterCardStyle.height)
-                                        )
+                                        .fillMaxWidth()
+                                        .aspectRatio(loadingAspect)
                                         .then(Modifier.focusProperties { canFocus = false }),
                                     shape = androidx.tv.material3.CardDefaults.shape(shape = cardShape),
                                     colors = androidx.tv.material3.CardDefaults.colors(

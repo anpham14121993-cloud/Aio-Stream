@@ -18,7 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.focusable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +39,7 @@ internal fun PlayerOverlayScaffold(
     captureKeys: Boolean = true,
     dismissOnCenter: Boolean = false,
     dismissOnBackgroundClick: Boolean = false,
+    onBackgroundDismiss: (() -> Unit)? = null,
     overlayTint: Color = Color.Black.copy(alpha = 0.34f),
     contentPadding: PaddingValues = PaddingValues(),
     topEndContent: (@Composable () -> Unit)? = null,
@@ -61,13 +64,14 @@ internal fun PlayerOverlayScaffold(
             }
         }
 
+        val latestBackgroundDismiss by rememberUpdatedState(onBackgroundDismiss ?: onDismiss)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .then(
                     if (dismissOnBackgroundClick) {
                         Modifier.pointerInput(Unit) {
-                            detectTapGestures(onTap = { onDismiss() })
+                            detectTapGestures(onTap = { latestBackgroundDismiss() })
                         }
                     } else {
                         Modifier

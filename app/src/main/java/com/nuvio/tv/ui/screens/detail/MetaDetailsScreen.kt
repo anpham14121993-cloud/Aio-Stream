@@ -2432,7 +2432,10 @@ private fun MetaDetailsContent(
         }
         bmp.asImageBitmap()
     }
-    val compactHeroHeight = (currentConfig.screenWidthDp.dp * 0.68f).coerceIn(260.dp, 340.dp)
+    val compactHeroHeight = maxOf(
+        currentConfig.screenWidthDp.dp * 0.90f,
+        currentConfig.screenHeightDp.dp * 0.44f
+    ).coerceIn(340.dp, 460.dp)
     val compactHeroHeightPx = with(localDensity) { compactHeroHeight.toPx() }.coerceIn(1f, backdropHeightPx.toFloat())
     val bottomGradientBitmap = remember(backgroundColor, backdropWidthPx, backdropHeightPx, isCompactGradient, compactHeroHeightPx) {
         val w = backdropWidthPx.coerceAtLeast(1)
@@ -2440,7 +2443,7 @@ private fun MetaDetailsContent(
         val transparent = backgroundColor.copy(alpha = 0f).toArgb()
         val bmp = android.graphics.Bitmap.createBitmap(2, h, android.graphics.Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(bmp)
-        val startY = if (isCompactGradient) compactHeroHeightPx * 0.58f else h * 0.38f
+        val startY = if (isCompactGradient) compactHeroHeightPx * 0.66f else h * 0.38f
         val endY = if (isCompactGradient) compactHeroHeightPx else h * 1.0f
         val shader = android.graphics.LinearGradient(
             0f, startY, 0f, endY,
@@ -3595,9 +3598,11 @@ private fun PersistentDetailBackdrop(
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp.dp
+    val cfg = LocalConfiguration.current
+    val screenWidthDp = cfg.screenWidthDp.dp
+    val screenHeightDp = cfg.screenHeightDp.dp
     val isCompactBackdrop = screenWidthDp < 600.dp
-    val compactHeroHeight = (screenWidthDp * 0.68f).coerceIn(260.dp, 340.dp)
+    val compactHeroHeight = maxOf(screenWidthDp * 0.90f, screenHeightDp * 0.44f).coerceIn(340.dp, 460.dp)
     val artworkAccent = com.nuvio.tv.ui.v2.appearance.LocalArtworkAccent.current
     if (owner != null) com.nuvio.tv.ui.v2.appearance.ObserveArtworkAccent(owner, url)
     val request = remember(context, url, isCompactBackdrop, compactHeroHeight) {
@@ -3684,8 +3689,12 @@ private fun BackdropLayer(
         animationSpec = tween(durationMillis = if (isScrolledPastHero) 300 else 800),
         label = "gradientFade"
     )
-    val isCompactBackdrop = LocalConfiguration.current.screenWidthDp < 600
-    val compactHeroHeight = (LocalConfiguration.current.screenWidthDp.dp * 0.68f).coerceIn(260.dp, 340.dp)
+    val cfgBackdrop = LocalConfiguration.current
+    val isCompactBackdrop = cfgBackdrop.screenWidthDp < 600
+    val compactHeroHeight = maxOf(
+        cfgBackdrop.screenWidthDp.dp * 0.90f,
+        cfgBackdrop.screenHeightDp.dp * 0.44f
+    ).coerceIn(340.dp, 460.dp)
     Box(modifier = Modifier.fillMaxSize()) {
         TrailerPlayer(
             trailerUrl = trailerUrl,
