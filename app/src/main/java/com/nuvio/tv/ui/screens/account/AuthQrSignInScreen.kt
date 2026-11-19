@@ -848,7 +848,8 @@ private fun AuthEmailLoginForm(
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var showPassword by rememberSaveable { mutableStateOf(false) }
-    val canSubmit = email.isNotBlank() && password.length >= if (isSignUpMode) 6 else 1 && !uiState.isLoading
+    val minPasswordLength = if (isSignUpMode) 6 else 1
+    val canSubmit = email.isNotBlank() && password.length >= minPasswordLength && !uiState.isLoading
     val submit = {
         if (canSubmit) {
             if (isSignUpMode) {
