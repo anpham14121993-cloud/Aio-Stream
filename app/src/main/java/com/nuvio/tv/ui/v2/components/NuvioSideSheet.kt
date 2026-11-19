@@ -2,7 +2,9 @@ package com.nuvio.tv.ui.v2.components
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -32,14 +34,22 @@ fun NuvioSideSheet(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val focus = remember { FocusRequester() }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     BackHandler(onBack = onDismiss)
-    LaunchedEffect(Unit) {
-        if (!requestInitialFocus) return@LaunchedEffect
+    LaunchedEffect(tvFocusMode) {
+        if (!requestInitialFocus || !tvFocusMode) return@LaunchedEffect
         repeat(2) { withFrameNanos { } }
         focus.requestFocus()
     }
     androidx.compose.foundation.layout.BoxWithConstraints(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)),
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.45f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
+            ),
         contentAlignment = Alignment.CenterEnd
     ) {
         val compact = maxWidth < 600.dp
@@ -50,7 +60,17 @@ fun NuvioSideSheet(
             Modifier.fillMaxSize().padding(horizontal = outerHoriz, vertical = outerVert),
             contentAlignment = Alignment.CenterEnd
         ) {
-            NuvioGlassSurface(GlassRole.PANEL, Modifier.width(sheetWidth).fillMaxHeight()) {
+            NuvioGlassSurface(
+                GlassRole.PANEL,
+                Modifier
+                    .width(sheetWidth)
+                    .fillMaxHeight()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    )
+            ) {
                 Column(
                     Modifier.fillMaxSize().padding(if (compact) 16.dp else 24.dp).focusRequester(focus)
                         .focusProperties { onExit = { cancelFocusChange() } }.focusGroup(),

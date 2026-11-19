@@ -83,10 +83,14 @@ fun LightweightCard(
         onClick = onClick,
         onLongClick = onLongClick
     )
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    val effectiveFocusChromeHidden = remember(focusChromeHidden, tvFocusMode) {
+        { !tvFocusMode || focusChromeHidden() }
+    }
     val focusedState = resolvedInteraction.collectIsFocusedAsState()
     val pressedState = resolvedInteraction.collectIsPressedAsState()
     val chrome = remember(focusedState, pressedState) { CardFocusChrome(focusedState, pressedState) }
-    chrome.hidden = focusChromeHidden
+    chrome.hidden = effectiveFocusChromeHidden
     val glowColor = if (focusedGlow.elevationColor == MaterialTheme.colorScheme.surface) {
         MaterialTheme.colorScheme.surfaceColorAtElevation(focusedGlow.elevation)
     } else {

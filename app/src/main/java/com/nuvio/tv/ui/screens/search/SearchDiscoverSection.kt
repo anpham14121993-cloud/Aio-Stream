@@ -124,7 +124,8 @@ internal fun DiscoverSection(
     val filterFocusRequester = remember { FocusRequester() }
     var gridHasFocus by remember { mutableStateOf(false) }
 
-    androidx.activity.compose.BackHandler(enabled = gridHasFocus) {
+    val tvFocusDiscover = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    androidx.activity.compose.BackHandler(enabled = tvFocusDiscover && gridHasFocus) {
         try { filterFocusRequester.requestFocus() } catch (_: Exception) {}
     }
 

@@ -257,15 +257,16 @@ internal fun SubtitleSelectionOverlay(
     }
     val styleListState = remember(visible) { LazyListState() }
     val styleRequesters = rememberStyleFocusRequesters()
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
 
-    LaunchedEffect(shownLanguage?.key) {
-        if (!visible || editorOpen) return@LaunchedEffect
+    LaunchedEffect(shownLanguage?.key, tvFocusMode) {
+        if (!visible || editorOpen || !tvFocusMode) return@LaunchedEffect
         kotlinx.coroutines.delay(80)
         runCatching { listFocusRequester.requestFocus() }
     }
 
-    LaunchedEffect(visible, editorOpen) {
-        if (!visible) return@LaunchedEffect
+    LaunchedEffect(visible, editorOpen, tvFocusMode) {
+        if (!visible || !tvFocusMode) return@LaunchedEffect
         kotlinx.coroutines.delay(120)
         if (!editorOpen) {
             runCatching { listFocusRequester.requestFocus() }
@@ -274,16 +275,23 @@ internal fun SubtitleSelectionOverlay(
         }
     }
 
+    val maxSubtitlePanelWidth = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp - 32)
+        .coerceAtLeast(240).dp
+    val compactSubOverlay = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     PlayerOverlayScaffold(
         visible = visible,
         onDismiss = onDismiss,
         modifier = modifier,
         captureKeys = false,
-        contentPadding = PaddingValues(start = 44.dp, end = 44.dp, top = 28.dp, bottom = 28.dp)
+        contentPadding = if (compactSubOverlay) {
+            PaddingValues(horizontal = 16.dp, vertical = 16.dp)
+        } else {
+            PaddingValues(start = 44.dp, end = 44.dp, top = 28.dp, bottom = 28.dp)
+        }
     ) {
         Column(
             modifier = Modifier
-                .width(if (LocalV2Appearance.current != null) 400.dp else 320.dp)
+                .width(minOf(if (LocalV2Appearance.current != null) 400.dp else 320.dp, maxSubtitlePanelWidth))
                 .align(Alignment.BottomEnd)
                 .heightIn(max = 620.dp)
                 .v2PlayerPanel()

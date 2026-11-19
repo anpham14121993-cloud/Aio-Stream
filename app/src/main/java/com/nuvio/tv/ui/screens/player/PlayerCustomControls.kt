@@ -185,9 +185,10 @@ internal fun PlayerCustomControls(
         state.showSourcesPanel || state.showAudioOverlay || state.showSubtitleOverlay || state.showSubtitleStylePanel ||
         state.showSubtitleTimingDialog || state.showSubtitleDelayOverlay || state.showSpeedDialog ||
         state.showPartyPanel || state.postPlayMode is PostPlayMode.StillWatching
-    LaunchedEffect(focus.requestGeneration, layout, deckAvailable, state.showMoreDialog, hasSeekTimeline, panelVisible) {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    LaunchedEffect(focus.requestGeneration, layout, deckAvailable, state.showMoreDialog, hasSeekTimeline, panelVisible, tvFocusMode) {
         if (focus.requestGeneration == 0) return@LaunchedEffect
-        if (panelVisible) { focus.requestGeneration = 0; return@LaunchedEffect }
+        if (panelVisible || !tvFocusMode) { focus.requestGeneration = 0; return@LaunchedEffect }
         if (!state.showMoreDialog && focus.requested in collapsed) { actions.more(); return@LaunchedEffect }
         withFrameNanos { }; withFrameNanos { }
         val target = if (state.showMoreDialog) playerControlPopupFocusFallback(layout, available, focus.requested)
@@ -198,7 +199,7 @@ internal fun PlayerCustomControls(
         focus.requestGeneration = 0
     }
     // Capture before removing the focused target can clear the group's focus state.
-    val needsRecovery = !warming && state.showControls && !state.showMoreDialog && focus.buttonFocused && focus.lastFocused !in order
+    val needsRecovery = tvFocusMode && !warming && state.showControls && !state.showMoreDialog && focus.buttonFocused && focus.lastFocused !in order
     SideEffect { if (needsRecovery && !panelVisible && focus.requestGeneration == 0) {
         if (PlayerControlAction.MORE in order) focus.pendingReturn = PlayerControlAction.MORE
         focus.restore(layout, deckAvailable)

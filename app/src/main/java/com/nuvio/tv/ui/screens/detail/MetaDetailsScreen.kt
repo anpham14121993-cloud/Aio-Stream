@@ -89,6 +89,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -578,8 +579,28 @@ fun MetaDetailsScreen(
         }
     }
 
-    LaunchedEffect(uiState.isTrailerPlaying, uiState.showTrailerControls) {
-        if (uiState.isTrailerPlaying && uiState.showTrailerControls) {
+    val isHandheldTrailerDevice = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current !=
+        com.nuvio.tv.ui.monolith.DeviceFormFactor.TV
+    val tvFocusModeTrailer = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    val setFullscreenMediaOrientation = com.nuvio.tv.ui.monolith.LocalFullscreenMediaOrientationSetter.current
+    val isHandheldFullscreenTrailer = isHandheldTrailerDevice &&
+        uiState.isTrailerPlaying &&
+        uiState.showTrailerControls &&
+        !uiState.trailerUrl.isNullOrBlank()
+
+    DisposableEffect(isHandheldFullscreenTrailer) {
+        if (isHandheldFullscreenTrailer) {
+            setFullscreenMediaOrientation(true)
+        }
+        onDispose {
+            if (isHandheldFullscreenTrailer) {
+                setFullscreenMediaOrientation(false)
+            }
+        }
+    }
+
+    LaunchedEffect(uiState.isTrailerPlaying, uiState.showTrailerControls, tvFocusModeTrailer) {
+        if (tvFocusModeTrailer && uiState.isTrailerPlaying && uiState.showTrailerControls) {
             trailerControllerFocusRequester.requestFocusAfterFrames()
         }
     }
@@ -1209,23 +1230,46 @@ fun MetaDetailsScreen(
         }
 
         if (uiState.isTrailerPlaying && uiState.showTrailerControls) {
-            // This surface exists only to capture remote keys (back/play/pause/seek) while the
-            // trailer is playing, so it has no visible label of its own to announce.
-            val trailerControlsDescription = stringResource(R.string.cd_trailer_controls)
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .focusRequester(trailerControllerFocusRequester)
-                    .focusable()
-                    .semantics { contentDescription = trailerControlsDescription }
-            )
+            if (isHandheldFullscreenTrailer) {
+                TrailerFullscreenTouchOverlay(
+                    title = uiState.meta?.name.orEmpty(),
+                    isPaused = isTrailerPaused,
+                    canControlPlayback = !uiState.trailerUrl.isNullOrBlank(),
+                    overlayState = trailerSeekOverlayState,
+                    onTogglePause = { isTrailerPaused = !isTrailerPaused },
+                    onSeekDelta = { delta ->
+                        trailerSeekDeltaMs = delta
+                        trailerSeekToken += 1
+                    },
+                    onDismiss = {
+                        restorePlayFocusAfterTrailerBackToken += 1
+                        isTrailerPaused = false
+                        viewModel.onEvent(MetaDetailsEvent.OnTrailerBackPress)
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(20f)
+                )
+            } else {
+                // This surface exists only to capture remote keys (back/play/pause/seek) while the
+                // trailer is playing, so it has no visible label of its own to announce.
+                val trailerControlsDescription = stringResource(R.string.cd_trailer_controls)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(if (tvFocusModeTrailer) Modifier.focusRequester(trailerControllerFocusRequester).focusable() else Modifier)
+                        .semantics { contentDescription = trailerControlsDescription }
+                )
+            }
         }
 
-        TrailerSeekOverlayHost(
-            visible = uiState.isTrailerPlaying && uiState.showTrailerControls && trailerSeekOverlayVisible,
-            overlayState = trailerSeekOverlayState,
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
+        if (!isHandheldFullscreenTrailer) {
+            TrailerSeekOverlayHost(
+                visible = uiState.isTrailerPlaying && uiState.showTrailerControls && trailerSeekOverlayVisible,
+                overlayState = trailerSeekOverlayState,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+        }
     }
 
     LaunchedEffect(trailerSeekOverlayVisible, uiState.isTrailerPlaying, uiState.showTrailerControls, trailerSeekToken) {
@@ -2319,64 +2363,73 @@ private fun MetaDetailsContent(
     val localContext = LocalContext.current
     val localDensity = LocalDensity.current
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    val backdropWidthPx = remember(localContext) { localContext.resources.displayMetrics.widthPixels.coerceAtLeast(1) }
-    val backdropHeightPx = remember(localContext) { localContext.resources.displayMetrics.heightPixels.coerceAtLeast(1) }
-    val leftGradientBitmap = remember(backgroundColor, backdropWidthPx, backdropHeightPx, isRtl) {
+    val currentConfig = LocalConfiguration.current
+    val backdropWidthPx = remember(localContext, currentConfig.screenWidthDp, currentConfig.screenHeightDp) {
+        localContext.resources.displayMetrics.widthPixels.coerceAtLeast(1)
+    }
+    val backdropHeightPx = remember(localContext, currentConfig.screenWidthDp, currentConfig.screenHeightDp) {
+        localContext.resources.displayMetrics.heightPixels.coerceAtLeast(1)
+    }
+    val isCompactGradient = LocalConfiguration.current.screenWidthDp < 600
+    val leftGradientBitmap = remember(backgroundColor, backdropWidthPx, backdropHeightPx, isRtl, isCompactGradient) {
         val w = backdropWidthPx.coerceAtLeast(1)
         val h = backdropHeightPx.coerceAtLeast(1)
         val transparent = backgroundColor.copy(alpha = 0f).toArgb()
         val bmp = android.graphics.Bitmap.createBitmap(w, 2, android.graphics.Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(bmp)
-        val fadeWidth = w * 0.78f
-        val shader = if (isRtl) {
-            android.graphics.LinearGradient(
-                w.toFloat(), 0f, w - fadeWidth, 0f,
-                intArrayOf(
-                    backgroundColor.copy(alpha = 1f).toArgb(),
-                    backgroundColor.copy(alpha = 0.95f).toArgb(),
-                    backgroundColor.copy(alpha = 0.84f).toArgb(),
-                    backgroundColor.copy(alpha = 0.70f).toArgb(),
-                    backgroundColor.copy(alpha = 0.52f).toArgb(),
-                    backgroundColor.copy(alpha = 0.34f).toArgb(),
-                    backgroundColor.copy(alpha = 0.18f).toArgb(),
-                    backgroundColor.copy(alpha = 0.07f).toArgb(),
-                    transparent
-                ),
-                floatArrayOf(0f, 0.10f, 0.22f, 0.36f, 0.52f, 0.66f, 0.78f, 0.90f, 1f),
-                android.graphics.Shader.TileMode.CLAMP
-            )
-        } else {
-            android.graphics.LinearGradient(
-                0f, 0f, fadeWidth, 0f,
-                intArrayOf(
-                    backgroundColor.copy(alpha = 1f).toArgb(),
-                    backgroundColor.copy(alpha = 0.95f).toArgb(),
-                    backgroundColor.copy(alpha = 0.84f).toArgb(),
-                    backgroundColor.copy(alpha = 0.70f).toArgb(),
-                    backgroundColor.copy(alpha = 0.52f).toArgb(),
-                    backgroundColor.copy(alpha = 0.34f).toArgb(),
-                    backgroundColor.copy(alpha = 0.18f).toArgb(),
-                    backgroundColor.copy(alpha = 0.07f).toArgb(),
-                    transparent
-                ),
-                floatArrayOf(0f, 0.10f, 0.22f, 0.36f, 0.52f, 0.66f, 0.78f, 0.90f, 1f),
-                android.graphics.Shader.TileMode.CLAMP
-            )
+        if (!isCompactGradient) {
+            val fadeWidth = w * 0.78f
+            val shader = if (isRtl) {
+                android.graphics.LinearGradient(
+                    w.toFloat(), 0f, w - fadeWidth, 0f,
+                    intArrayOf(
+                        backgroundColor.copy(alpha = 1f).toArgb(),
+                        backgroundColor.copy(alpha = 0.95f).toArgb(),
+                        backgroundColor.copy(alpha = 0.84f).toArgb(),
+                        backgroundColor.copy(alpha = 0.70f).toArgb(),
+                        backgroundColor.copy(alpha = 0.52f).toArgb(),
+                        backgroundColor.copy(alpha = 0.34f).toArgb(),
+                        backgroundColor.copy(alpha = 0.18f).toArgb(),
+                        backgroundColor.copy(alpha = 0.07f).toArgb(),
+                        transparent
+                    ),
+                    floatArrayOf(0f, 0.10f, 0.22f, 0.36f, 0.52f, 0.66f, 0.78f, 0.90f, 1f),
+                    android.graphics.Shader.TileMode.CLAMP
+                )
+            } else {
+                android.graphics.LinearGradient(
+                    0f, 0f, fadeWidth, 0f,
+                    intArrayOf(
+                        backgroundColor.copy(alpha = 1f).toArgb(),
+                        backgroundColor.copy(alpha = 0.95f).toArgb(),
+                        backgroundColor.copy(alpha = 0.84f).toArgb(),
+                        backgroundColor.copy(alpha = 0.70f).toArgb(),
+                        backgroundColor.copy(alpha = 0.52f).toArgb(),
+                        backgroundColor.copy(alpha = 0.34f).toArgb(),
+                        backgroundColor.copy(alpha = 0.18f).toArgb(),
+                        backgroundColor.copy(alpha = 0.07f).toArgb(),
+                        transparent
+                    ),
+                    floatArrayOf(0f, 0.10f, 0.22f, 0.36f, 0.52f, 0.66f, 0.78f, 0.90f, 1f),
+                    android.graphics.Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawRect(0f, 0f, w.toFloat(), 2f, android.graphics.Paint().apply {
+                this.shader = shader
+            })
         }
-        canvas.drawRect(0f, 0f, w.toFloat(), 2f, android.graphics.Paint().apply {
-            this.shader = shader
-        })
         bmp.asImageBitmap()
     }
-    val bottomGradientBitmap = remember(backgroundColor, backdropWidthPx, backdropHeightPx) {
+    val bottomGradientBitmap = remember(backgroundColor, backdropWidthPx, backdropHeightPx, isCompactGradient) {
         val w = backdropWidthPx.coerceAtLeast(1)
         val h = backdropHeightPx.coerceAtLeast(1)
         val transparent = backgroundColor.copy(alpha = 0f).toArgb()
         val bmp = android.graphics.Bitmap.createBitmap(2, h, android.graphics.Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(bmp)
-        val startY = h * 0.38f
+        val startY = h * if (isCompactGradient) 0.16f else 0.38f
+        val endY = h * if (isCompactGradient) 0.46f else 1.0f
         val shader = android.graphics.LinearGradient(
-            0f, startY, 0f, h.toFloat(),
+            0f, startY, 0f, endY,
             intArrayOf(
                 transparent,
                 backgroundColor.copy(alpha = 0.05f).toArgb(),
@@ -3490,9 +3543,10 @@ private fun PlayManualOverrideDialog(
     onStartFromBeginning: () -> Unit = {}
 ) {
     val primaryFocusRequester = remember { FocusRequester() }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
 
-    LaunchedEffect(Unit) {
-        primaryFocusRequester.requestFocus()
+    LaunchedEffect(tvFocusMode) {
+        if (tvFocusMode) primaryFocusRequester.requestFocus()
     }
 
     NuvioDialog(
@@ -3547,6 +3601,7 @@ private fun PersistentDetailBackdrop(
             else -> alpha.animateTo(targetAlpha, tween(fadeMillis))
         }
     }
+    val isCompactBackdrop = LocalConfiguration.current.screenWidthDp < 600
     AsyncImage(model = request, contentDescription = null,
         modifier = Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha.value * contentAlpha() }.v2GlassSource(),
         onSuccess = {
@@ -3554,7 +3609,10 @@ private fun PersistentDetailBackdrop(
             onLoaded(url)
             com.nuvio.tv.core.performance.DetailEntryTrace.mark("backdrop_loaded")
         },
-        onError = { onFailed(url) }, contentScale = ContentScale.Crop, alignment = Alignment.TopEnd)
+        onError = { onFailed(url) },
+        contentScale = ContentScale.Crop,
+        alignment = if (isCompactBackdrop) Alignment.TopCenter else Alignment.TopEnd
+    )
 }
 
 @Composable
@@ -3627,6 +3685,12 @@ private fun BackdropLayer(
                         if (gradientAlphaState.value > 0f) {
                             drawImage(
                                 leftGradient,
+                                dstSize = androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt()),
+                                alpha = gradientAlphaState.value,
+                                filterQuality = androidx.compose.ui.graphics.FilterQuality.Low
+                            )
+                            drawImage(
+                                bottomGradient,
                                 dstSize = androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt()),
                                 alpha = gradientAlphaState.value,
                                 filterQuality = androidx.compose.ui.graphics.FilterQuality.Low

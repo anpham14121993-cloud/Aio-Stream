@@ -2879,14 +2879,16 @@ private fun OverlayButton(
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    val effectiveFocused = isFocused && tvFocusMode
     val interactionSource = remember { MutableInteractionSource() }
 
     val bgColor by animateColorAsState(
         targetValue = when {
             !enabled -> Color.White.copy(alpha = 0.04f)
-            isPrimary && isFocused -> NuvioTheme.colors.SecondaryVariant
+            isPrimary && effectiveFocused -> NuvioTheme.colors.SecondaryVariant
             isPrimary -> NuvioTheme.colors.Secondary
-            isFocused -> NuvioTheme.colors.FocusBackground
+            effectiveFocused -> NuvioTheme.colors.FocusBackground
             else -> Color.White.copy(alpha = 0.06f)
         },
         animationSpec = tween(120),
@@ -2895,7 +2897,7 @@ private fun OverlayButton(
     val borderColor by animateColorAsState(
         targetValue = when {
             !enabled -> NuvioTheme.colors.Border
-            isFocused -> NuvioTheme.colors.FocusRing
+            effectiveFocused -> NuvioTheme.colors.FocusRing
             isPrimary -> NuvioTheme.colors.Secondary
             else -> NuvioTheme.colors.Border
         },
@@ -2903,14 +2905,14 @@ private fun OverlayButton(
         label = "btnBorder"
     )
     val borderWidth by animateDpAsState(
-        targetValue = if (isFocused) NuvioTheme.spacing.xxs else NuvioTheme.spacing.hairline,
+        targetValue = if (effectiveFocused) NuvioTheme.spacing.xxs else NuvioTheme.spacing.hairline,
         animationSpec = tween(120),
         label = "btnBorderWidth"
     )
     val textColor = when {
         !enabled -> NuvioTheme.colors.TextSecondary
-        isPrimary && isFocused -> NuvioTheme.colors.OnSecondaryVariant
-        isFocused -> NuvioTheme.colors.FocusContent
+        isPrimary && effectiveFocused -> NuvioTheme.colors.OnSecondaryVariant
+        effectiveFocused -> NuvioTheme.colors.FocusContent
         isPrimary -> NuvioTheme.colors.OnSecondary
         else -> NuvioTheme.colors.TextPrimary
     }
@@ -2921,7 +2923,7 @@ private fun OverlayButton(
             .clip(RoundedCornerShape(NuvioTheme.radii.md))
             .background(bgColor)
             .border(
-                border = if (isFocused && enabled) {
+                border = if (effectiveFocused && enabled) {
                     NuvioTheme.focusRing.border(borderWidth)
                 } else {
                     BorderStroke(borderWidth, borderColor)
@@ -2929,7 +2931,10 @@ private fun OverlayButton(
                 shape = RoundedCornerShape(NuvioTheme.radii.md)
             )
             .onFocusChanged { isFocused = it.isFocused }
-            .focusable(enabled = enabled, interactionSource = interactionSource)
+            .then(
+                if (tvFocusMode) Modifier.focusable(enabled = enabled, interactionSource = interactionSource)
+                else Modifier
+            )
             .onPreviewKeyEvent { event ->
                 val native = event.nativeKeyEvent
                 if (enabled && native.action == AndroidKeyEvent.ACTION_UP && isProfileSelectKey(native.keyCode)) {

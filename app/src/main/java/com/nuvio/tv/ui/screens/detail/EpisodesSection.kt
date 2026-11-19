@@ -141,12 +141,13 @@ fun SeasonTabs(
 
     val v2Appearance = com.nuvio.tv.ui.v2.appearance.LocalV2Appearance.current
     val compact = v2Appearance != null
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     val v2Cinematic = v2Appearance?.visualStyle == com.nuvio.tv.domain.model.VisualStyle.CINEMATIC_GLASS
     val tabShape = remember(compact) { RoundedCornerShape(if (compact) 8.dp else 20.dp) }
     val accent = NuvioTheme.colors.Secondary
     val tabBorder = CardDefaults.border(
         focusedBorder = Border(
-            border = if (compact) {
+            border = if (compact || !tvFocusMode) {
                 BorderStroke(NuvioTheme.spacing.xxs, Color.Transparent)
             } else {
                 NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs)
@@ -348,8 +349,8 @@ fun SeasonTabs(
                     }
                     .onFocusChanged {
                     val nowFocused = it.isFocused
-                    isFocused = nowFocused
-                    if (nowFocused) {
+                    isFocused = nowFocused && tvFocusMode
+                    if (nowFocused && tvFocusMode) {
                         lastFocusedSeason = season
                         if (!isSelected && !suppressFocusSwitch) {
                             pendingSeason = season
@@ -395,7 +396,13 @@ fun SeasonTabs(
                         isSelected -> accent
                         else -> Color.White.copy(alpha = 0.08f)
                     },
-                    focusedContainerColor = if (compact) accent.copy(alpha = if (v2Cinematic) .16f else .24f) else accent
+                    focusedContainerColor = when {
+                        !tvFocusMode && compact && isSelected -> Color.Transparent
+                        !tvFocusMode && isSelected -> accent
+                        !tvFocusMode -> Color.White.copy(alpha = 0.08f)
+                        compact -> accent.copy(alpha = if (v2Cinematic) .16f else .24f)
+                        else -> accent
+                    }
                 ),
                 border = tabBorder,
                 scale = tabScale
@@ -931,8 +938,9 @@ private fun EpisodeCard(
         }
         return
     }
+    val tvFocusEpisodeCard = com.nuvio.tv.ui.monolith.isTvFocusMode()
     LightweightCard(onClick = cardClick, onLongClick = onLongPress, modifier = interactiveModifier, shape = shape,
-        containerColor = Color.Transparent, focusedBorder = Border(border = focusRingBorder, shape = shape)) {
+        containerColor = Color.Transparent, focusedBorder = if (tvFocusEpisodeCard) Border(border = focusRingBorder, shape = shape) else Border.None) {
         Box(
             modifier = Modifier
                 .width(cardMetrics.cardWidth)

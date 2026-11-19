@@ -123,6 +123,27 @@ object AdaptiveDeviceDetector {
     }
 }
 
+/**
+ * Updates `requestedOrientation` from child media surfaces (e.g. fullscreen trailers on mobile)
+ * while keeping TV locked to landscape.
+ */
+val LocalFullscreenMediaOrientationSetter = compositionLocalOf<(Boolean) -> Unit> { {} }
+
+/**
+ * TV focus outlines, auto-focus stealing, and focus glow/lift apply only on TV
+ * or when actively navigating with D-Pad keys; never in mobile/tablet touch mode.
+ */
+@androidx.compose.runtime.Composable
+@androidx.compose.runtime.ReadOnlyComposable
+fun isTvFocusMode(): Boolean =
+    LocalDeviceFormFactor.current == DeviceFormFactor.TV ||
+        LocalInputInteractionMode.current != InputInteractionMode.TOUCH
+
+/** True when running on a handheld phone form factor regardless of current rotation. */
+@androidx.compose.runtime.Composable
+@androidx.compose.runtime.ReadOnlyComposable
+fun isMobileFormFactor(): Boolean = LocalDeviceFormFactor.current == DeviceFormFactor.MOBILE
+
 fun Activity.applyAioOrientation(
     formFactor: DeviceFormFactor,
     inPlayer: Boolean

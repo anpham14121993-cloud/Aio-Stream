@@ -343,6 +343,7 @@ fun HeroContentSection(
         animationSpec = tween(600),
         label = "logoWidth"
     )
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     // During a trailer the hero fills the screen so the logo sits at the bottom
     // on screens taller than the hero (lower-density TV boxes).
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
@@ -356,6 +357,11 @@ fun HeroContentSection(
         animationSpec = tween(600),
         label = "heroHeight"
     )
+    val compactBackdropClearance = if (isCompactPhone && !isTrailerPlaying) {
+        (screenHeight * 0.25f).coerceIn(170.dp, 240.dp)
+    } else {
+        0.dp
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -382,11 +388,14 @@ fun HeroContentSection(
                 .padding(
                     start = if (isCompactPhone) 16.dp else detailStartInset,
                     end = if (isCompactPhone) 16.dp else NuvioTheme.spacing.xxxl,
-                    top = if (isCompactPhone) 40.dp else 0.dp,
+                    top = if (isCompactPhone) 16.dp else 0.dp,
                     bottom = NuvioTheme.spacing.lg
                 ),
             verticalArrangement = Arrangement.Bottom
         ) {
+            if (compactBackdropClearance > 0.dp) {
+                Spacer(modifier = Modifier.height(compactBackdropClearance))
+            }
             // Logo/Title — always visible during trailer, animates size
             if (shouldShowLogo) {
                 Box(
@@ -396,8 +405,8 @@ fun HeroContentSection(
                 ) {
                     // A remote logo must never leave the title blank while it loads.
                     if (!logoLoaded && cachedLogo == null && !isTrailerPlaying) {
-                        Text(meta.name, style = MaterialTheme.typography.displayMedium,
-                            color = NuvioTheme.colors.TextPrimary, maxLines = 2,
+                        Text(meta.name, style = MaterialTheme.typography.headlineLarge,
+                            color = NuvioTheme.colors.TextPrimary, maxLines = if (isCompactPhone) 3 else 2,
                             overflow = TextOverflow.Ellipsis)
                     }
                     // Paint the already decoded Home image on the very first frame, even
@@ -430,8 +439,10 @@ fun HeroContentSection(
                 ) {
                     Text(
                         text = meta.name,
-                        style = MaterialTheme.typography.displayMedium,
+                        style = if (isCompactPhone) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.displayMedium,
                         color = NuvioTheme.colors.TextPrimary,
+                        maxLines = if (isCompactPhone) 3 else Int.MAX_VALUE,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(bottom = NuvioTheme.spacing.sm)
                     )
                 }
@@ -561,12 +572,71 @@ fun HeroContentSection(
                         }
                     }
                     if (isCompactPhone) {
-                        FlowRow(
-                            modifier = actionModifier,
-                            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
-                            verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+                        MetaInfoRow(
+                            meta = meta,
+                            hideImdbRating = hideMetaInfoImdb,
+                            showFullReleaseDate = showFullReleaseDate,
+                            tmdbRating = tmdbRating
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = actionModifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             actionButtons()
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        if (!creditLine.isNullOrBlank()) {
+                            Text(
+                                text = creditLine,
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    textDirection = creditLine.contentTextDirection()
+                                ),
+                                color = NuvioTheme.extendedColors.textSecondary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
+                        }
+
+                        Column(modifier = if (v2Hero) Modifier else Modifier.animateContentSize()) {
+                            if (mdbListRatings?.isEmpty() == false) {
+                                MDBListRatingsRow(ratings = mdbListRatings, order = mdbListRatingOrder)
+                                Spacer(modifier = Modifier.height(10.dp))
+                            }
+                        }
+
+                        if (sourceLineEnabled && sourceSignal != null) {
+                            Box(modifier = Modifier.heightIn(min = 24.dp)) {
+                                SourceBadgeRow(
+                                    signal = sourceSignal,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+
+                        meta.description?.let { description ->
+                            SynopsisDescription(
+                                description = description,
+                                onShowFullDescription = onShowFullDescription,
+                                upFocusRequester = playButtonFocusRequester,
+                                onFocused = onHeroActionFocused,
+                                onTruncationChanged = onTruncationChanged,
+                                maxLines = 4,
+                                expandInline = !tvFocusMode,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = NuvioTheme.spacing.md)
+                            )
                         }
                     } else {
                         Row(
@@ -576,74 +646,71 @@ fun HeroContentSection(
                         ) {
                             actionButtons()
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+                        Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
 
-                    if (!creditLine.isNullOrBlank()) {
-                        Text(
-                            text = creditLine,
-                            style = MaterialTheme.typography.labelLarge.copy(
-                                textDirection = creditLine.contentTextDirection()
-                            ),
-                            color = NuvioTheme.extendedColors.textSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.fillMaxWidth(if (isCompactPhone) 1f else 0.6f)
-                        )
-                        Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
-                    }
-
-                    // MDBList ratings: don't reserve space - a title with no ratings stays
-                    // null (indistinguishable from 'still loading'), so a reserved box would sit
-                    // empty forever. Instead animate the row in when ratings actually arrive, so
-                    // ratingless titles show nothing (no gap) and rated titles get a soft settle.
-                    Column(modifier = if (v2Hero) Modifier else Modifier.animateContentSize()) {
-                        if (mdbListRatings?.isEmpty() == false) {
-                            MDBListRatingsRow(ratings = mdbListRatings, order = mdbListRatingOrder)
-                            Spacer(modifier = Modifier.height(14.dp))
+                        if (!creditLine.isNullOrBlank()) {
+                            Text(
+                                text = creditLine,
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    textDirection = creditLine.contentTextDirection()
+                                ),
+                                color = NuvioTheme.extendedColors.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth(0.6f)
+                            )
+                            Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
                         }
-                    }
 
-                    val sourceLineShown = sourceLineEnabled && sourceSignal != null
-                    if (sourceLineEnabled) {
-                        Column(modifier = Modifier.animateContentSize()) {
-                            if (sourceSignal != null) {
-                                Box(modifier = Modifier.heightIn(min = 24.dp)) {
-                                    SourceBadgeRow(
-                                        signal = sourceSignal,
-                                        modifier = Modifier.fillMaxWidth(if (isCompactPhone) 1f else 0.75f)
-                                    )
-                                }
+                        // MDBList ratings: don't reserve space - a title with no ratings stays
+                        // null (indistinguishable from 'still loading'), so a reserved box would sit
+                        // empty forever. Instead animate the row in when ratings actually arrive, so
+                        // ratingless titles show nothing (no gap) and rated titles get a soft settle.
+                        Column(modifier = if (v2Hero) Modifier else Modifier.animateContentSize()) {
+                            if (mdbListRatings?.isEmpty() == false) {
+                                MDBListRatingsRow(ratings = mdbListRatings, order = mdbListRatingOrder)
                                 Spacer(modifier = Modifier.height(14.dp))
                             }
                         }
-                    }
 
-                    meta.description?.let { description ->
-                        SynopsisDescription(
-                            description = description,
-                            onShowFullDescription = onShowFullDescription,
-                            upFocusRequester = playButtonFocusRequester,
-                            onFocused = onHeroActionFocused,
-                            onTruncationChanged = onTruncationChanged,
-                            maxLines = when {
-                                isCompactPhone -> 4
-                                sourceLineShown -> 6
-                                else -> 8
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth(if (isCompactPhone) 1f else 0.6f)
-                                .padding(bottom = NuvioTheme.spacing.md)
+                        val sourceLineShown = sourceLineEnabled && sourceSignal != null
+                        if (sourceLineEnabled) {
+                            Column(modifier = Modifier.animateContentSize()) {
+                                if (sourceSignal != null) {
+                                    Box(modifier = Modifier.heightIn(min = 24.dp)) {
+                                        SourceBadgeRow(
+                                            signal = sourceSignal,
+                                            modifier = Modifier.fillMaxWidth(0.75f)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                }
+                            }
+                        }
+
+                        meta.description?.let { description ->
+                            SynopsisDescription(
+                                description = description,
+                                onShowFullDescription = onShowFullDescription,
+                                upFocusRequester = playButtonFocusRequester,
+                                onFocused = onHeroActionFocused,
+                                onTruncationChanged = onTruncationChanged,
+                                maxLines = if (sourceLineShown) 6 else 8,
+                                expandInline = !tvFocusMode,
+                                modifier = Modifier
+                                    .fillMaxWidth(0.6f)
+                                    .padding(bottom = NuvioTheme.spacing.md)
+                            )
+                        }
+
+                        MetaInfoRow(
+                            meta = meta,
+                            hideImdbRating = hideMetaInfoImdb,
+                            showFullReleaseDate = showFullReleaseDate,
+                            tmdbRating = tmdbRating
                         )
                     }
-
-                    MetaInfoRow(
-                        meta = meta,
-                        hideImdbRating = hideMetaInfoImdb,
-                        showFullReleaseDate = showFullReleaseDate,
-                        tmdbRating = tmdbRating
-                    )
                 }
             }
         }
@@ -665,12 +732,14 @@ internal fun PlayButton(
     val isV2 = com.nuvio.tv.ui.v2.appearance.LocalV2Appearance.current != null
     val v2Cinematic = com.nuvio.tv.ui.v2.appearance.LocalV2Appearance.current?.visualStyle ==
         com.nuvio.tv.domain.model.VisualStyle.CINEMATIC_GLASS
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    val isCompactAction = LocalConfiguration.current.screenWidthDp < 600 || com.nuvio.tv.ui.monolith.isMobileFormFactor()
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
     val playFallbackLabel = stringResource(R.string.hero_play)
 
-    LaunchedEffect(restoreFocusToken) {
-        if (restoreFocusToken > 0 && focusRequester != null) {
+    LaunchedEffect(restoreFocusToken, tvFocusMode) {
+        if (tvFocusMode && restoreFocusToken > 0 && focusRequester != null) {
             focusRequester.requestFocusAfterFrames()
         }
     }
@@ -748,13 +817,17 @@ internal fun PlayButton(
         shape = ButtonDefaults.shape(
             shape = RoundedCornerShape(if (isV2) 8.dp else NuvioTheme.spacing.xxl)
         ),
-        border = if (isV2) ButtonDefaults.border() else ButtonDefaults.border(
+        border = if (isV2 || !tvFocusMode) ButtonDefaults.border() else ButtonDefaults.border(
             focusedBorder = Border(
                 border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = RoundedCornerShape(if (isV2) 8.dp else NuvioTheme.spacing.xxl)
             )
         ),
-        contentPadding = PaddingValues(horizontal = NuvioTheme.spacing.xl, vertical = 14.dp)
+        contentPadding = if (isCompactAction) {
+            PaddingValues(horizontal = 18.dp, vertical = 11.dp)
+        } else {
+            PaddingValues(horizontal = NuvioTheme.spacing.xl, vertical = 14.dp)
+        }
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -778,7 +851,9 @@ internal fun PlayButton(
             ) {
                 Text(
                     text = text ?: stringResource(R.string.player_pill_play),
-                    style = MaterialTheme.typography.labelLarge
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -795,7 +870,9 @@ private fun ScoutRateButton(
     onFocused: () -> Unit
 ) {
     val secondary = NuvioTheme.colors.Secondary
-    if (com.nuvio.tv.ui.v2.appearance.LocalV2Appearance.current != null) {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    val compactCircleAction = LocalConfiguration.current.screenWidthDp < 600 || com.nuvio.tv.ui.monolith.isMobileFormFactor()
+    if (com.nuvio.tv.ui.v2.appearance.LocalV2Appearance.current != null && !compactCircleAction) {
         val shape = RoundedCornerShape(12.dp)
         com.nuvio.tv.ui.v2.components.NuvioActionPill(
             onClick = onClick,
@@ -815,7 +892,7 @@ private fun ScoutRateButton(
         onClick = onClick,
         modifier = Modifier
             .focusRequester(focusRequester)
-            .size(NuvioTheme.spacing.xxxl)
+            .size(if (compactCircleAction) 44.dp else NuvioTheme.spacing.xxxl)
             .nuvioControlSurface(CircleShape)
             .onFocusChanged { if (it.isFocused) onFocused() }
             .focusProperties { up = FocusRequester.Cancel }
@@ -826,7 +903,7 @@ private fun ScoutRateButton(
             contentColor = if (rating != null) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextPrimary,
             focusedContentColor = NuvioTheme.colors.OnSecondary
         ),
-        border = IconButtonDefaults.border(
+        border = if (!tvFocusMode) IconButtonDefaults.border() else IconButtonDefaults.border(
             focusedBorder = Border(border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs), shape = CircleShape)
         ),
         shape = IconButtonDefaults.shape(shape = CircleShape)
@@ -847,7 +924,9 @@ private fun ActionIconButtonPainter(
     enabled: Boolean = true
 ) {
     val isV2 = com.nuvio.tv.ui.v2.appearance.LocalV2Appearance.current != null
-    if (isV2) {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    val compactCircleAction = LocalConfiguration.current.screenWidthDp < 600 || com.nuvio.tv.ui.monolith.isMobileFormFactor()
+    if (isV2 && !compactCircleAction) {
         V2DetailGlassAction(contentDescription, onClick, onFocused, enabled, null) {
             Icon(painter, null, Modifier.size(17.dp))
         }
@@ -857,20 +936,20 @@ private fun ActionIconButtonPainter(
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier
-            .size(NuvioTheme.spacing.xxxl)
+            .size(if (compactCircleAction) 44.dp else NuvioTheme.spacing.xxxl)
             .nuvioControlSurface(CircleShape)
             .onFocusChanged { state ->
                 if (state.isFocused) onFocused()
             }
             .focusProperties { up = FocusRequester.Cancel },
-        scale = if (isV2) IconButtonDefaults.scale(focusedScale = 1f) else IconButtonDefaults.scale(),
+        scale = if (isV2 || !tvFocusMode) IconButtonDefaults.scale(focusedScale = 1f) else IconButtonDefaults.scale(),
         colors = IconButtonDefaults.colors(
             containerColor = if (isV2) Color.Transparent else NuvioTheme.colors.BackgroundCard,
-            focusedContainerColor = if (isV2) Color.Transparent else NuvioTheme.colors.Secondary,
+            focusedContainerColor = if (isV2 || !tvFocusMode) Color.Transparent else NuvioTheme.colors.Secondary,
             contentColor = NuvioTheme.colors.TextPrimary,
-            focusedContentColor = if (isV2) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.OnSecondary
+            focusedContentColor = if (isV2 || !tvFocusMode) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.OnSecondary
         ),
-        border = if (isV2) IconButtonDefaults.border() else IconButtonDefaults.border(
+        border = if (isV2 || !tvFocusMode) IconButtonDefaults.border() else IconButtonDefaults.border(
             focusedBorder = Border(
                 border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = CircleShape
@@ -908,7 +987,9 @@ private fun ActionIconButton(
     focusRequester: FocusRequester? = null
 ) {
     val isV2 = com.nuvio.tv.ui.v2.appearance.LocalV2Appearance.current != null
-    if (isV2) {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    val compactCircleAction = LocalConfiguration.current.screenWidthDp < 600 || com.nuvio.tv.ui.monolith.isMobileFormFactor()
+    if (isV2 && !compactCircleAction) {
         V2DetailGlassAction(contentDescription, onClick, onFocused, enabled, onLongPress) {
             when {
                 busy -> LoadingIndicator(Modifier.size(17.dp), color = androidx.tv.material3.LocalContentColor.current)
@@ -932,7 +1013,7 @@ private fun ActionIconButton(
         enabled = enabled,
         modifier = Modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .size(NuvioTheme.spacing.xxxl)
+            .size(if (compactCircleAction) 44.dp else NuvioTheme.spacing.xxxl)
             .nuvioControlSurface(CircleShape)
             .onFocusChanged { state ->
                 if (state.isFocused) onFocused()
@@ -976,14 +1057,14 @@ private fun ActionIconButton(
                     toggleableState = if (selected) ToggleableState.On else ToggleableState.Off
                 }
             },
-        scale = if (isV2) IconButtonDefaults.scale(focusedScale = 1f) else IconButtonDefaults.scale(),
+        scale = if (isV2 || !tvFocusMode) IconButtonDefaults.scale(focusedScale = 1f) else IconButtonDefaults.scale(),
         colors = IconButtonDefaults.colors(
             containerColor = if (selected) selectedContainerColor else if (isV2) Color.Transparent else NuvioTheme.colors.BackgroundCard,
-            focusedContainerColor = if (isV2) Color.Transparent else NuvioTheme.colors.Secondary,
+            focusedContainerColor = if (selected) selectedContainerColor else if (isV2 || !tvFocusMode) Color.Transparent else NuvioTheme.colors.Secondary,
             contentColor = if (selected) selectedContentColor else NuvioTheme.colors.TextPrimary,
-            focusedContentColor = if (isV2) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.OnSecondary
+            focusedContentColor = if (selected) selectedContentColor else if (isV2 || !tvFocusMode) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.OnSecondary
         ),
-        border = if (isV2) IconButtonDefaults.border() else IconButtonDefaults.border(
+        border = if (isV2 || !tvFocusMode) IconButtonDefaults.border() else IconButtonDefaults.border(
             focusedBorder = Border(
                 border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = CircleShape

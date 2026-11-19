@@ -192,12 +192,12 @@ fun GridContentCard(
                 focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent
             ),
             border = CardDefaults.border(
-                focusedBorder = if (isV2) Border.None else Border(
+                focusedBorder = if (isV2 || !com.nuvio.tv.ui.monolith.isTvFocusMode()) Border.None else Border(
                     border = NuvioTheme.focusRing.border(posterCardStyle.focusedBorderWidth),
                     shape = cardShape
                 )
             ),
-            scale = CardDefaults.scale(focusedScale = if (isV2) 1f else posterCardStyle.focusedScale)
+            scale = CardDefaults.scale(focusedScale = if (isV2 || !com.nuvio.tv.ui.monolith.isTvFocusMode()) 1f else posterCardStyle.focusedScale)
         ) {
             Box(
                 modifier = Modifier

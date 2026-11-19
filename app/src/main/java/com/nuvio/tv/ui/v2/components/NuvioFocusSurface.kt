@@ -22,6 +22,7 @@ import com.nuvio.tv.ui.v2.quality.LocalGlassTokens
 @Composable
 /** [hardwareShadow] false for see-through glass: a hardware shadow shows through it as a polygon. */
 fun Modifier.nuvioV2Focus(focused: Boolean, shape: Shape, accentOverride: Color? = null, hardwareShadow: Boolean = true, stationary: Boolean = false): Modifier {
+    if (!com.nuvio.tv.ui.monolith.isTvFocusMode()) return this
     // Stationary focus snaps off: idle posters have no outgoing animation or decoration.
     // Do not create per-card animation jobs, draw caches and glint state for an invisible edge.
     // This also keeps idle cards out of the artwork/theme observation path.

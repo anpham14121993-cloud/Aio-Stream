@@ -74,11 +74,12 @@ fun AccountScreen(
         }
     }
 
+    val compactAccountScreen = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = NuvioTheme.spacing.xxxl),
-        contentPadding = PaddingValues(vertical = NuvioTheme.spacing.xxl),
+            .padding(horizontal = if (compactAccountScreen) 16.dp else NuvioTheme.spacing.xxxl),
+        contentPadding = PaddingValues(vertical = if (compactAccountScreen) 16.dp else NuvioTheme.spacing.xxl),
         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
     ) {
         item {

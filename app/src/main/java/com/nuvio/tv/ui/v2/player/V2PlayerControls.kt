@@ -211,7 +211,12 @@ private fun UtilityRow(items: List<Utility>, focus: V2PlayerFocusState, statsFoc
     val listState = rememberLazyListState(initialFirstVisibleItemIndex =
         items.indexOfFirst { it.id == focus.pendingReturn }.coerceAtLeast(0))
     val requested = focus.requestedControl
-    LaunchedEffect(requested) {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    LaunchedEffect(requested, tvFocusMode) {
+        if (!tvFocusMode) {
+            focus.requestedControl = null
+            return@LaunchedEffect
+        }
         val index = items.indexOfFirst { it.id == requested }
         if (index >= 0) {
             // More can be outside the viewport after Speed rebuilt the primary dock.

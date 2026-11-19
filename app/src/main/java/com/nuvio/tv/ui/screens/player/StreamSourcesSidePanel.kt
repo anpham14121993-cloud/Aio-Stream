@@ -150,8 +150,9 @@ internal fun StreamSourcesSidePanel(
     var focusedStreamKey by remember { mutableStateOf<String?>(null) }
     var closeButtonHasFocus by remember { mutableStateOf(false) }
     var chipsHasFocus by remember { mutableStateOf(false) }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
 
-    LaunchedEffect(streamKeys, focusedStreamKey, userMovedFromFirstResult) {
+    LaunchedEffect(streamKeys, focusedStreamKey, userMovedFromFirstResult, tvFocusMode) {
         if (!userMovedFromFirstResult) return@LaunchedEffect
         val key = focusedStreamKey ?: return@LaunchedEffect
         val newIndex = streamKeys.indexOf(key)
@@ -161,7 +162,7 @@ internal fun StreamSourcesSidePanel(
         if (newIndex < firstVisible || newIndex > lastVisible) {
             streamListState.scrollToItem(newIndex)
         }
-        if (closeButtonHasFocus || chipsHasFocus) return@LaunchedEffect
+        if (!tvFocusMode || closeButtonHasFocus || chipsHasFocus) return@LaunchedEffect
         val requester = if (key == firstStreamKey) {
             streamsFocusRequester
         } else {
@@ -174,8 +175,8 @@ internal fun StreamSourcesSidePanel(
     }
 
     // Keep focus inside the panel while waiting for the first source result.
-    LaunchedEffect(firstStreamKey) {
-        if (firstStreamKey != null) return@LaunchedEffect
+    LaunchedEffect(firstStreamKey, tvFocusMode) {
+        if (!tvFocusMode || firstStreamKey != null) return@LaunchedEffect
         withFrameNanos { }
         val hasAddonChips = orderedAddonNames.isNotEmpty() ||
             uiState.sourceAvailableAddons.isNotEmpty() || uiState.sourceChips.isNotEmpty()
@@ -221,13 +222,14 @@ internal fun StreamSourcesSidePanel(
         trackedFirstStreamKey = firstStreamKey
     }
 
-    LaunchedEffect(firstStreamFocusRequestId, firstStreamKey, currentStreamKey, userMovedFromFirstResult) {
+    LaunchedEffect(firstStreamFocusRequestId, firstStreamKey, currentStreamKey, userMovedFromFirstResult, tvFocusMode) {
         val requestedKey = currentStreamKey ?: firstStreamKey
         if (firstStreamFocusRequestId <= 0 || requestedKey == null || userMovedFromFirstResult) {
             return@LaunchedEffect
         }
         val index = streamKeys.indexOf(requestedKey).coerceAtLeast(0)
         streamListState.scrollToItem(index)
+        if (!tvFocusMode) return@LaunchedEffect
         snapshotFlow {
             streamListState.layoutInfo.visibleItemsInfo.any { it.index == index }
         }.first { it }
@@ -272,10 +274,12 @@ internal fun StreamSourcesSidePanel(
         streamListState.scrollToItem(0)
     }
 
+    val maxPanelWidth = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp - 24)
+        .coerceAtLeast(280).dp
     Box(
         modifier = modifier
             .heightIn(max = 900.dp)
-            .width(if (LocalV2Appearance.current != null) 520.dp else 440.dp)
+            .width(minOf(if (LocalV2Appearance.current != null) 520.dp else 440.dp, maxPanelWidth))
             .clip(RoundedCornerShape(topStart = NuvioTheme.spacing.lg, bottomStart = NuvioTheme.spacing.lg))
             .then(if (LocalV2Appearance.current != null) Modifier.v2PlayerPanel()
                 else Modifier.background(Color.Black.copy(alpha = 0.85f)))

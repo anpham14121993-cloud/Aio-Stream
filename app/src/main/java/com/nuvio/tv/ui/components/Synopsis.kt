@@ -80,13 +80,18 @@ fun SynopsisDescription(
     upFocusRequester: FocusRequester? = null,
     downFocusRequester: FocusRequester? = null,
     onFocused: () -> Unit = {},
-    onTruncationChanged: (Boolean) -> Unit = {}
+    onTruncationChanged: (Boolean) -> Unit = {},
+    expandInline: Boolean = !com.nuvio.tv.ui.monolith.isTvFocusMode()
 ) {
     var isFocused by remember { mutableStateOf(false) }
     var isTruncated by rememberSaveable(description, maxLines) { mutableStateOf(false) }
+    var isExpandedInline by rememberSaveable(description) { mutableStateOf(false) }
+    val showTvFocusHighlight = com.nuvio.tv.ui.monolith.isTvFocusMode()
     val interactionSource = remember { MutableInteractionSource() }
-    val highlightInset = 12.dp
+    val highlightInset = if (showTvFocusHighlight) 12.dp else 0.dp
     val readMoreLabel = stringResource(R.string.hero_synopsis_read_more)
+    val readLessLabel = stringResource(R.string.hero_synopsis_read_less)
+    val canToggleOrExpand = isTruncated || (expandInline && isExpandedInline)
 
     LaunchedEffect(isTruncated) {
         onTruncationChanged(isTruncated)
@@ -94,9 +99,9 @@ fun SynopsisDescription(
 
     Column(
         modifier = modifier.then(
-            if (isTruncated) {
+            if (canToggleOrExpand) {
                 Modifier
-                    .offset(x = -highlightInset)
+                    .then(if (highlightInset > 0.dp) Modifier.offset(x = -highlightInset) else Modifier)
                     .then(
                         if (focusRequester != null) {
                             Modifier.focusRequester(focusRequester)
@@ -109,7 +114,7 @@ fun SynopsisDescription(
                         if (it.isFocused) onFocused()
                     }
                     .background(
-                        color = if (isFocused) {
+                        color = if (showTvFocusHighlight && isFocused) {
                             Color.White.copy(alpha = 0.10f)
                         } else {
                             Color.Transparent
@@ -129,39 +134,52 @@ fun SynopsisDescription(
                     .clickable(
                         interactionSource = interactionSource,
                         indication = null,
-                        onClick = onShowFullDescription
+                        onClick = {
+                            if (expandInline) {
+                                isExpandedInline = !isExpandedInline
+                            } else {
+                                onShowFullDescription()
+                            }
+                        }
                     )
-                    .semantics { role = Role.Button; contentDescription = readMoreLabel }
-                    .padding(horizontal = highlightInset, vertical = 8.dp)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = if (expandInline && isExpandedInline) readLessLabel else readMoreLabel
+                    }
+                    .padding(
+                        horizontal = highlightInset,
+                        vertical = if (showTvFocusHighlight) 8.dp else 4.dp
+                    )
             } else {
                 Modifier
             }
         )
     ) {
+        val displayedMaxLines = if (expandInline && isExpandedInline) Int.MAX_VALUE else maxLines
         Text(
             text = description,
             style = MaterialTheme.typography.bodyMedium.copy(
                 textDirection = description.contentTextDirection()
             ),
             color = NuvioTheme.colors.TextPrimary,
-            maxLines = maxLines,
-            overflow = TextOverflow.Ellipsis,
+            maxLines = displayedMaxLines,
+            overflow = if (expandInline && isExpandedInline) TextOverflow.Clip else TextOverflow.Ellipsis,
             onTextLayout = { result ->
-                if (result.hasVisualOverflow != isTruncated) {
+                if (!(expandInline && isExpandedInline) && result.hasVisualOverflow != isTruncated) {
                     isTruncated = result.hasVisualOverflow
                 }
             }
         )
-        if (isTruncated) {
+        if (canToggleOrExpand) {
             Text(
-                text = stringResource(R.string.hero_synopsis_read_more),
+                text = if (expandInline && isExpandedInline) readLessLabel else readMoreLabel,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (isFocused) {
+                color = if (showTvFocusHighlight && isFocused) {
                     NuvioTheme.colors.TextPrimary
                 } else {
-                    NuvioTheme.extendedColors.textSecondary
+                    NuvioTheme.colors.Secondary
                 },
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 6.dp)
             )
         }
     }
@@ -241,9 +259,10 @@ fun SynopsisOverlay(
                     fontWeight = FontWeight.SemiBold
                 )
 
+                val isCompactOverlay = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(0.78f)
+                        .fillMaxWidth(if (isCompactOverlay) 0.94f else 0.78f)
                         .weight(1f)
                         .drawWithContent {
                             drawContent()

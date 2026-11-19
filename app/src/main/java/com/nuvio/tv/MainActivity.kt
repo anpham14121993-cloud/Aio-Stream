@@ -783,16 +783,30 @@ open class MainActivity : ComponentActivity() {
                         fontScale = systemDensity.fontScale.coerceAtMost(MAX_SUPPORTED_FONT_SCALE)
                     )
                 }
-                LaunchedEffect(resolvedFormFactor, playbackUiActive) {
+                var fullscreenMediaOrientationActive by remember { mutableStateOf(false) }
+                val setFullscreenMediaOrientation = remember {
+                    { active: Boolean -> fullscreenMediaOrientationActive = active }
+                }
+                val effectiveLandscapeMedia = playbackUiActive || fullscreenMediaOrientationActive
+                val rootFocusManager = LocalFocusManager.current
+                LaunchedEffect(resolvedFormFactor, resolvedInputMode) {
+                    if (resolvedFormFactor != com.nuvio.tv.ui.monolith.DeviceFormFactor.TV &&
+                        resolvedInputMode == com.nuvio.tv.ui.monolith.InputInteractionMode.TOUCH
+                    ) {
+                        rootFocusManager.clearFocus(force = true)
+                    }
+                }
+                LaunchedEffect(resolvedFormFactor, effectiveLandscapeMedia) {
                     currentFormFactor = resolvedFormFactor
-                    currentInPlayer = playbackUiActive
-                    this@MainActivity.applyAioOrientation(resolvedFormFactor, playbackUiActive)
+                    currentInPlayer = effectiveLandscapeMedia
+                    this@MainActivity.applyAioOrientation(resolvedFormFactor, effectiveLandscapeMedia)
                     hideSystemBarsOnHandheld()
                 }
                 CompositionLocalProvider(
                     com.nuvio.tv.ui.monolith.LocalDeviceFormFactor provides resolvedFormFactor,
                     com.nuvio.tv.ui.monolith.LocalInputInteractionMode provides resolvedInputMode,
                     com.nuvio.tv.ui.monolith.LocalAdaptiveDeviceState provides adaptiveState,
+                    com.nuvio.tv.ui.monolith.LocalFullscreenMediaOrientationSetter provides setFullscreenMediaOrientation,
                     com.nuvio.tv.ui.v2.appearance.LocalArtworkAccent provides artworkAccent,
                     com.nuvio.tv.ui.v2.profile.LocalProfileEntryState provides profileEntry,
                     LocalDensity provides clampedFontScaleDensity,

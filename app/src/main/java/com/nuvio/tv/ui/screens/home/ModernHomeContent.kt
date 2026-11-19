@@ -20,6 +20,7 @@ import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Box
@@ -345,6 +346,7 @@ fun ModernHomeContent(
     val fullscreenTrailerPlaying = remember { mutableStateOf(false) }
     val fullscreenTrailerDismiss = remember { mutableStateOf<(() -> Unit)?>(null) }
     val currentInputMode by rememberUpdatedState(LocalInputInteractionMode.current)
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     val shouldInterceptBack = remember {
         derivedStateOf {
             if (!contentHasFocus.value) return@derivedStateOf false
@@ -582,7 +584,7 @@ fun ModernHomeContent(
                 settledHeroSelection.value = resolvedActive.heroSelectionAt(resolvedIndex)
             }
 
-            if (!focusState.hasSavedFocus && !hadActiveRow) {
+            if (tvFocusMode && !focusState.hasSavedFocus && !hadActiveRow) {
                 pendingRowFocusKey.value = resolvedActive.key
                 pendingRowFocusIndex.value = resolvedIndex
                 pendingRowFocusNonce.intValue++
@@ -1154,25 +1156,90 @@ fun ModernHomeContent(
             val heroTrailerShowing = remember {
                 { !isRapidHorizontalNav.value && shouldPlayTrailerLambda() && heroTrailerRenderedLambda() }
             }
-            ModernHomeHero(
-                liveScene = liveHeroSceneState,
-                heroMediaWidthPx = heroMediaWidthPx,
-                heroMediaHeightPx = heroMediaHeightPx,
-                artworkAccent = artworkAccent,
-                isFullScreen = isFullScreenLambda,
-                trailerBottomLimit = screenHeight - rowsViewportHeight - 8.dp,
-                mediaModifier = heroMediaModifier,
-                onTrailerEnded = onTrailerEndedLambda,
-                onFirstFrameRendered = onFirstFrameRenderedLambda,
-                portraitMode = !useLandscapePosters,
-                showImdbRatings = uiState.homeImdbRatingsVisibility.showRatings,
-                mdbListShowOnHero = uiState.mdbListShowOnHero,
-                mdbListRatingOrder = uiState.mdbListRatingOrder,
-                trailerShowing = heroTrailerShowing,
-                descriptionMaxLines = heroDescriptionMaxLines,
-                descriptionAutoScrollEnabled = uiState.heroDescriptionAutoScrollEnabled,
-                titleModifier = heroMetadataModifier
-            )
+            val useMobileScrollableHero = com.nuvio.tv.ui.monolith.isMobileFormFactor()
+            val mobileHeroHeight = remember(screenHeight, monolithTopInset) {
+                if (screenHeight < 520.dp) {
+                    (screenHeight * 0.62f).coerceIn(220.dp, 280.dp)
+                } else {
+                    (screenHeight * 0.44f + monolithTopInset * 0.45f).coerceIn(300.dp, 400.dp)
+                }
+            }
+            val mobileHeroHeightPx = remember(localDensity, mobileHeroHeight) {
+                with(localDensity) { mobileHeroHeight.roundToPx() }.coerceAtLeast(1)
+            }
+            val onMobileHeroClick = remember(onNavigateToDetail) {
+                {
+                    val item = settledCarouselItemState.value
+                        ?: carouselRows.list.firstOrNull()?.items?.list?.firstOrNull()
+                    val meta = item?.metaPreview
+                    val cw = (item?.payload as? ModernPayload.ContinueWatching)?.item
+                    when {
+                        meta != null -> onNavigateToDetail(meta.id, meta.apiType, "")
+                        cw != null -> onNavigateToDetail(cw.contentId(), cw.contentType(), "")
+                    }
+                }
+            }
+            if (!useMobileScrollableHero) {
+                ModernHomeHero(
+                    liveScene = liveHeroSceneState,
+                    heroMediaWidthPx = heroMediaWidthPx,
+                    heroMediaHeightPx = heroMediaHeightPx,
+                    artworkAccent = artworkAccent,
+                    isFullScreen = isFullScreenLambda,
+                    trailerBottomLimit = screenHeight - rowsViewportHeight - 8.dp,
+                    mediaModifier = heroMediaModifier,
+                    onTrailerEnded = onTrailerEndedLambda,
+                    onFirstFrameRendered = onFirstFrameRenderedLambda,
+                    portraitMode = !useLandscapePosters,
+                    showImdbRatings = uiState.homeImdbRatingsVisibility.showRatings,
+                    mdbListShowOnHero = uiState.mdbListShowOnHero,
+                    mdbListRatingOrder = uiState.mdbListRatingOrder,
+                    trailerShowing = heroTrailerShowing,
+                    descriptionMaxLines = heroDescriptionMaxLines,
+                    descriptionAutoScrollEnabled = uiState.heroDescriptionAutoScrollEnabled,
+                    titleModifier = heroMetadataModifier
+                )
+            }
+            val mobileHeroContentLambda: (@Composable () -> Unit)? = if (useMobileScrollableHero) {
+                {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(mobileHeroHeight)
+                            .clickable(onClick = onMobileHeroClick)
+                    ) {
+                        ModernHomeHero(
+                            liveScene = liveHeroSceneState,
+                            heroMediaWidthPx = heroMediaWidthPx,
+                            heroMediaHeightPx = mobileHeroHeightPx,
+                            artworkAccent = artworkAccent,
+                            isFullScreen = { false },
+                            trailerBottomLimit = mobileHeroHeight,
+                            mediaModifier = Modifier.fillMaxSize(),
+                            onTrailerEnded = onTrailerEndedLambda,
+                            onFirstFrameRendered = onFirstFrameRenderedLambda,
+                            portraitMode = !useLandscapePosters,
+                            showImdbRatings = uiState.homeImdbRatingsVisibility.showRatings,
+                            mdbListShowOnHero = uiState.mdbListShowOnHero,
+                            mdbListRatingOrder = uiState.mdbListRatingOrder,
+                            trailerShowing = heroTrailerShowing,
+                            descriptionMaxLines = heroDescriptionMaxLines,
+                            descriptionAutoScrollEnabled = uiState.heroDescriptionAutoScrollEnabled,
+                            titleModifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .fillMaxWidth()
+                                .padding(
+                                    start = 16.dp,
+                                    end = 16.dp,
+                                    top = monolithTopInset + 8.dp,
+                                    bottom = 14.dp
+                                )
+                        )
+                    }
+                }
+            } else {
+                null
+            }
 
             val latestOnFocusedRowKeyChanged by rememberUpdatedState(onFocusedRowKeyChanged)
             val onActiveRowKeyChangeLambda = remember {
@@ -1302,12 +1369,20 @@ fun ModernHomeContent(
                 onFocusedHeroMediaNonceChange = onFocusedHeroMediaNonceChangeLambda,
                 onExpansionInteractionNonceChange = onExpansionInteractionNonceChangeLambda,
                 blockLeftOnFirstExpandedItem = blockLeftOnFirstExpandedItem,
+                mobileScrollableLayout = useMobileScrollableHero,
+                mobileHeroContent = mobileHeroContentLambda,
                 isVerticalRowsScrollingState = isVerticalRowsScrollingState,
                 verticalMoveInFlight = verticalMoveInFlight,
-                modifier = Modifier.sidebarPageContent()
-                    .menuOpenRowEdge(rowHorizontalPadding)
-                    .align(Alignment.BottomStart)
-                    .onFocusChanged { contentHasFocus.value = it.hasFocus }
+                modifier = if (useMobileScrollableHero) {
+                    Modifier
+                        .fillMaxSize()
+                        .onFocusChanged { contentHasFocus.value = it.hasFocus }
+                } else {
+                    Modifier.sidebarPageContent()
+                        .menuOpenRowEdge(rowHorizontalPadding)
+                        .align(Alignment.BottomStart)
+                        .onFocusChanged { contentHasFocus.value = it.hasFocus }
+                }
             )
     }
 

@@ -111,15 +111,18 @@ internal fun ChaptersSidePanel(
 ) {
     val currentIndex = remember(chapters) { PlayerChapters.indexAt(chapters, currentPositionMs).coerceAtLeast(0) }
     val focusRequester = remember { FocusRequester() }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = (currentIndex - 1).coerceAtLeast(0))
-    LaunchedEffect(Unit) {
-        runCatching { focusRequester.requestFocus() }
+    LaunchedEffect(tvFocusMode) {
+        if (tvFocusMode) runCatching { focusRequester.requestFocus() }
     }
     val v2 = LocalV2Appearance.current != null
+    val maxChaptersWidth = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp - 24)
+        .coerceAtLeast(280).dp
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(520.dp)
+            .width(minOf(520.dp, maxChaptersWidth))
             .clip(RoundedCornerShape(topStart = NuvioTheme.spacing.lg, bottomStart = NuvioTheme.spacing.lg))
             .then(if (v2) Modifier.v2PlayerPanel() else Modifier.background(NuvioTheme.colors.BackgroundElevated))
     ) {

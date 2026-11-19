@@ -111,23 +111,29 @@ internal fun EpisodesSidePanel(
     onStreamSelected: (Stream) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     LaunchedEffect(
-        uiState.showEpisodeStreams
+        uiState.showEpisodeStreams,
+        tvFocusMode
     ) {
-        try {
-            if (!uiState.showEpisodeStreams) {
-                episodesFocusRequester.requestFocus()
+        if (tvFocusMode) {
+            try {
+                if (!uiState.showEpisodeStreams) {
+                    episodesFocusRequester.requestFocus()
+                }
+            } catch (_: Exception) {
+                // Focus requester may not be ready yet
             }
-        } catch (_: Exception) {
-            // Focus requester may not be ready yet
         }
     }
 
+    val maxEpPanelWidth = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp - 24)
+        .coerceAtLeast(280).dp
     // Right panel only (scrim is handled in PlayerScreen)
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(520.dp)
+            .width(minOf(520.dp, maxEpPanelWidth))
             .clip(RoundedCornerShape(topStart = NuvioTheme.spacing.lg, bottomStart = NuvioTheme.spacing.lg))
             .then(if (LocalV2Appearance.current != null) Modifier.v2PlayerPanel() else Modifier.background(NuvioTheme.colors.BackgroundElevated))
     ) {
@@ -275,10 +281,12 @@ private fun EpisodeStreamsView(
         trackedFirstStreamKey = firstStreamKey
     }
 
-    LaunchedEffect(firstStreamFocusRequestId) {
+    val tvFocusStreams = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    LaunchedEffect(firstStreamFocusRequestId, tvFocusStreams) {
         val requestedKey = firstStreamKey
         if (firstStreamFocusRequestId <= 0 || requestedKey == null) return@LaunchedEffect
         streamListState.scrollToItem(0)
+        if (!tvFocusStreams) return@LaunchedEffect
         repeat(30) {
             withFrameNanos { }
             if (firstCardHasFocus) return@LaunchedEffect
@@ -546,7 +554,8 @@ private fun EpisodesListView(
         }
     }
 
-    LaunchedEffect(uiState.showEpisodeStreams, uiState.episodes, currentEpisodeIndex) {
+    val tvFocusEpisodes = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    LaunchedEffect(uiState.showEpisodeStreams, uiState.episodes, currentEpisodeIndex, tvFocusEpisodes) {
         if (uiState.showEpisodeStreams || uiState.episodes.isEmpty()) return@LaunchedEffect
 
         val targetIndex = when {
@@ -557,7 +566,7 @@ private fun EpisodesListView(
         runCatching {
             episodesListState.scrollToItem(targetIndex)
             // Focusing a tab loads its season and re-runs this effect, so pulling focus down here would drag the user off the tab row while browsing.
-            if (seasonTabsFocused) return@runCatching
+            if (!tvFocusEpisodes || seasonTabsFocused) return@runCatching
             delay(32)
             episodesFocusRequester.requestFocus()
         }

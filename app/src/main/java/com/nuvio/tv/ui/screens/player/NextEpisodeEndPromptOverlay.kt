@@ -51,24 +51,27 @@ fun NextEpisodeEndPromptOverlay(
     val focusManager = LocalFocusManager.current
     val nextEpisodeText = nextEpisodeEndPromptLabel(nextEpisode)
 
-    LaunchedEffect(nextEpisode.videoId) {
-        focusManager.clearFocus(force = true)
-        repeat(3) { withFrameNanos { } }
-        runCatching { continueFocusRequester.requestFocus() }
-    }
+        val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+        LaunchedEffect(nextEpisode.videoId, tvFocusMode) {
+            if (!tvFocusMode) return@LaunchedEffect
+            focusManager.clearFocus(force = true)
+            repeat(3) { withFrameNanos { } }
+            runCatching { continueFocusRequester.requestFocus() }
+        }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.9f))
-            .zIndex(3f),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth(0.78f)
-                .focusGroup()
-                .padding(horizontal = NuvioTheme.spacing.xxl),
+        val isCompactPrompt = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.9f))
+                .zIndex(3f),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(if (isCompactPrompt) 0.94f else 0.78f)
+                    .focusGroup()
+                    .padding(horizontal = if (isCompactPrompt) 16.dp else NuvioTheme.spacing.xxl),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
         ) {

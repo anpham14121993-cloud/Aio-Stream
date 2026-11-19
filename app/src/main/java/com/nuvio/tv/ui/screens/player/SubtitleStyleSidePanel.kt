@@ -96,8 +96,9 @@ internal fun SubtitleStyleSidePanel(
     }
     val contentModifier = if (isStyleDisabledByLibass) Modifier.alpha(0.35f) else Modifier
 
-    LaunchedEffect(Unit) {
-        if (!isStyleDisabledByLibass) {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    LaunchedEffect(tvFocusMode) {
+        if (tvFocusMode && !isStyleDisabledByLibass) {
             kotlinx.coroutines.delay(100)
             try {
                 firstItemFocusRequester.requestFocus()
@@ -106,9 +107,11 @@ internal fun SubtitleStyleSidePanel(
         }
     }
 
+    val maxStylePanelWidth = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp - 24)
+        .coerceAtLeast(300).dp
     Column(
         modifier = modifier
-            .width(760.dp)
+            .width(minOf(760.dp, maxStylePanelWidth))
             .height(if (isEditingHdrStyle && !bitmapTrack) 440.dp else 330.dp)
             .clip(RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp))
             .background(Color(0xFF101010))

@@ -16,6 +16,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -122,7 +123,7 @@ private fun formatAbsoluteTime(ms: Long): String {
  * inside the player while preserving TV D-Pad key navigation untouched.
  */
 @Composable
-fun PlayerTouchGesturesOverlay(
+fun BoxScope.PlayerTouchGesturesOverlay(
     touchModeActive: Boolean,
     gesturesAllowed: Boolean,
     controlsVisible: Boolean,
@@ -178,17 +179,15 @@ fun PlayerTouchGesturesOverlay(
 
     if (!touchModeActive && !screenLocked) return
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .zIndex(if (screenLocked) 3.8f else 1.1f)
-    ) {
-        // Gesture capture backdrop (disabled when modal utility overlays are open unless locked)
-        if (gesturesAllowed || screenLocked) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(screenLocked) {
+    // Unlocked gesture surface sits above the video (0f) and BELOW PlayerControlsOverlay (1.5f)
+    // and modal panels (2.6f+), so every player button/slider/chip stays directly clickable.
+    // When locked, it raises to 3.8f to absorb all touches except the bottom unlock pill.
+    if (gesturesAllowed || screenLocked) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .zIndex(if (screenLocked) 3.8f else 0.2f)
+                .pointerInput(screenLocked) {
                         detectTapGestures(
                             onTap = {
                                 if (screenLocked) {
@@ -334,7 +333,9 @@ fun PlayerTouchGesturesOverlay(
             visible = feedback != null,
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.align(Alignment.Center)
+            modifier = Modifier
+                .align(Alignment.Center)
+                .zIndex(2.8f)
         ) {
             feedback?.let { current ->
                 TouchFeedbackCard(current)
@@ -347,9 +348,10 @@ fun PlayerTouchGesturesOverlay(
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
-                .align(Alignment.TopStart)
+                .align(Alignment.TopCenter)
+                .zIndex(2.25f)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(start = 20.dp, top = 18.dp)
+                .padding(top = 14.dp)
         ) {
             Row(
                 modifier = Modifier
@@ -387,6 +389,7 @@ fun PlayerTouchGesturesOverlay(
             exit = fadeOut(),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                .zIndex(3.9f)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(bottom = 28.dp)
         ) {
@@ -421,7 +424,6 @@ fun PlayerTouchGesturesOverlay(
                 )
             }
         }
-    }
 }
 
 @Composable

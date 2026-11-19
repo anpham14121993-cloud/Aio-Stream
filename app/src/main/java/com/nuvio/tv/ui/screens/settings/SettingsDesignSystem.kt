@@ -168,23 +168,26 @@ internal fun settingsTallRowShape(): RoundedCornerShape =
     if (isFlatSettingsStyle()) settingsRowShape() else RoundedCornerShape(SettingsSecondaryCardRadius)
 
 @Composable
-internal fun settingsRowColors(): CardColors = if (isFlatSettingsStyle()) {
-    CardDefaults.colors(
-        containerColor = Color.Transparent,
-        focusedContainerColor = settingsFocusFillColor()
-    )
-} else {
-    CardDefaults.colors(
-        containerColor = NuvioTheme.colors.Background,
-        focusedContainerColor = NuvioTheme.colors.Background
-    )
+internal fun settingsRowColors(): CardColors {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    return if (isFlatSettingsStyle()) {
+        CardDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = if (tvFocusMode) settingsFocusFillColor() else Color.Transparent
+        )
+    } else {
+        CardDefaults.colors(
+            containerColor = NuvioTheme.colors.Background,
+            focusedContainerColor = NuvioTheme.colors.Background
+        )
+    }
 }
 
 @Composable
 internal fun settingsRowBorder(
     contentAlpha: Float = 1f,
     shape: RoundedCornerShape = settingsRowShape()
-): CardBorder = if (isFlatSettingsStyle()) {
+): CardBorder = if (isFlatSettingsStyle() || !com.nuvio.tv.ui.monolith.isTvFocusMode()) {
     CardDefaults.border(border = Border.None, focusedBorder = Border.None)
 } else {
     CardDefaults.border(
@@ -383,6 +386,8 @@ internal fun SettingsRailButton(
     rawIconRes: Int? = null
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    val effectiveFocused = isFocused && tvFocusMode
     val zen = isFlatSettingsStyle()
     val railShape = if (zen) SettingsZenRowShape else RoundedCornerShape(SettingsPillRadius)
     val appliedModifier = if (focusRequester != null) {
@@ -397,12 +402,12 @@ internal fun SettingsRailButton(
             .padding(top = NuvioTheme.spacing.xxs, bottom = NuvioTheme.spacing.xxs)
             .fillMaxWidth()
             .heightIn(min = if (LocalV2Appearance.current != null) 54.dp else SettingsRailItemHeight)
-            .settingsItemFocus(isFocused)
+            .settingsItemFocus(effectiveFocused)
             .onFocusChanged { state ->
                 val nowFocused = state.isFocused
                 if (isFocused != nowFocused) {
                     isFocused = nowFocused
-                    if (nowFocused) onFocused()
+                    if (nowFocused && tvFocusMode) onFocused()
                 }
             }
             .semantics {
@@ -412,17 +417,22 @@ internal fun SettingsRailButton(
             },
         colors = CardDefaults.colors(
             containerColor = when {
+                zen && !tvFocusMode && isSelected -> settingsFocusFillColor()
                 zen -> Color.Transparent
                 isSelected -> NuvioTheme.colors.Secondary.copy(alpha = 0.07f)
                 else -> NuvioTheme.colors.Background
             },
             focusedContainerColor = when {
+                !tvFocusMode && zen && isSelected -> settingsFocusFillColor()
+                !tvFocusMode && zen -> Color.Transparent
+                !tvFocusMode && isSelected -> NuvioTheme.colors.Secondary.copy(alpha = 0.07f)
+                !tvFocusMode -> NuvioTheme.colors.Background
                 isV2Settings() -> settingsFocusFillColor()
                 zen -> settingsFocusFillColor()
                 else -> NuvioTheme.colors.FocusBackground
             }
         ),
-        border = if (zen) {
+        border = if (zen || !tvFocusMode) {
             CardDefaults.border(border = Border.None, focusedBorder = Border.None)
         } else {
             CardDefaults.border(
@@ -528,6 +538,8 @@ internal fun SettingsTopBarTab(
     onFocusedTabPositioned: ((LayoutCoordinates) -> Unit)? = null
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    val effectiveFocused = isFocused && tvFocusMode
     var tabCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val glideIndicator = onFocusedTabPositioned != null
     val appliedModifier = if (focusRequester != null) {
@@ -537,7 +549,7 @@ internal fun SettingsTopBarTab(
     }
     val contentColor by animateColorAsState(
         targetValue = when {
-            isFocused -> if (glideIndicator) Color.White else NuvioTheme.colors.OnSecondary
+            effectiveFocused -> if (glideIndicator) Color.White else NuvioTheme.colors.OnSecondary
             isSelected -> NuvioTheme.colors.TextPrimary
             else -> NuvioTheme.colors.TextSecondary
         },
@@ -554,13 +566,13 @@ internal fun SettingsTopBarTab(
             }
             .onGloballyPositioned { coordinates ->
                 tabCoordinates = coordinates
-                if (isFocused) onFocusedTabPositioned?.invoke(coordinates)
+                if (effectiveFocused) onFocusedTabPositioned?.invoke(coordinates)
             }
             .onFocusChanged { state ->
                 val nowFocused = state.isFocused
                 if (isFocused != nowFocused) {
                     isFocused = nowFocused
-                    if (nowFocused) {
+                    if (nowFocused && tvFocusMode) {
                         onFocused()
                         tabCoordinates?.let { onFocusedTabPositioned?.invoke(it) }
                     }
@@ -572,10 +584,11 @@ internal fun SettingsTopBarTab(
             } else {
                 Color.Transparent
             },
-            focusedContainerColor = if (glideIndicator) {
-                Color.Transparent
-            } else {
-                NuvioTheme.colors.Secondary
+            focusedContainerColor = when {
+                !tvFocusMode && isSelected -> NuvioTheme.colors.Secondary.copy(alpha = 0.18f)
+                !tvFocusMode -> Color.Transparent
+                glideIndicator -> Color.Transparent
+                else -> NuvioTheme.colors.Secondary
             }
         ),
         border = CardDefaults.border(border = Border.None, focusedBorder = Border.None),
@@ -1024,12 +1037,13 @@ internal fun <T> SettingsSingleChoiceDialog(
     maxHeight: Dp = 320.dp
 ) {
     val focusRequester = remember { FocusRequester() }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     val focusedIndex = options.indexOfFirst { it.value == selectedValue }
         .let { if (it >= 0) it else 0 }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = focusedIndex)
 
-    LaunchedEffect(focusedIndex) {
-        focusRequester.requestFocusAfterFrames()
+    LaunchedEffect(focusedIndex, tvFocusMode) {
+        if (tvFocusMode) focusRequester.requestFocusAfterFrames()
     }
 
     NuvioDialog(
@@ -1065,13 +1079,14 @@ internal fun <T> SettingsSingleChoiceDialog(
                             },
                         colors = CardDefaults.colors(
                             containerColor = if (isSelected) NuvioTheme.colors.Secondary.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.5f),
-                            focusedContainerColor = NuvioTheme.colors.FocusBackground
+                            focusedContainerColor = if (tvFocusMode) NuvioTheme.colors.FocusBackground
+                            else if (isSelected) NuvioTheme.colors.Secondary.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.5f)
                         ),
                         border = CardDefaults.border(
-                            focusedBorder = Border(
+                            focusedBorder = if (tvFocusMode) Border(
                                 border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
                                 shape = RoundedCornerShape(10.dp)
-                            )
+                            ) else Border.None
                         ),
                         shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
                         scale = CardDefaults.scale(focusedScale = 1f)
@@ -1152,13 +1167,14 @@ internal fun <T> SettingsMultiChoiceDialog(
     maxSelections: Int? = null
 ) {
     val focusRequester = remember { FocusRequester() }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     val selected = remember(selectedValues) { mutableStateListOf<T>().also { it.addAll(selectedValues) } }
     val firstSelectedIndex = options.indexOfFirst { option -> selectedValues.contains(option.value) }
         .let { if (it >= 0) it else 0 }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = firstSelectedIndex)
 
-    LaunchedEffect(firstSelectedIndex) {
-        focusRequester.requestFocusAfterFrames()
+    LaunchedEffect(firstSelectedIndex, tvFocusMode) {
+        if (tvFocusMode) focusRequester.requestFocusAfterFrames()
     }
 
     NuvioDialog(
@@ -1206,13 +1222,14 @@ internal fun <T> SettingsMultiChoiceDialog(
                                 },
                             colors = CardDefaults.colors(
                                 containerColor = if (isSelected) NuvioTheme.colors.Secondary.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.5f),
-                                focusedContainerColor = NuvioTheme.colors.FocusBackground
+                                focusedContainerColor = if (tvFocusMode) NuvioTheme.colors.FocusBackground
+                                else if (isSelected) NuvioTheme.colors.Secondary.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.5f)
                             ),
                             border = CardDefaults.border(
-                                focusedBorder = Border(
+                                focusedBorder = if (tvFocusMode) Border(
                                     border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
                                     shape = RoundedCornerShape(10.dp)
-                                )
+                                ) else Border.None
                             ),
                             shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
                             scale = CardDefaults.scale(focusedScale = 1f)

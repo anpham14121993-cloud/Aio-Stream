@@ -8,6 +8,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,11 +19,24 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Forward10
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -38,16 +53,25 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.TrailerPlayer
+import com.nuvio.tv.ui.monolith.DeviceFormFactor
+import com.nuvio.tv.ui.monolith.LocalDeviceFormFactor
+import com.nuvio.tv.ui.monolith.LocalFullscreenMediaOrientationSetter
+import com.nuvio.tv.ui.monolith.isTvFocusMode
 import kotlinx.coroutines.delay
 import android.view.KeyEvent
 import com.nuvio.tv.ui.screens.ambient.AmbientDialogEffect
@@ -77,6 +101,14 @@ fun SharedTrailerOverlay(
 
     val overlayFocusRequester = remember { FocusRequester() }
     val canControlPlayback = !trailerUrl.isNullOrBlank() && !isLoading && errorMessage == null
+    val isHandheldDevice = LocalDeviceFormFactor.current != DeviceFormFactor.TV
+    val tvFocusMode = isTvFocusMode()
+    val setFullscreenOrientation = LocalFullscreenMediaOrientationSetter.current
+
+    DisposableEffect(isHandheldDevice) {
+        if (isHandheldDevice) setFullscreenOrientation(true)
+        onDispose { if (isHandheldDevice) setFullscreenOrientation(false) }
+    }
 
     LaunchedEffect(trailerUrl, trailerAudioUrl, isLoading, errorMessage) {
         isPaused = false
@@ -98,12 +130,25 @@ fun SharedTrailerOverlay(
         )
     ) {
         AmbientDialogEffect(onDismiss)
+        if (isHandheldDevice) {
+            val view = LocalView.current
+            SideEffect {
+                val window = (view.parent as? DialogWindowProvider)?.window ?: return@SideEffect
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+                WindowInsetsControllerCompat(window, view).apply {
+                    hide(WindowInsetsCompat.Type.systemBars())
+                    systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                .focusRequester(overlayFocusRequester)
-                .focusable()
+                .then(
+                    if (tvFocusMode) Modifier.focusRequester(overlayFocusRequester).focusable()
+                    else Modifier
+                )
                 // This surface exists only to capture remote keys (back/play/pause/seek) and has no
                 // label of its own, so merge the overlay's own text (title + "press back" hint)
                 // into it. Merging leaves exactly one named node on the overlay; a bare
@@ -187,8 +232,10 @@ fun SharedTrailerOverlay(
                     }
                 }
         ) {
-            LaunchedEffect(canControlPlayback, errorMessage) {
-                overlayFocusRequester.requestFocusAfterFrames()
+            LaunchedEffect(canControlPlayback, errorMessage, tvFocusMode) {
+                if (tvFocusMode) {
+                    overlayFocusRequester.requestFocusAfterFrames()
+                }
             }
             if (!trailerUrl.isNullOrBlank() && errorMessage == null) {
                 TrailerPlayer(
@@ -207,22 +254,37 @@ fun SharedTrailerOverlay(
                 )
             }
 
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(horizontal = NuvioTheme.spacing.xxl, vertical = NuvioTheme.spacing.xl),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White
+            if (isHandheldDevice || !tvFocusMode) {
+                TrailerFullscreenTouchOverlay(
+                    title = title,
+                    isPaused = isPaused,
+                    canControlPlayback = canControlPlayback,
+                    overlayState = seekOverlayState,
+                    onTogglePause = { isPaused = !isPaused },
+                    onSeekDelta = { delta ->
+                        seekDeltaMs = delta
+                        seekToken += 1
+                    },
+                    onDismiss = onDismiss
                 )
-                Text(
-                    text = stringResource(R.string.hero_press_back_trailer),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.82f)
-                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(horizontal = NuvioTheme.spacing.xxl, vertical = NuvioTheme.spacing.xl),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.White
+                    )
+                    Text(
+                        text = stringResource(R.string.hero_press_back_trailer),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.82f)
+                    )
+                }
             }
 
             if (isLoading) {
@@ -253,11 +315,169 @@ fun SharedTrailerOverlay(
                 }
             }
 
-            TrailerSeekOverlayHost(
-                visible = canControlPlayback && seekOverlayVisible,
-                overlayState = seekOverlayState,
-                modifier = Modifier.align(Alignment.BottomCenter)
-            )
+            if (!isHandheldDevice && tvFocusMode) {
+                TrailerSeekOverlayHost(
+                    visible = canControlPlayback && seekOverlayVisible,
+                    overlayState = seekOverlayState,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            }
+        }
+    }
+}
+
+/** Fullscreen touch HUD shared by mobile hero trailers and the shared trailer dialog. */
+@Composable
+internal fun TrailerFullscreenTouchOverlay(
+    title: String,
+    isPaused: Boolean,
+    canControlPlayback: Boolean,
+    overlayState: TrailerSeekOverlayState,
+    onTogglePause: () -> Unit,
+    onSeekDelta: (Long) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var hudVisible by remember { mutableStateOf(true) }
+    var interactionNonce by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(hudVisible, isPaused, canControlPlayback, interactionNonce) {
+        if (hudVisible && !isPaused && canControlPlayback) {
+            delay(3500)
+            hudVisible = false
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {
+                hudVisible = !hudVisible
+                interactionNonce += 1
+            }
+    ) {
+        AnimatedVisibility(
+            visible = hudVisible,
+            enter = fadeIn(tween(180)),
+            exit = fadeOut(tween(220)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.62f))
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = stringResource(R.string.action_close),
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    if (title.isNotBlank()) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                if (canControlPlayback) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.Center),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.62f))
+                                .clickable {
+                                    interactionNonce += 1
+                                    onSeekDelta(-10_000L)
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Replay10,
+                                contentDescription = "-10s",
+                                tint = Color.White,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(58.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.72f))
+                                .clickable {
+                                    interactionNonce += 1
+                                    onTogglePause()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                                contentDescription = if (isPaused) stringResource(R.string.player_pill_play) else "Pause",
+                                tint = Color.White,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.62f))
+                                .clickable {
+                                    interactionNonce += 1
+                                    onSeekDelta(10_000L)
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Forward10,
+                                contentDescription = "+10s",
+                                tint = Color.White,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(bottom = 8.dp)
+                    ) {
+                        TrailerSeekOverlay(
+                            currentPosition = overlayState.positionMs,
+                            duration = overlayState.durationMs
+                        )
+                    }
+                }
+            }
         }
     }
 }

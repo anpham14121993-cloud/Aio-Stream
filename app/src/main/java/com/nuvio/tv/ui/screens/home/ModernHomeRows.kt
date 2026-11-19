@@ -523,6 +523,7 @@ internal fun FocusedCardWork(
 /** The row's focus ring, over all of its cards. */
 @Composable
 private fun RowFocusRing(glide: RowFocusGlide, startPaddingPx: Int) {
+    if (!com.nuvio.tv.ui.monolith.isTvFocusMode()) return
     if (!glide.showing || v2FocusDrawsOwnEdge()) return
     val shape = glide.ringShape ?: return
     Box(
@@ -578,7 +579,8 @@ private fun ModernContinueWatchingRowItem(
         }
     }
 
-    if (isTargetItem) {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    if (isTargetItem && tvFocusMode) {
         LaunchedEffect(Unit) {
             if (!isCardFocused && mayClaimFocus()) runCatching { requester.requestFocus() }
         }
@@ -727,7 +729,8 @@ private fun ModernCatalogRowItem(
         }
     }
 
-    if (isTargetItem) {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    if (isTargetItem && tvFocusMode) {
         LaunchedEffect(Unit) {
             if (!isCardFocused && mayClaimFocus()) runCatching { requester.requestFocus() }
         }

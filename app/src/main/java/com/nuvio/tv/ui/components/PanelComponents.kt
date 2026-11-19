@@ -102,6 +102,7 @@ internal fun PanelActionRow(
 ) {
     val contentAlpha = if (enabled) 1f else 0.45f
     val v2 = LocalV2Appearance.current != null
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     var focused by remember { mutableStateOf(false) }
     val actionShape = RoundedCornerShape(if (v2) 10.dp else 999.dp)
     Card(
@@ -109,7 +110,7 @@ internal fun PanelActionRow(
         modifier = modifier
             .fillMaxWidth()
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused?.invoke() }
+            .onFocusChanged { focused = it.isFocused && tvFocusMode; if (it.isFocused && tvFocusMode) onFocused?.invoke() }
             .then(if (v2) Modifier.nuvioV2Focus(focused, actionShape)
                 .nuvioGlass(GlassRole.CONTROL, focused, actionShape) else Modifier),
         colors = CardDefaults.colors(
@@ -119,7 +120,7 @@ internal fun PanelActionRow(
         shape = CardDefaults.shape(actionShape),
         border = CardDefaults.border(
             border = Border(BorderStroke(1.dp, Color.Transparent), shape = RoundedCornerShape(999.dp)),
-            focusedBorder = if (v2) Border.None else Border(BorderStroke(2.dp, Color.White), shape = actionShape)
+            focusedBorder = if (v2 || !tvFocusMode) Border.None else Border(BorderStroke(2.dp, Color.White), shape = actionShape)
         ),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f)
     ) {
@@ -180,14 +181,16 @@ internal fun PlayerPanelRow(
     trailing: (@Composable (focused: Boolean) -> Unit)? = null
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    val effectiveFocused = isFocused && tvFocusMode
     val interactionSource = remember { MutableInteractionSource() }
 
     val v2 = LocalV2Appearance.current != null
     val darkContent = Color.Black
     val bgColor by animateColorAsState(
         targetValue = when {
-            isFocused && v2 -> com.nuvio.tv.ui.theme.NuvioTheme.colors.Secondary.copy(alpha = .20f)
-            isFocused -> Color.White
+            effectiveFocused && v2 -> com.nuvio.tv.ui.theme.NuvioTheme.colors.Secondary.copy(alpha = .20f)
+            effectiveFocused -> Color.White
             selected -> Color.White.copy(alpha = 0.16f)
             else -> Color.Transparent
         },
@@ -195,27 +198,27 @@ internal fun PlayerPanelRow(
         label = "panelRowBg"
     )
     val titleColor by animateColorAsState(
-        targetValue = if (isFocused && !v2) darkContent else Color.White,
+        targetValue = if (effectiveFocused && !v2) darkContent else Color.White,
         animationSpec = tween(150),
         label = "panelRowTitle"
     )
     val subtitleColor by animateColorAsState(
-        targetValue = if (isFocused && !v2) darkContent.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.6f),
+        targetValue = if (effectiveFocused && !v2) darkContent.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.6f),
         animationSpec = tween(150),
         label = "panelRowSubtitle"
     )
-    val tickColor = if (isFocused && !v2) darkContent else Color.White
+    val tickColor = if (effectiveFocused && !v2) darkContent else Color.White
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .nuvioV2Focus(isFocused, RoundedCornerShape(10.dp), stationary = true)
+            .nuvioV2Focus(effectiveFocused, RoundedCornerShape(10.dp), stationary = true)
             .clip(RoundedCornerShape(10.dp))
             .background(bgColor)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged {
                 isFocused = it.isFocused
-                if (it.isFocused) onFocused?.invoke()
+                if (it.isFocused && tvFocusMode) onFocused?.invoke()
             }
             .combinedClickable(
                 interactionSource = interactionSource,

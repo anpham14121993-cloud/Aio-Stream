@@ -55,14 +55,15 @@ fun SyncCodeGenerateScreen(
             modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
+        val isCompactGen = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.5f)
+                .fillMaxWidth(if (isCompactGen) 0.92f else 0.5f)
                 .background(
                     color = NuvioTheme.colors.BackgroundElevated,
                     shape = RoundedCornerShape(20.dp)
                 )
-                .padding(NuvioTheme.spacing.xxl),
+                .padding(if (isCompactGen) 20.dp else NuvioTheme.spacing.xxl),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(

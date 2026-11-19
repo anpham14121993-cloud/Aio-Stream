@@ -118,16 +118,22 @@ internal fun EpisodeSynopsisUnderRow(
     val bodyStyle = typography.bodyMedium
     val titleLineHeight = with(density) { titleStyle.lineHeight.takeIf { it.isSp }?.toDp() ?: 24.dp }
     val bodyLineHeight = with(density) { bodyStyle.lineHeight.takeIf { it.isSp }?.toDp() ?: 20.dp }
-    val blockHeight = 4.dp + titleLineHeight + 2.dp + bodyLineHeight * EPISODE_SYNOPSIS_LINES + 12.dp
+    val isCompactSynopsis = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val bodyLines = if (isCompactSynopsis) 3 else EPISODE_SYNOPSIS_LINES
+    val blockHeight = 4.dp + titleLineHeight + 2.dp + bodyLineHeight * bodyLines + 12.dp
     val strEpisode = stringResource(R.string.episodes_episode)
     val textSecondary = NuvioTheme.extendedColors.textSecondary
 
     Column(
         modifier = modifier
-            .fillMaxWidth(0.62f)
+            .fillMaxWidth(if (isCompactSynopsis) 1f else 0.62f)
             .height(blockHeight)
             .onSizeChanged { onHeightChanged(it.height) }
-            .padding(start = detailStartInset + 3.dp, top = 4.dp)
+            .padding(
+                start = detailStartInset + if (isCompactSynopsis) 0.dp else 3.dp,
+                end = if (isCompactSynopsis) 16.dp else 0.dp,
+                top = 4.dp
+            )
             .clipToBounds()
     ) {
         if (line == null) return@Column
@@ -140,13 +146,14 @@ internal fun EpisodeSynopsisUnderRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(text = episodeCode, style = labelStyle, color = textSecondary, maxLines = 1)
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(if (isCompactSynopsis) 10.dp else 14.dp))
             Text(
                 text = line.title.localizeEpisodeTitle(context),
                 style = titleStyle,
                 color = NuvioTheme.colors.TextPrimary,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
             )
         }
         Spacer(modifier = Modifier.height(2.dp))
@@ -156,7 +163,7 @@ internal fun EpisodeSynopsisUnderRow(
                 text = synopsis,
                 style = bodyStyle.copy(textDirection = synopsis.contentTextDirection()),
                 color = textSecondary,
-                maxLines = EPISODE_SYNOPSIS_LINES,
+                maxLines = bodyLines,
                 overflow = TextOverflow.Ellipsis
             )
         } else {

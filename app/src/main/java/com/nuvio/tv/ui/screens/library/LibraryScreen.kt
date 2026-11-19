@@ -277,10 +277,12 @@ fun LibraryScreen(
         }
     }
 
-    LaunchedEffect(uiState.sortSelectionVersion, firstVisiblePosterKey) {
+    val tvFocusSort = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    LaunchedEffect(uiState.sortSelectionVersion, firstVisiblePosterKey, tvFocusSort) {
         if (uiState.sortSelectionVersion <= 0L) return@LaunchedEffect
         val targetKey = firstVisiblePosterKey ?: return@LaunchedEffect
         runCatching { gridState.scrollToItem(0) }
+        if (!tvFocusSort) return@LaunchedEffect
         var focused = false
         repeat(6) {
             focused = posterFocusRequesters[targetKey]
@@ -294,8 +296,8 @@ fun LibraryScreen(
     if (uiState.isLoading) {
         val loadingFocusRequester = remember { FocusRequester() }
         val loadingLabel = stringResource(R.string.library_syncing_library)
-        LaunchedEffect(uiState.isLoading) {
-            loadingFocusRequester.requestFocus()
+        LaunchedEffect(uiState.isLoading, tvFocusSort) {
+            if (tvFocusSort) loadingFocusRequester.requestFocus()
         }
 
         Box(

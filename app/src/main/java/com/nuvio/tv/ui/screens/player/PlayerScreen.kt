@@ -51,8 +51,13 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -2417,11 +2422,14 @@ fun PlayerScreen(
                 )
             }
 
-            // Controls overlay
+            // Controls overlay (above unlocked touch gestures at 0.2f so buttons & seekbar respond to taps)
             AnimatedVisibility(
                 visible = playerControlsVisible,
                 enter = fadeIn(animationSpec = tween(PLAYER_CONTROLS_FADE_DURATION_MS)),
-                exit = fadeOut(animationSpec = tween(PLAYER_CONTROLS_FADE_DURATION_MS))
+                exit = fadeOut(animationSpec = tween(PLAYER_CONTROLS_FADE_DURATION_MS)),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(1.5f)
             ) {
                 val context = LocalContext.current
                 PlayerControlsOverlay(
@@ -2611,13 +2619,21 @@ fun PlayerScreen(
                 visible = uiState.showEpisodesPanel && uiState.error == null &&
                     !uiState.showEpisodeAutoPlayLoadingOverlay,
                 enter = fadeIn(animationSpec = tween(120)),
-                exit = fadeOut(animationSpec = tween(120))
+                exit = fadeOut(animationSpec = tween(120)),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2.6f)
             ) {
                 // Scrim (fades in/out, no slide)
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color.Black.copy(alpha = if (cinematicGlass) .08f else .45f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { viewModel.onEvent(PlayerEvent.OnDismissEpisodesPanel) }
+                        )
                 )
             }
 
@@ -2632,7 +2648,10 @@ fun PlayerScreen(
                 exit = slideOutHorizontally(
                     animationSpec = tween(220),
                     targetOffsetX = { it }
-                )
+                ),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2.65f)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     EpisodesSidePanel(
@@ -2667,8 +2686,30 @@ fun PlayerScreen(
             }
             AnimatedVisibility(
                 visible = uiState.showChaptersPanel && uiState.chapters.isNotEmpty() && uiState.error == null,
+                enter = fadeIn(animationSpec = tween(120)),
+                exit = fadeOut(animationSpec = tween(120)),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2.6f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = if (cinematicGlass) .08f else .45f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { viewModel.onEvent(PlayerEvent.OnDismissChaptersPanel) }
+                        )
+                )
+            }
+            AnimatedVisibility(
+                visible = uiState.showChaptersPanel && uiState.chapters.isNotEmpty() && uiState.error == null,
                 enter = slideInHorizontally(animationSpec = tween(220), initialOffsetX = { it }),
-                exit = slideOutHorizontally(animationSpec = tween(220), targetOffsetX = { it })
+                exit = slideOutHorizontally(animationSpec = tween(220), targetOffsetX = { it }),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2.65f)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     ChaptersSidePanel(
@@ -2685,12 +2726,26 @@ fun PlayerScreen(
             AnimatedVisibility(
                 visible = uiState.showSourcesPanel && uiState.error == null,
                 enter = fadeIn(animationSpec = tween(120)),
-                exit = fadeOut(animationSpec = tween(120))
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
+                exit = fadeOut(animationSpec = tween(120)),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2.6f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
                         .background(Color.Black.copy(alpha = if (cinematicGlass) .08f else .45f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {
+                                if (uiState.currentStreamUrl.isNullOrBlank()) {
+                                    exitPlayer()
+                                } else {
+                                    viewModel.onEvent(PlayerEvent.OnDismissSourcesPanel)
+                                }
+                            }
+                        )
                 )
             }
 
@@ -2704,7 +2759,10 @@ fun PlayerScreen(
                 exit = slideOutHorizontally(
                     animationSpec = tween(220),
                     targetOffsetX = { it }
-                )
+                ),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2.65f)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     StreamSourcesSidePanel(
@@ -2731,12 +2789,20 @@ fun PlayerScreen(
             AnimatedVisibility(
                 visible = uiState.showSubtitleStylePanel && uiState.error == null,
                 enter = fadeIn(animationSpec = tween(120)),
-                exit = fadeOut(animationSpec = tween(120))
+                exit = fadeOut(animationSpec = tween(120)),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2.6f)
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color.Black.copy(alpha = if (cinematicGlass) .08f else .35f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { viewModel.onEvent(PlayerEvent.OnDismissSubtitleStylePanel) }
+                        )
                 )
             }
 
@@ -2750,7 +2816,10 @@ fun PlayerScreen(
                 exit = slideOutVertically(
                     animationSpec = tween(220),
                     targetOffsetY = { -it }
-                )
+                ),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2.65f)
             ) {
                 Box(
                     modifier = Modifier.fillMaxSize()
@@ -4139,7 +4208,13 @@ internal fun PlayerControlsProgressBarHost(
         onClick = onClick,
         bufferedPosition = playbackTimeline.bufferedPosition,
         chapterFractions = chapterFractions,
-        warming = warming
+        warming = warming,
+        onTouchSeekTo = { targetMs ->
+            viewModel.onEvent(PlayerEvent.OnSeekTo(targetMs))
+        },
+        onTouchInteraction = {
+            viewModel.scheduleHideControls()
+        }
     )
 }
 
@@ -4368,7 +4443,9 @@ private fun ProgressBar(
     bufferedPosition: Long = 0L,
     playbackPosition: Long = currentPosition,
     chapterFractions: List<Float> = emptyList(),
-    warming: Boolean = false
+    warming: Boolean = false,
+    onTouchSeekTo: ((Long) -> Unit)? = null,
+    onTouchInteraction: (() -> Unit)? = null
 ) {
     val v2ProgressBrush = if (com.nuvio.tv.ui.v2.appearance.LocalV2Appearance.current != null) {
         com.nuvio.tv.ui.theme.createThemeBrush(com.nuvio.tv.ui.v2.appearance.v2AccentColors())
@@ -4400,8 +4477,41 @@ private fun ProgressBar(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(20.dp)
+            .height(32.dp)
             .onGloballyPositioned { if (!warming) SeekBarAnchor.bounds = it.boundsInRoot() }
+            .then(
+                if (!warming && duration > 0L && onTouchSeekTo != null) {
+                    Modifier
+                        .pointerInput(duration, onTouchSeekTo) {
+                            detectTapGestures { offset ->
+                                onTouchInteraction?.invoke()
+                                val frac = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                onTouchSeekTo((duration * frac).toLong())
+                            }
+                        }
+                        .pointerInput(duration, onTouchSeekTo) {
+                            var dragTargetMs = 0L
+                            detectHorizontalDragGestures(
+                                onDragStart = { offset ->
+                                    onTouchInteraction?.invoke()
+                                    val frac = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                    dragTargetMs = (duration * frac).toLong()
+                                },
+                                onHorizontalDrag = { change, _ ->
+                                    change.consume()
+                                    onTouchInteraction?.invoke()
+                                    val frac = (change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                    dragTargetMs = (duration * frac).toLong()
+                                },
+                                onDragEnd = {
+                                    onTouchSeekTo(dragTargetMs)
+                                }
+                            )
+                        }
+                } else {
+                    Modifier
+                }
+            )
             .then(
                 if (focusRequester != null) Modifier.focusRequester(focusRequester)
                 else Modifier
@@ -5390,6 +5500,7 @@ private fun SpeedSelectionDialog(
     brightness: Float = 1f
 ) {
     val isV2 = LocalV2Appearance.current != null
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     val selectedIndex = remember(currentSpeed) {
         PLAYBACK_SPEEDS.indices.minByOrNull { index ->
             abs(PLAYBACK_SPEEDS[index] - currentSpeed)
@@ -5400,12 +5511,14 @@ private fun SpeedSelectionDialog(
         PLAYBACK_SPEEDS.map { FocusRequester() }
     }
 
-    LaunchedEffect(selectedIndex) {
+    LaunchedEffect(selectedIndex, tvFocusMode) {
         if (isV2) {
             listState.scrollToItem(selectedIndex)
             repeat(2) { withFrameNanos { } }
         }
-        runCatching { speedFocusRequesters[selectedIndex].requestFocus() }
+        if (tvFocusMode) {
+            runCatching { speedFocusRequesters[selectedIndex].requestFocus() }
+        }
     }
 
     if (isV2) {

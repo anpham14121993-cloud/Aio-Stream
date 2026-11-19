@@ -122,15 +122,19 @@ internal fun AudioSelectionOverlay(
         mutableStateOf<AudioControlFocusTarget?>(null)
     }
 
-    LaunchedEffect(visible, tracks, selectedIndex) {
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+
+    LaunchedEffect(visible, tracks, selectedIndex, tvFocusMode) {
         if (!visible) return@LaunchedEffect
 
         if (tracks.isNotEmpty()) {
             val selectedListIndex = tracks.indexOfFirst { it.index == selectedIndex }.takeIf { it >= 0 } ?: 0
             listState.scrollToItem(selectedListIndex)
-            delay(120)
-            runCatching { tracksFocusRequester.requestFocus() }
-        } else {
+            if (tvFocusMode) {
+                delay(120)
+                runCatching { tracksFocusRequester.requestFocus() }
+            }
+        } else if (tvFocusMode) {
             delay(120)
             val initialControlsFocusRequester = when {
                 canDecreaseDelay -> delayMinusFocusRequester
@@ -145,8 +149,8 @@ internal fun AudioSelectionOverlay(
         }
     }
 
-    LaunchedEffect(visible, pendingControlFocusTarget, audioAmplificationDb, isAmplificationAvailable) {
-        if (!visible) return@LaunchedEffect
+    LaunchedEffect(visible, pendingControlFocusTarget, audioAmplificationDb, isAmplificationAvailable, tvFocusMode) {
+        if (!visible || !tvFocusMode) return@LaunchedEffect
         val target = pendingControlFocusTarget ?: return@LaunchedEffect
         val targetCanFocus = when (target) {
             AudioControlFocusTarget.DelayMinus -> canDecreaseDelay
@@ -183,7 +187,8 @@ internal fun AudioSelectionOverlay(
     ) {
         var editorOpen by remember { mutableStateOf(false) }
 
-        LaunchedEffect(editorOpen) {
+        LaunchedEffect(editorOpen, tvFocusMode) {
+            if (!tvFocusMode) return@LaunchedEffect
             if (editorOpen) {
                 runCatching { delayMinusFocusRequester.requestFocus() }
             } else {
@@ -191,9 +196,11 @@ internal fun AudioSelectionOverlay(
             }
         }
 
+        val maxAudioPanelWidth = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp - 32)
+            .coerceAtLeast(240).dp
         Column(
             modifier = Modifier
-                .width(if (LocalV2Appearance.current != null) 400.dp else 320.dp)
+                .width(minOf(if (LocalV2Appearance.current != null) 400.dp else 320.dp, maxAudioPanelWidth))
                 .align(Alignment.BottomEnd)
                 .heightIn(max = 620.dp)
                 .v2PlayerPanel()

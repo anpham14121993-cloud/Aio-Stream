@@ -56,6 +56,7 @@ internal fun PlayerControlMorePopup(layout: PlayerControlLayout, available: Set<
     val scope = rememberCoroutineScope()
     val closeFocus = remember { FocusRequester() }
     var focusedAction by remember { mutableStateOf<PlayerControlAction?>(null) }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     val requesters = remember { PlayerControlAction.entries.associateWith { BringIntoViewRequester() } }
     val provider = remember(bounds, density) { object : PopupPositionProvider {
         override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
@@ -96,7 +97,7 @@ internal fun PlayerControlMorePopup(layout: PlayerControlLayout, available: Set<
                             } })
                     Button(onClick = { if (!preview) onClick(action) }, modifier = itemModifier,
                         colors = playerMoreButtonColors(v2), shape = ButtonDefaults.shape(shape = RoundedCornerShape(8.dp)),
-                        border = ButtonDefaults.border(focusedBorder = if (v2) Border.None else Border(border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs), shape = RoundedCornerShape(8.dp))),
+                        border = ButtonDefaults.border(focusedBorder = if (v2 || !tvFocusMode) Border.None else Border(border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs), shape = RoundedCornerShape(8.dp))),
                         scale = ButtonDefaults.scale(focusedScale = 1f), contentPadding = PaddingValues(8.dp)) {
                         Icon(playerControlIcon(action, playing), null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
                         Text(playerControlLabel(action, playing), Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, maxLines = 2)
@@ -106,14 +107,14 @@ internal fun PlayerControlMorePopup(layout: PlayerControlLayout, available: Set<
                     up = items.lastOrNull()?.action?.let(targets) ?: FocusRequester.Cancel
                     down = FocusRequester.Cancel; left = FocusRequester.Cancel; right = FocusRequester.Cancel
                 }, colors = playerMoreButtonColors(v2), shape = ButtonDefaults.shape(shape = RoundedCornerShape(8.dp)),
-                    border = ButtonDefaults.border(focusedBorder = if (v2) Border.None else Border(border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs), shape = RoundedCornerShape(8.dp))),
+                    border = ButtonDefaults.border(focusedBorder = if (v2 || !tvFocusMode) Border.None else Border(border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs), shape = RoundedCornerShape(8.dp))),
                     scale = ButtonDefaults.scale(focusedScale = 1f)) { Text(stringResource(R.string.action_close)) }
             }
-            LaunchedEffect(items.map { it.action }, selected) {
+            LaunchedEffect(items.map { it.action }, selected, tvFocusMode) {
                 withFrameNanos { }; withFrameNanos { }
                 if (preview) {
                     if (selected != null && items.any { it.action == selected }) requesters.getValue(selected).bringIntoView()
-                } else {
+                } else if (tvFocusMode) {
                     val target = selected?.takeIf { a -> items.any { it.action == a } }
                         ?: focusedAction?.takeIf { a -> items.any { it.action == a } } ?: items.firstOrNull()?.action
                     runCatching { (target?.let(targets) ?: closeFocus).requestFocus() }

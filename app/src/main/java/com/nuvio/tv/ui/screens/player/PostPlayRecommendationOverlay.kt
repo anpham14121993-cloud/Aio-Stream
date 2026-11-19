@@ -290,13 +290,15 @@ fun PostPlayRecommendationOverlay(
                     )
             )
 
+            val isCompactRecOverlay = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .fillMaxWidth(0.52f)
+                    .fillMaxWidth(if (isCompactRecOverlay) 0.94f else 0.52f)
                     .padding(
-                        start = NuvioTheme.spacing.screen.overscanHorizontal,
-                        bottom = NuvioTheme.spacing.screen.overscanVertical
+                        start = if (isCompactRecOverlay) 16.dp else NuvioTheme.spacing.screen.overscanHorizontal,
+                        end = if (isCompactRecOverlay) 16.dp else 0.dp,
+                        bottom = if (isCompactRecOverlay) 16.dp else NuvioTheme.spacing.screen.overscanVertical
                     ),
                 horizontalAlignment = Alignment.Start
             ) {

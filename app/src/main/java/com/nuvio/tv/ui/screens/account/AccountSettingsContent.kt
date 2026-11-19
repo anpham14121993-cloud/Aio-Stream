@@ -280,20 +280,28 @@ private fun ProfileSyncRow(profile: ProfileSyncStats) {
     val color = runCatching { Color(android.graphics.Color.parseColor(profile.avatarColorHex)) }
         .getOrDefault(NuvioPrimitives.blue500)
     val rowShape = RoundedCornerShape(6.dp)
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     var isFocused by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .onFocusChanged { isFocused = it.isFocused }
-            .focusable()
+            .then(
+                if (tvFocusMode) {
+                    Modifier
+                        .onFocusChanged { isFocused = it.isFocused }
+                        .focusable()
+                } else {
+                    Modifier
+                }
+            )
             .background(
-                color = if (isFocused) NuvioTheme.colors.FocusBackground else settingsItemColor(NuvioTheme.colors.BackgroundElevated),
+                color = if (tvFocusMode && isFocused) NuvioTheme.colors.FocusBackground else settingsItemColor(NuvioTheme.colors.BackgroundElevated),
                 shape = rowShape
             )
             .border(
                 width = NuvioTheme.spacing.xxs,
-                color = if (isFocused) NuvioTheme.colors.FocusRing else Color.Transparent,
+                color = if (tvFocusMode && isFocused) NuvioTheme.colors.FocusRing else Color.Transparent,
                 shape = rowShape
             )
             .padding(horizontal = NuvioTheme.spacing.sm, vertical = 6.dp),

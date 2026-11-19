@@ -173,6 +173,8 @@ internal fun ModernHomeRowsList(
     onFocusedHeroMediaNonceChange: (Int) -> Unit,
     onExpansionInteractionNonceChange: (Int) -> Unit,
     blockLeftOnFirstExpandedItem: Boolean = false,
+    mobileScrollableLayout: Boolean = false,
+    mobileHeroContent: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     // Unwrap StableRef wrappers for internal use (not passed to child composables)
@@ -500,12 +502,18 @@ internal fun ModernHomeRowsList(
         LocalFastScrollActive provides isFastScrolling,
         LocalVerticalRowsScrolling provides rowsMovingState
     ) {
+        val listHeightModifier = if (mobileScrollableLayout) {
+            Modifier.fillMaxSize()
+        } else {
+            Modifier.height(rowsViewportHeight)
+        }
+        val rowIndexOffset = if (mobileHeroContent != null) 1 else 0
         LazyColumn(
             state = verticalRowListState,
             modifier = modifier
                 .fillMaxWidth()
                 .recompositionHighlighter()
-                .height(rowsViewportHeight)
+                .then(listHeightModifier)
                 .clipToBounds()
                 .graphicsLayer { alpha = trailerContentAlpha() }
                 .focusRequester(contentFocusRequester)
@@ -535,10 +543,11 @@ internal fun ModernHomeRowsList(
                             verticalFocusJob?.cancel()
                             verticalFocusJob = navigationScope.launch {
                                 try {
-                                    val attached = verticalRowListState.layoutInfo.visibleItemsInfo.any { it.index == targetIndex }
+                                    val layoutIndex = targetIndex + rowIndexOffset
+                                    val attached = verticalRowListState.layoutInfo.visibleItemsInfo.any { it.index == layoutIndex }
                                     if (!attached) {
                                         // Glide to where the row rests rather than jumping it to the top edge.
-                                        verticalRowListState.animateScrollToItem(targetIndex, -rowRestInsetPx)
+                                        verticalRowListState.animateScrollToItem(layoutIndex, -rowRestInsetPx)
                                         withFrameNanos { }
                                     }
                                     // Wait for the row to be laid out, so its own scroll decides which card is in the spot.
@@ -645,9 +654,21 @@ internal fun ModernHomeRowsList(
                         }
                     },
                 ),
-            contentPadding = PaddingValues(bottom = rowsViewportHeight + catalogBottomPadding),
-            verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xl)
+            contentPadding = if (mobileScrollableLayout) {
+                PaddingValues(bottom = catalogBottomPadding)
+            } else {
+                PaddingValues(bottom = rowsViewportHeight + catalogBottomPadding)
+            },
+            verticalArrangement = Arrangement.spacedBy(if (mobileScrollableLayout) NuvioTheme.spacing.lg else NuvioTheme.spacing.xl)
         ) {
+            if (mobileHeroContent != null) {
+                item(
+                    key = "mobile_hero_header",
+                    contentType = "mobile_hero_header"
+                ) {
+                    mobileHeroContent()
+                }
+            }
             itemsIndexed(
                 items = carouselRows.list,
                 key = { _, row -> row.key },

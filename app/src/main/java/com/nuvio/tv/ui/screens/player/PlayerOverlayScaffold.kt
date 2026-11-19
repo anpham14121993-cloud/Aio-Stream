@@ -53,9 +53,10 @@ internal fun PlayerOverlayScaffold(
         modifier = modifier
     ) {
         val focusRequester = remember { FocusRequester() }
+        val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
 
-        LaunchedEffect(visible, captureKeys) {
-            if (visible && captureKeys) {
+        LaunchedEffect(visible, captureKeys, tvFocusMode) {
+            if (tvFocusMode && visible && captureKeys) {
                 runCatching { focusRequester.requestFocus() }
             }
         }
