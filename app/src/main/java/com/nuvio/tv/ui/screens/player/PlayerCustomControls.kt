@@ -98,7 +98,7 @@ internal fun playerControlIcon(action: PlayerControlAction, playing: Boolean): I
     PlayerControlAction.EPISODES -> Icons.AutoMirrored.Filled.List
     PlayerControlAction.CHAPTERS -> Icons.Default.Bookmarks
     PlayerControlAction.NEXT_EPISODE -> Icons.Default.SkipNext
-    PlayerControlAction.STATS -> Icons.Default.Equalizer
+    PlayerControlAction.STATS -> Icons.Default.Info
     PlayerControlAction.AUDIO -> Icons.Default.Speaker
     PlayerControlAction.SUBTITLES -> Icons.Default.Subtitles
     PlayerControlAction.SOURCES -> Icons.Default.Cloud
@@ -129,7 +129,7 @@ private fun actionCallback(action: PlayerControlAction, actions: V2PlayerActions
     PlayerControlAction.EPISODES -> actions.episodes
     PlayerControlAction.CHAPTERS -> actions.chapters
     PlayerControlAction.NEXT_EPISODE -> actions.playNext
-    PlayerControlAction.STATS -> actions.stats
+    PlayerControlAction.STATS -> actions.info
     PlayerControlAction.AUDIO -> actions.audio
     PlayerControlAction.SUBTITLES -> actions.subtitles
     PlayerControlAction.SOURCES -> actions.sources

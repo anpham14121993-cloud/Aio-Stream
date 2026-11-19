@@ -51,7 +51,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -950,17 +952,64 @@ internal fun ModernRowSection(
         val rowTitle = row.title
         val isCompactRow = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
         val rowLeadingInset = if (isCompactRow) 16.dp else if (LocalV2Appearance.current != null) 24.dp else 52.dp
+        val canOpenCatalogSeeAll = !row.catalogId.isNullOrBlank() &&
+            !row.addonId.isNullOrBlank() &&
+            !row.apiType.isNullOrBlank()
+        val tvFocusModeHeader = com.nuvio.tv.ui.monolith.isTvFocusMode()
+        val openCatalogSeeAll: () -> Unit = {
+            val catalogId = row.catalogId
+            val addonId = row.addonId
+            val apiType = row.apiType
+            if (!catalogId.isNullOrBlank() && !addonId.isNullOrBlank() && !apiType.isNullOrBlank()) {
+                onNavigateToCatalogSeeAll(catalogId, addonId, apiType)
+            }
+        }
         val railHeaderModifier = remember(rowTitleBottom, rowLeadingInset, isCompactRow) {
             Modifier
                 .padding(start = rowLeadingInset, end = if (isCompactRow) 16.dp else 52.dp, bottom = rowTitleBottom)
                 .fillMaxWidth()
         }
-        Text(
-            text = rowTitle,
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold, textDirection = rowTitle.contentTextDirection()),
-            color = NuvioTheme.colors.TextPrimary,
+        Row(
             modifier = railHeaderModifier
-        )
+                .then(
+                    if (canOpenCatalogSeeAll && !tvFocusModeHeader) {
+                        Modifier.clickable(onClick = openCatalogSeeAll)
+                    } else {
+                        Modifier
+                    }
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = rowTitle,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold, textDirection = rowTitle.contentTextDirection()),
+                color = NuvioTheme.colors.TextPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (canOpenCatalogSeeAll) {
+                Box(
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .size(if (isCompactRow) 32.dp else 34.dp)
+                        .clip(CircleShape)
+                        .background(NuvioTheme.colors.BackgroundCard.copy(alpha = 0.72f))
+                        .border(0.75.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+                        .focusProperties { canFocus = false }
+                        .clickable(onClick = openCatalogSeeAll),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = stringResource(R.string.action_see_all),
+                        tint = NuvioTheme.colors.TextPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
 
         val firstRowItem = row.items.list.firstOrNull()
         val firstCardWidth = when {

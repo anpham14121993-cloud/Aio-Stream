@@ -67,6 +67,7 @@ fun TrailerPlayer(
     muted: Boolean = false,
     seekRequestToken: Int = 0,
     seekDeltaMs: Long = 0L,
+    seekToMs: Long? = null,
     onProgressChanged: (positionMs: Long, durationMs: Long) -> Unit = { _, _ -> },
     onRemoteKey: (keyCode: Int, action: Int, repeatCount: Int) -> Boolean = { _, _, _ -> false },
     cropToFill: Boolean = false,
@@ -204,12 +205,12 @@ fun TrailerPlayer(
         }
     }
 
-    LaunchedEffect(seekRequestToken, seekDeltaMs, trailerPlayer) {
+    LaunchedEffect(seekRequestToken, seekDeltaMs, seekToMs, trailerPlayer) {
         val player = trailerPlayer ?: return@LaunchedEffect
         if (seekRequestToken <= 0 || resolvedPool?.isOwner(playerOwner) != true) return@LaunchedEffect
         val duration = player.duration.takeIf { it > 0 } ?: 0L
         val current = player.currentPosition
-        val target = (current + seekDeltaMs).coerceIn(0L, duration.coerceAtLeast(0L))
+        val target = (seekToMs ?: (current + seekDeltaMs)).coerceIn(0L, duration.coerceAtLeast(0L))
         player.seekTo(target)
     }
 

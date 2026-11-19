@@ -571,6 +571,7 @@ fun MetaDetailsScreen(
     val trailerSeekOverlayState = remember { TrailerSeekOverlayState() }
     var trailerSeekToken by remember { mutableIntStateOf(0) }
     var trailerSeekDeltaMs by remember { mutableLongStateOf(0L) }
+    var trailerSeekToMs by remember { mutableStateOf<Long?>(null) }
     var lastUserInteractionDispatchMs by remember { mutableLongStateOf(0L) }
     val onTrailerProgressChanged = remember(trailerSeekOverlayState) {
         { position: Long, duration: Long ->
@@ -684,6 +685,7 @@ fun MetaDetailsScreen(
                                     repeatCount >= 2 -> -5_000L
                                     else -> -3_000L
                                 }
+                                trailerSeekToMs = null
                                 trailerSeekDeltaMs = delta
                                 trailerSeekToken += 1
                                 trailerSeekOverlayVisible = true
@@ -697,6 +699,7 @@ fun MetaDetailsScreen(
                                     repeatCount >= 2 -> 5_000L
                                     else -> 3_000L
                                 }
+                                trailerSeekToMs = null
                                 trailerSeekDeltaMs = delta
                                 trailerSeekToken += 1
                                 trailerSeekOverlayVisible = true
@@ -1072,6 +1075,7 @@ fun MetaDetailsScreen(
                     selectedSharedTrailer = uiState.selectedSharedTrailer,
                     trailerSeekToken = trailerSeekToken,
                     trailerSeekDeltaMs = trailerSeekDeltaMs,
+                    trailerSeekToMs = trailerSeekToMs,
                     onTrailerControlKey = { keyCode, action, repeatCount ->
                         if (!uiState.showTrailerControls || !uiState.isTrailerPlaying) {
                             false
@@ -1113,12 +1117,14 @@ fun MetaDetailsScreen(
                                     true
                                 }
                                 KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                    trailerSeekToMs = null
                                     trailerSeekDeltaMs = -seekStepMs
                                     trailerSeekToken += 1
                                     trailerSeekOverlayVisible = true
                                     true
                                 }
                                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                    trailerSeekToMs = null
                                     trailerSeekDeltaMs = seekStepMs
                                     trailerSeekToken += 1
                                     trailerSeekOverlayVisible = true
@@ -1238,7 +1244,12 @@ fun MetaDetailsScreen(
                     overlayState = trailerSeekOverlayState,
                     onTogglePause = { isTrailerPaused = !isTrailerPaused },
                     onSeekDelta = { delta ->
+                        trailerSeekToMs = null
                         trailerSeekDeltaMs = delta
+                        trailerSeekToken += 1
+                    },
+                    onSeekTo = { targetMs ->
+                        trailerSeekToMs = targetMs
                         trailerSeekToken += 1
                     },
                     onDismiss = {
@@ -1392,6 +1403,7 @@ private fun MetaDetailsContent(
     selectedSharedTrailer: MetaTrailer?,
     trailerSeekToken: Int,
     trailerSeekDeltaMs: Long,
+    trailerSeekToMs: Long? = null,
     onTrailerControlKey: (keyCode: Int, action: Int, repeatCount: Int) -> Boolean,
     onTrailerProgressChanged: (Long, Long) -> Unit,
     onTrailerEnded: () -> Unit,
@@ -2420,14 +2432,16 @@ private fun MetaDetailsContent(
         }
         bmp.asImageBitmap()
     }
-    val bottomGradientBitmap = remember(backgroundColor, backdropWidthPx, backdropHeightPx, isCompactGradient) {
+    val compactHeroHeight = (currentConfig.screenWidthDp.dp * 0.68f).coerceIn(260.dp, 340.dp)
+    val compactHeroHeightPx = with(localDensity) { compactHeroHeight.toPx() }.coerceIn(1f, backdropHeightPx.toFloat())
+    val bottomGradientBitmap = remember(backgroundColor, backdropWidthPx, backdropHeightPx, isCompactGradient, compactHeroHeightPx) {
         val w = backdropWidthPx.coerceAtLeast(1)
         val h = backdropHeightPx.coerceAtLeast(1)
         val transparent = backgroundColor.copy(alpha = 0f).toArgb()
         val bmp = android.graphics.Bitmap.createBitmap(2, h, android.graphics.Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(bmp)
-        val startY = h * if (isCompactGradient) 0.16f else 0.38f
-        val endY = h * if (isCompactGradient) 0.46f else 1.0f
+        val startY = if (isCompactGradient) compactHeroHeightPx * 0.58f else h * 0.38f
+        val endY = if (isCompactGradient) compactHeroHeightPx else h * 1.0f
         val shader = android.graphics.LinearGradient(
             0f, startY, 0f, endY,
             intArrayOf(
@@ -2472,6 +2486,7 @@ private fun MetaDetailsContent(
             showTrailerControls = showTrailerControls,
             trailerSeekToken = trailerSeekToken,
             trailerSeekDeltaMs = trailerSeekDeltaMs,
+            trailerSeekToMs = trailerSeekToMs,
             onTrailerControlKey = onTrailerControlKey,
             onTrailerProgressChanged = onTrailerProgressChanged,
             onTrailerEnded = onTrailerEnded,
@@ -3579,13 +3594,22 @@ private fun PersistentDetailBackdrop(
     onLoaded: (String?) -> Unit, onFailed: (String?) -> Unit
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp.dp
+    val isCompactBackdrop = screenWidthDp < 600.dp
+    val compactHeroHeight = (screenWidthDp * 0.68f).coerceIn(260.dp, 340.dp)
     val artworkAccent = com.nuvio.tv.ui.v2.appearance.LocalArtworkAccent.current
     if (owner != null) com.nuvio.tv.ui.v2.appearance.ObserveArtworkAccent(owner, url)
-    val request = remember(context, url) {
+    val request = remember(context, url, isCompactBackdrop, compactHeroHeight) {
+        val targetWidthPx = context.resources.displayMetrics.widthPixels.coerceAtLeast(1)
+        val targetHeightPx = if (isCompactBackdrop) {
+            with(density) { compactHeroHeight.roundToPx() }.coerceAtLeast(1)
+        } else {
+            context.resources.displayMetrics.heightPixels.coerceAtLeast(1)
+        }
         ImageRequest.Builder(context).data(url).crossfade(false)
             .apply { url?.let(com.nuvio.tv.ui.screens.home.HeroImageRequests::backdropKey)?.let { placeholderMemoryCacheKey(it) } }
-            .size(context.resources.displayMetrics.widthPixels.coerceAtLeast(1),
-                context.resources.displayMetrics.heightPixels.coerceAtLeast(1)).build()
+            .size(targetWidthPx, targetHeightPx).build()
     }
     val targetAlpha = if (hidden) 0f else if (scrolledPastHero) 0.15f else 1f
     val alpha = remember { Animatable(targetAlpha) }
@@ -3601,9 +3625,12 @@ private fun PersistentDetailBackdrop(
             else -> alpha.animateTo(targetAlpha, tween(fadeMillis))
         }
     }
-    val isCompactBackdrop = LocalConfiguration.current.screenWidthDp < 600
     AsyncImage(model = request, contentDescription = null,
-        modifier = Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha.value * contentAlpha() }.v2GlassSource(),
+        modifier = (if (isCompactBackdrop) {
+            Modifier.fillMaxWidth().height(compactHeroHeight)
+        } else {
+            Modifier.fillMaxSize()
+        }).graphicsLayer { this.alpha = alpha.value * contentAlpha() }.v2GlassSource(),
         onSuccess = {
             artworkAccent?.imageLoaded(url)
             onLoaded(url)
@@ -3611,7 +3638,7 @@ private fun PersistentDetailBackdrop(
         },
         onError = { onFailed(url) },
         contentScale = ContentScale.Crop,
-        alignment = if (isCompactBackdrop) Alignment.TopCenter else Alignment.TopEnd
+        alignment = if (isCompactBackdrop) Alignment.Center else Alignment.TopEnd
     )
 }
 
@@ -3628,6 +3655,7 @@ private fun BackdropLayer(
     showTrailerControls: Boolean,
     trailerSeekToken: Int,
     trailerSeekDeltaMs: Long,
+    trailerSeekToMs: Long? = null,
     onTrailerControlKey: (keyCode: Int, action: Int, repeatCount: Int) -> Boolean,
     onTrailerProgressChanged: (Long, Long) -> Unit,
     onTrailerEnded: () -> Unit,
@@ -3656,6 +3684,8 @@ private fun BackdropLayer(
         animationSpec = tween(durationMillis = if (isScrolledPastHero) 300 else 800),
         label = "gradientFade"
     )
+    val isCompactBackdrop = LocalConfiguration.current.screenWidthDp < 600
+    val compactHeroHeight = (LocalConfiguration.current.screenWidthDp.dp * 0.68f).coerceIn(260.dp, 340.dp)
     Box(modifier = Modifier.fillMaxSize()) {
         TrailerPlayer(
             trailerUrl = trailerUrl,
@@ -3664,14 +3694,21 @@ private fun BackdropLayer(
             isPaused = isTrailerPaused || isBackgroundTrailerPaused,
             seekRequestToken = if (showTrailerControls) trailerSeekToken else 0,
             seekDeltaMs = if (showTrailerControls) trailerSeekDeltaMs else 0L,
+            seekToMs = if (showTrailerControls) trailerSeekToMs else null,
             onRemoteKey = onTrailerControlKey,
             onProgressChanged = onTrailerProgressChanged,
             onEnded = onTrailerEnded,
             onFirstFrameRendered = onBackgroundTrailerRendered,
             cropToFill = isBackgroundTrailerPlaying,
             autoCropLetterbox = isBackgroundTrailerPlaying,
-            modifier = Modifier
-                .fillMaxSize()
+            modifier = (if (isCompactBackdrop && !isTrailerPlaying) {
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(compactHeroHeight)
+            } else {
+                Modifier.fillMaxSize()
+            })
                 .graphicsLayer {
                     alpha = if (isAnyTrailerPlaying) trailerAlphaState.value else 1f
                 }

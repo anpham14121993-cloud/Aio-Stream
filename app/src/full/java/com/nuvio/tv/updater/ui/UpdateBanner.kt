@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -45,6 +46,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -52,13 +55,15 @@ import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Border
-import androidx.tv.material3.Button
+import com.nuvio.tv.ui.tvhybrid.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Icon
-import androidx.tv.material3.IconButton
+import com.nuvio.tv.ui.tvhybrid.IconButton
 import androidx.tv.material3.IconButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.nuvio.tv.ui.monolith.DeviceFormFactor
+import com.nuvio.tv.ui.monolith.LocalDeviceFormFactor
 import com.nuvio.tv.R
 import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.theme.ThemeColors
@@ -118,6 +123,17 @@ internal fun UpdateBanner(
         update.assetSizeBytes?.takeUnless { isInstalledUpdate }?.let { Formatter.formatShortFileSize(context, it) }
     ).joinToString(separator = " • ")
 
+    val isHandheldBanner = LocalDeviceFormFactor.current != DeviceFormFactor.TV
+    val isCompactBanner = LocalConfiguration.current.screenWidthDp < 600
+    val triggerPrimaryAction = {
+        when {
+            isInstalledUpdate -> Unit
+            state.isDownloading -> Unit
+            state.downloadedApkPath != null -> onInstall()
+            state.isUpdateAvailable -> onDownload()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -140,62 +156,77 @@ internal fun UpdateBanner(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (isHandheldBanner) Modifier.statusBarsPadding() else Modifier)
                 .onFocusChanged { bannerHasFocus = it.hasFocus }
-                .heightIn(min = 76.dp)
-                .padding(horizontal = 32.dp, vertical = 10.dp),
+                .heightIn(min = if (isCompactBanner) 64.dp else 76.dp)
+                .padding(horizontal = if (isCompactBanner) 14.dp else 32.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(if (isCompactBanner) 8.dp else 12.dp)
         ) {
-            if (isInstalledUpdate) {
-                // Same success green in every theme, with a white check on top.
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .background(NuvioTheme.colors.Success, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .then(
+                        if (!isInstalledUpdate && !state.isDownloading) {
+                            Modifier.clickable(onClick = triggerPrimaryAction)
+                        } else {
+                            Modifier
+                        }
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(if (isCompactBanner) 10.dp else 12.dp)
+            ) {
+                if (isInstalledUpdate) {
+                    // Same success green in every theme, with a white check on top.
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .background(NuvioTheme.colors.Success, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                } else {
                     Icon(
-                        imageVector = Icons.Default.Check,
+                        imageVector = Icons.Default.CloudDownload,
                         contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
+                        tint = NuvioTheme.colors.TextPrimary,
+                        modifier = Modifier.size(if (isCompactBanner) 24.dp else 28.dp)
                     )
                 }
-            } else {
-                Icon(
-                    imageVector = Icons.Default.CloudDownload,
-                    contentDescription = null,
-                    tint = NuvioTheme.colors.TextPrimary,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
 
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text(
-                    text = updateLabel,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        textDirection = TextDirection.Ltr
-                    ),
-                    color = NuvioTheme.colors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = when {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = updateLabel,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            textDirection = TextDirection.Ltr
+                        ),
+                        color = NuvioTheme.colors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when {
                         state.errorMessage != null -> NuvioTheme.colors.Error
                         state.isDownloading && lightAccent -> NuvioTheme.colors.TextPrimary
                         state.isDownloading -> NuvioTheme.colors.OnSecondary
                         else -> NuvioTheme.colors.TextSecondary
                     },
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             UpdateBannerIconButton(

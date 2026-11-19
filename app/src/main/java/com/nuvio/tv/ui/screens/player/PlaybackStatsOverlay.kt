@@ -17,15 +17,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -210,6 +214,7 @@ fun PlaybackStatsOverlay(
     compact: Boolean = false
 ) {
     val isV2 = LocalV2Appearance.current != null
+    val maxHeight = (LocalConfiguration.current.screenHeightDp - 48).coerceAtLeast(220).dp
     AnimatedVisibility(
         visible = visible && sample != null,
         enter = fadeIn(),
@@ -223,83 +228,96 @@ fun PlaybackStatsOverlay(
                     shape = RoundedCornerShape(NuvioTheme.radii.sm)
                 ))
                 .width(StatsPanelWidth)
+                .heightIn(max = maxHeight)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.sm),
             verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xxs)
         ) {
-            visibleStatsSections(sample?.sections.orEmpty(), compact).forEach { section ->
-                Text(
-                    text = section.group.header.uppercase(),
-                    color = if (isV2) NuvioTheme.colors.TextSecondary else Color.White.copy(alpha = 0.5f),
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 1.5.sp
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(Color.White.copy(alpha = 0.12f))
-                )
-                section.rows.forEach { row ->
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .background(
-                                    color = when (row.dot) {
-                                        StatsDot.GOOD -> DotGood
-                                        StatsDot.WARN -> DotWarn
-                                        StatsDot.BAD -> DotBad
-                                        StatsDot.NONE -> Color.Transparent
-                                    },
-                                    shape = CircleShape
-                                )
-                        )
-                        Text(
-                            text = row.label,
-                            color = Color.White.copy(alpha = 0.6f),
-                            fontSize = 10.sp,
-                            maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.width(88.dp)
-                        )
-                        if (row.marquee) {
-                            Text(
-                                text = row.value,
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Clip,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .basicMarquee(
-                                        iterations = 3,
-                                        velocity = 20.dp,
-                                        initialDelayMillis = 2000
-                                    )
-                            )
-                        } else {
-                            Text(
-                                text = row.value,
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                }
-            }
-            if (sample?.isExoPlayer == false) {
-                Text(
-                    text = stringResource(R.string.player_stats_unavailable_mpv),
-                    color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 10.sp
-                )
+            sample?.let { activeSample ->
+                PlaybackStatsSectionsContent(sample = activeSample, compact = compact)
             }
         }
+    }
+}
+
+@Composable
+internal fun PlaybackStatsSectionsContent(
+    sample: PlaybackStatsSample,
+    compact: Boolean = false
+) {
+    val isV2 = LocalV2Appearance.current != null
+    visibleStatsSections(sample.sections, compact).forEach { section ->
+        Text(
+            text = section.group.header.uppercase(),
+            color = if (isV2) NuvioTheme.colors.TextSecondary else Color.White.copy(alpha = 0.5f),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 1.5.sp
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(Color.White.copy(alpha = 0.12f))
+        )
+        section.rows.forEach { row ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .background(
+                            color = when (row.dot) {
+                                StatsDot.GOOD -> DotGood
+                                StatsDot.WARN -> DotWarn
+                                StatsDot.BAD -> DotBad
+                                StatsDot.NONE -> Color.Transparent
+                            },
+                            shape = CircleShape
+                        )
+                )
+                Text(
+                    text = row.label,
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 10.sp,
+                    maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.width(88.dp)
+                )
+                if (row.marquee) {
+                    Text(
+                        text = row.value,
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip,
+                        modifier = Modifier
+                            .weight(1f)
+                            .basicMarquee(
+                                iterations = 3,
+                                velocity = 20.dp,
+                                initialDelayMillis = 2000
+                            )
+                    )
+                } else {
+                    Text(
+                        text = row.value,
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+    if (!sample.isExoPlayer) {
+        Text(
+            text = stringResource(R.string.player_stats_unavailable_mpv),
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 10.sp
+        )
     }
 }
 

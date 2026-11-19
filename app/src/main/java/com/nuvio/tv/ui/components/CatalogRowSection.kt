@@ -5,8 +5,11 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -295,14 +298,26 @@ fun CatalogRowSection(
             }
         } else Modifier
     )) {
+        val headerSeeAllEnabled = showSeeAll && catalogTitle.isNotBlank()
+        val tvFocusHeader = com.nuvio.tv.ui.monolith.isTvFocusMode()
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.md),
+                .padding(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.md)
+                .then(
+                    if (headerSeeAllEnabled && !tvFocusHeader) {
+                        Modifier.clickable { latestOnSeeAll() }
+                    } else {
+                        Modifier
+                    }
+                ),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
+            ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
@@ -340,6 +355,26 @@ fun CatalogRowSection(
                             textDirection = addonText.contentTextDirection()
                         ),
                         color = if (catalogTitle.isBlank()) Color.Transparent else NuvioTheme.colors.TextTertiary
+                    )
+                }
+            }
+            if (headerSeeAllEnabled) {
+                Box(
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(NuvioTheme.colors.BackgroundCard.copy(alpha = 0.72f))
+                        .border(0.75.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+                        .focusProperties { canFocus = false }
+                        .clickable { latestOnSeeAll() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = seeAllLabel ?: stringResource(R.string.action_see_all),
+                        tint = NuvioTheme.colors.TextPrimary,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }

@@ -9,6 +9,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,9 +22,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -39,10 +43,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.Alignment
@@ -53,10 +59,16 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -98,6 +110,7 @@ fun SharedTrailerOverlay(
     val seekOverlayState = remember { TrailerSeekOverlayState() }
     var seekToken by remember { mutableIntStateOf(0) }
     var seekDeltaMs by remember { mutableLongStateOf(0L) }
+    var seekToMs by remember { mutableStateOf<Long?>(null) }
 
     val overlayFocusRequester = remember { FocusRequester() }
     val canControlPlayback = !trailerUrl.isNullOrBlank() && !isLoading && errorMessage == null
@@ -191,6 +204,7 @@ fun SharedTrailerOverlay(
                         KeyEvent.KEYCODE_DPAD_LEFT -> {
                             if (!canControlPlayback) return@onPreviewKeyEvent false
                             val repeatCount = keyEvent.nativeKeyEvent.repeatCount
+                            seekToMs = null
                             seekDeltaMs = when {
                                 repeatCount >= 12 -> -12_000L
                                 repeatCount >= 6 -> -8_000L
@@ -205,6 +219,7 @@ fun SharedTrailerOverlay(
                         KeyEvent.KEYCODE_DPAD_RIGHT -> {
                             if (!canControlPlayback) return@onPreviewKeyEvent false
                             val repeatCount = keyEvent.nativeKeyEvent.repeatCount
+                            seekToMs = null
                             seekDeltaMs = when {
                                 repeatCount >= 12 -> 12_000L
                                 repeatCount >= 6 -> 8_000L
@@ -245,6 +260,7 @@ fun SharedTrailerOverlay(
                     isPaused = isPaused,
                     seekRequestToken = seekToken,
                     seekDeltaMs = seekDeltaMs,
+                    seekToMs = seekToMs,
                     onProgressChanged = { position, duration ->
                         seekOverlayState.positionMs = position
                         seekOverlayState.durationMs = duration
@@ -262,7 +278,12 @@ fun SharedTrailerOverlay(
                     overlayState = seekOverlayState,
                     onTogglePause = { isPaused = !isPaused },
                     onSeekDelta = { delta ->
+                        seekToMs = null
                         seekDeltaMs = delta
+                        seekToken += 1
+                    },
+                    onSeekTo = { targetMs ->
+                        seekToMs = targetMs
                         seekToken += 1
                     },
                     onDismiss = onDismiss
@@ -335,14 +356,16 @@ internal fun TrailerFullscreenTouchOverlay(
     overlayState: TrailerSeekOverlayState,
     onTogglePause: () -> Unit,
     onSeekDelta: (Long) -> Unit,
+    onSeekTo: ((Long) -> Unit)? = null,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var hudVisible by remember { mutableStateOf(true) }
     var interactionNonce by remember { mutableIntStateOf(0) }
+    var isScrubbingBar by remember { mutableStateOf(false) }
 
-    LaunchedEffect(hudVisible, isPaused, canControlPlayback, interactionNonce) {
-        if (hudVisible && !isPaused && canControlPlayback) {
+    LaunchedEffect(hudVisible, isPaused, canControlPlayback, interactionNonce, isScrubbingBar) {
+        if (hudVisible && !isPaused && canControlPlayback && !isScrubbingBar) {
             delay(3500)
             hudVisible = false
         }
@@ -473,7 +496,18 @@ internal fun TrailerFullscreenTouchOverlay(
                     ) {
                         TrailerSeekOverlay(
                             currentPosition = overlayState.positionMs,
-                            duration = overlayState.durationMs
+                            duration = overlayState.durationMs,
+                            onSeekTo = onSeekTo?.let { seekHandler ->
+                                { targetMs ->
+                                    interactionNonce += 1
+                                    overlayState.positionMs = targetMs
+                                    seekHandler(targetMs)
+                                }
+                            },
+                            onScrubbingChanged = { scrubbing ->
+                                isScrubbingBar = scrubbing
+                                if (!scrubbing) interactionNonce += 1
+                            }
                         )
                     }
                 }
@@ -504,18 +538,32 @@ fun TrailerSeekOverlayHost(
 @Composable
 fun TrailerSeekOverlay(
     currentPosition: Long,
-    duration: Long
+    duration: Long,
+    onSeekTo: ((Long) -> Unit)? = null,
+    onScrubbingChanged: (Boolean) -> Unit = {}
 ) {
-    val progress = if (duration > 0) {
+    var isScrubbing by remember { mutableStateOf(false) }
+    var scrubFraction by remember { mutableFloatStateOf(0f) }
+    var trackWidthPx by remember { mutableIntStateOf(0) }
+    val latestDuration by rememberUpdatedState(duration)
+    val latestOnSeekTo by rememberUpdatedState(onSeekTo)
+    val latestOnScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
+    val baseProgress = if (duration > 0) {
         (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
     } else {
         0f
     }
+    val displayedProgress = if (isScrubbing) scrubFraction else baseProgress
     val animatedProgress by animateFloatAsState(
-        targetValue = progress,
-        animationSpec = tween(100),
+        targetValue = displayedProgress,
+        animationSpec = tween(if (isScrubbing) 0 else 100),
         label = "trailerSeekProgress"
     )
+    val displayedPosition = if (isScrubbing && duration > 0L) {
+        (scrubFraction * duration).toLong().coerceIn(0L, duration)
+    } else {
+        currentPosition
+    }
 
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
@@ -525,37 +573,105 @@ fun TrailerSeekOverlay(
                 .fillMaxWidth()
                 .padding(horizontal = NuvioTheme.spacing.xxl, vertical = NuvioTheme.spacing.xl)
         ) {
+            val density = LocalDensity.current
+            val touchSlop = LocalViewConfiguration.current.touchSlop
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(Color.White.copy(alpha = 0.3f))
+                    .height(36.dp)
+                    .onSizeChanged { trackWidthPx = it.width }
+                    .then(
+                        if (onSeekTo != null) {
+                            Modifier.pointerInput(Unit) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    val dur = latestDuration
+                                    val seekCb = latestOnSeekTo
+                                    if (dur <= 0L || seekCb == null) return@awaitEachGesture
+                                    val width = trackWidthPx.coerceAtLeast(1).toFloat()
+                                    val startX = down.position.x
+                                    var fraction = (startX / width).coerceIn(0f, 1f)
+                                    scrubFraction = fraction
+                                    isScrubbing = true
+                                    latestOnScrubbingChanged(true)
+                                    var dragged = false
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val active = event.changes.firstOrNull { it.id == down.id }
+                                        if (active == null || !active.pressed) {
+                                            if (active != null && active.changedToUpIgnoreConsumed()) {
+                                                active.consume()
+                                            }
+                                            val targetMs = (fraction * latestDuration).toLong().coerceIn(0L, latestDuration)
+                                            isScrubbing = false
+                                            latestOnScrubbingChanged(false)
+                                            seekCb(targetMs)
+                                            break
+                                        }
+                                        val delta = active.positionChange()
+                                        if (!dragged && kotlin.math.abs(active.position.x - startX) > touchSlop * 0.5f) {
+                                            dragged = true
+                                        }
+                                        if (delta.x != 0f || dragged) {
+                                            fraction = (active.position.x / width).coerceIn(0f, 1f)
+                                            scrubFraction = fraction
+                                            active.consume()
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            Modifier
+                        }
+                    ),
+                contentAlignment = Alignment.CenterStart
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(animatedProgress)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(NuvioTheme.colors.Secondary)
-                )
+                        .fillMaxWidth()
+                        .height(if (isScrubbing) 8.dp else 6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.White.copy(alpha = 0.3f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(animatedProgress)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(NuvioTheme.colors.Secondary)
+                    )
+                }
+                if (onSeekTo != null && trackWidthPx > 0 && duration > 0L) {
+                    val thumbSize = if (isScrubbing) 18.dp else 14.dp
+                    val thumbRadiusPx = with(density) { (thumbSize / 2).roundToPx() }
+                    val thumbX = ((animatedProgress * trackWidthPx) - thumbRadiusPx)
+                        .toInt()
+                        .coerceIn(0, (trackWidthPx - thumbRadiusPx * 2).coerceAtLeast(0))
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset(thumbX, 0) }
+                            .size(thumbSize)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                    )
+                }
             }
-    
-            Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
-    
+
+            Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${formatPlaybackTime(currentPosition)} / ${formatPlaybackTime(duration)}",
+                    text = "${formatPlaybackTime(displayedPosition)} / ${formatPlaybackTime(duration)}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.9f)
                 )
             }
         }
-    }  
+    }
 }
 
 fun formatPlaybackTime(milliseconds: Long): String {

@@ -94,10 +94,10 @@ fun V2PlayerControls(
     val density = LocalDensity.current
     val view = LocalView.current
     val utilities = buildList {
-        // INFO remains in the shared action model for Original; dormant in V2.
-        add(Utility(V2PlayerControl.STATS, Icons.Default.Equalizer, stringResource(R.string.cd_playback_stats), {
-            actions.stats()
-        }))
+        // Unified Stream Info + Playback Stats panel via single Info button.
+        add(Utility(V2PlayerControl.STATS, Icons.Default.Info, stringResource(R.string.cd_stream_info), {
+            actions.info()
+        }, panel = true))
         if (uiState.audioTracks.isNotEmpty()) add(Utility(V2PlayerControl.AUDIO, Icons.Default.Speaker, stringResource(R.string.cd_audio_tracks), actions.audio, true))
         if (uiState.subtitleTracks.isNotEmpty() || uiState.addonSubtitles.isNotEmpty()) add(Utility(V2PlayerControl.SUBTITLES, Icons.Default.Subtitles, stringResource(R.string.cd_subtitles), actions.subtitles, true))
         add(Utility(V2PlayerControl.SOURCES, Icons.Default.Cloud, stringResource(R.string.cd_sources), actions.sources, true))

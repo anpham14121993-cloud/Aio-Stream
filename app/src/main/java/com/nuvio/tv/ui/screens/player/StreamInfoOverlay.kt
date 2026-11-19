@@ -5,23 +5,40 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 import android.view.KeyEvent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +52,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onPlaced
 import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -43,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Border
 import com.nuvio.tv.ui.tvhybrid.Button
 import androidx.tv.material3.ButtonDefaults
+import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
@@ -51,7 +70,9 @@ import coil3.request.crossfade
 import com.nuvio.tv.R
 import com.nuvio.tv.ui.util.keepLtr
 import com.nuvio.tv.ui.util.languageCodeToName
+import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun StreamInfoOverlay(
     visible: Boolean,
@@ -60,59 +81,153 @@ fun StreamInfoOverlay(
     hudEnabled: Boolean,
     hudButtonShown: Boolean,
     onToggleHud: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    statsSample: PlaybackStatsSample? = null
 ) {
     val hudFocusRequester = remember { FocusRequester() }
     var hudFocused by remember(visible) { mutableStateOf(false) }
     var hudPlaced by remember(visible) { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
+    val screenConfig = LocalConfiguration.current
+    val isCompactScreen = screenConfig.screenWidthDp < 600
+    val maxPanelHeight = (screenConfig.screenHeightDp - 44).coerceAtLeast(240).dp
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
 
-    LaunchedEffect(visible, hudButtonShown, hudPlaced) {
-        if (!visible || !hudButtonShown || !hudPlaced) return@LaunchedEffect
+    LaunchedEffect(visible, hudButtonShown, hudPlaced, tvFocusMode) {
+        if (!visible || !hudButtonShown || !hudPlaced || !tvFocusMode) return@LaunchedEffect
         hudFocusRequester.requestFocusAfterFrames(frames = 0)
     }
     PlayerOverlayScaffold(
         visible = visible,
         onDismiss = onClose,
-        // The scaffold holds focus so the overlay still closes on centre, which leaves nothing
-        // pointing at the button; a direction press is the request to reach it, and it also
-        // recovers focus if anything else took it while the overlay stayed open.
-        modifier = modifier.onPreviewKeyEvent { event ->
-            if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
-            val isDirection = when (event.nativeKeyEvent.keyCode) {
-                KeyEvent.KEYCODE_DPAD_UP,
-                KeyEvent.KEYCODE_DPAD_DOWN,
-                KeyEvent.KEYCODE_DPAD_LEFT,
-                KeyEvent.KEYCODE_DPAD_RIGHT -> true
-                else -> false
-            }
-            if (!isDirection || hudFocused || !hudButtonShown) return@onPreviewKeyEvent false
-            runCatching { hudFocusRequester.requestFocus() }.isSuccess
-        },
+        // Allow D-Pad Up/Down to scroll full technical details + stats comfortably without clipping.
+        modifier = modifier
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .onPreviewKeyEvent { event ->
+                if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
+                when (event.nativeKeyEvent.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP -> {
+                        if (scrollState.value > 0) {
+                            coroutineScope.launch { scrollState.animateScrollBy(-180f) }
+                            true
+                        } else if (!hudFocused && hudButtonShown) {
+                            runCatching { hudFocusRequester.requestFocus() }.isSuccess
+                        } else {
+                            false
+                        }
+                    }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        if (scrollState.value < scrollState.maxValue) {
+                            coroutineScope.launch { scrollState.animateScrollBy(180f) }
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    KeyEvent.KEYCODE_DPAD_LEFT,
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        if (!hudFocused && hudButtonShown) {
+                            runCatching { hudFocusRequester.requestFocus() }.isSuccess
+                        } else {
+                            false
+                        }
+                    }
+                    else -> false
+                }
+            },
         dismissOnCenter = !hudButtonShown,
-        contentPadding = PaddingValues(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, top = 36.dp, bottom = 36.dp)
+        contentPadding = PaddingValues(
+            horizontal = if (isCompactScreen) 14.dp else NuvioTheme.spacing.xxl,
+            vertical = if (isCompactScreen) 14.dp else 20.dp
+        )
     ) {
-        // Someone who never turned the overlay on has no use for a control they cannot interpret.
-        if (hudButtonShown) {
-            StreamInfoHudButton(
-                enabled = hudEnabled,
-                onClick = onToggleHud,
-                focusRequester = hudFocusRequester,
-                onFocusChanged = { hudFocused = it },
-                onLaidOut = { hudPlaced = true },
-                modifier = Modifier.align(Alignment.BottomEnd)
-            )
-        }
-        if (data != null) {
-            Column(
-                modifier = Modifier.align(Alignment.BottomStart),
-                verticalArrangement = Arrangement.Bottom
+        Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .widthIn(max = 760.dp)
+                .fillMaxWidth()
+                .heightIn(max = maxPanelHeight)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0xE80E1015))
+                .border(0.75.dp, Color(0x38F4F7FB), RoundedCornerShape(16.dp))
+                .padding(horizontal = if (isCompactScreen) 16.dp else 24.dp, vertical = 16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                StreamInfoContent(data = data)
+                Text(
+                    text = stringResource(R.string.cd_stream_info),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (hudButtonShown) {
+                        StreamInfoHudButton(
+                            enabled = hudEnabled,
+                            onClick = onToggleHud,
+                            focusRequester = hudFocusRequester,
+                            onFocusChanged = { hudFocused = it },
+                            onLaidOut = { hudPlaced = true }
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.12f))
+                            .clickable(onClick = onClose),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(R.string.action_close),
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 12.dp),
+                color = Color.White.copy(alpha = 0.12f)
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false)
+                    .verticalScroll(scrollState)
+            ) {
+                if (data != null) {
+                    StreamInfoContent(data = data)
+                }
+                if (statsSample != null) {
+                    if (data != null) {
+                        Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
+                        Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
+                    }
+                    SectionLabel(stringResource(R.string.cd_playback_stats).uppercase())
+                    Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
+                    PlaybackStatsSectionsContent(sample = statsSample, compact = false)
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StreamInfoContent(data: StreamInfoData) {
     // SOURCE section
@@ -142,7 +257,7 @@ private fun StreamInfoContent(data: StreamInfoData) {
                         style = MaterialTheme.typography.headlineMedium,
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -151,7 +266,7 @@ private fun StreamInfoContent(data: StreamInfoData) {
                         text = data.streamName.replace("\n", " · "),
                         style = MaterialTheme.typography.bodyLarge,
                         color = NuvioTheme.colors.TextSecondary,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -162,19 +277,21 @@ private fun StreamInfoContent(data: StreamInfoData) {
                 text = data.streamDescription.replace("\n", " · "),
                 style = MaterialTheme.typography.bodyMedium,
                 color = NuvioTheme.colors.TextSecondary,
-                maxLines = 1,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = NuvioTheme.spacing.xs)
             )
         }
         if (data.playerEngine != null || data.serverPlayback != null) {
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
-            Row(horizontalArrangement = Arrangement.spacedBy(36.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 InfoItem(label = stringResource(R.string.stream_info_player_engine), value = data.playerEngine)
                 InfoItem(
                     label = stringResource(R.string.stream_info_server),
-                    value = data.serverPlayback,
-                    modifier = Modifier.weight(1f, fill = false)
+                    value = data.serverPlayback
                 )
             }
         }
@@ -186,8 +303,11 @@ private fun StreamInfoContent(data: StreamInfoData) {
     if (hasFileInfo) {
         SectionLabel(stringResource(R.string.stream_info_section_file))
         Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
-        Row(horizontalArrangement = Arrangement.spacedBy(36.dp)) {
-            InfoItem(label = stringResource(R.string.stream_info_filename), value = data.filename, modifier = Modifier.weight(1f))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            InfoItem(label = stringResource(R.string.stream_info_filename), value = data.filename)
             InfoItem(label = stringResource(R.string.stream_info_size), value = data.fileSize?.let { formatFileSize(it) })
         }
         Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
@@ -199,7 +319,10 @@ private fun StreamInfoContent(data: StreamInfoData) {
     if (hasVideoInfo) {
         SectionLabel(stringResource(R.string.stream_info_section_video))
         Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
-        Row(horizontalArrangement = Arrangement.spacedBy(36.dp)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             InfoItem(label = stringResource(R.string.stream_info_codec), value = data.videoCodec)
             InfoItem(
                 label = stringResource(R.string.stream_info_resolution),
@@ -211,8 +334,6 @@ private fun StreamInfoContent(data: StreamInfoData) {
                 label = stringResource(R.string.stream_info_frame_rate),
                 value = data.videoFrameRate?.let { "%.3f fps".format(it) }
             )
-            // A container that declares no track bitrate leaves only the whole file rate, which
-            // includes audio and overhead, so it is labelled apart rather than shown as the video rate.
             if (data.videoBitrate != null) {
                 InfoItem(
                     label = stringResource(R.string.stream_info_bitrate),
@@ -233,7 +354,10 @@ private fun StreamInfoContent(data: StreamInfoData) {
     if (hasAudioInfo) {
         SectionLabel(stringResource(R.string.stream_info_section_audio))
         Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
-        Row(horizontalArrangement = Arrangement.spacedBy(36.dp)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             InfoItem(label = stringResource(R.string.stream_info_codec), value = data.audioCodec)
             InfoItem(label = stringResource(R.string.stream_info_channels), value = data.audioChannels)
             InfoItem(
@@ -253,7 +377,10 @@ private fun StreamInfoContent(data: StreamInfoData) {
     if (hasSubtitleInfo) {
         SectionLabel(stringResource(R.string.stream_info_section_subtitle))
         Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
-        Row(horizontalArrangement = Arrangement.spacedBy(36.dp)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             InfoItem(label = stringResource(R.string.stream_info_name), value = data.subtitleName)
             InfoItem(label = stringResource(R.string.stream_info_codec), value = data.subtitleCodec)
             InfoItem(

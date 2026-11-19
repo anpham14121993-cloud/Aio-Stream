@@ -1992,6 +1992,34 @@ fun PlayerScreen(
                     .zIndex(2.5f)
             )
 
+            var playbackStatsSample by remember { mutableStateOf<PlaybackStatsSample?>(null) }
+            val statsHostView = LocalView.current
+            LaunchedEffect(uiState.showPlaybackStatsOverlay || uiState.showStreamInfoOverlay) {
+                if (!uiState.showPlaybackStatsOverlay && !uiState.showStreamInfoOverlay) {
+                    playbackStatsSample = null
+                    return@LaunchedEffect
+                }
+                pollPlaybackStats(probe = { viewModel.samplePing() }, sample = { lastPingMs ->
+                    val statsDisplay = statsHostView.display
+                    val statsActiveMode = statsDisplay?.mode
+                    val refreshRateHz = statsActiveMode?.refreshRate
+                    val displayRateOptions = statsDisplay?.let { d ->
+                        val active = d.mode
+                        d.supportedModes.count {
+                            it.physicalWidth == active.physicalWidth &&
+                                it.physicalHeight == active.physicalHeight
+                        }
+                    }
+                    playbackStatsSample = viewModel.samplePlaybackStats(
+                        refreshRateHz,
+                        displayRateOptions,
+                        statsActiveMode?.physicalWidth,
+                        statsActiveMode?.physicalHeight,
+                        lastPingMs
+                    )
+                })
+            }
+
             StreamInfoOverlay(
                 visible = uiState.showStreamInfoOverlay && uiState.error == null &&
                     !uiState.showLoadingOverlay && !postPlayRecommendationState.isVisible,
@@ -2000,6 +2028,7 @@ fun PlayerScreen(
                 hudEnabled = uiState.playerStatsHudEnabled,
                 hudButtonShown = uiState.playerStatsHudButtonAvailable,
                 onToggleHud = { viewModel.onEvent(PlayerEvent.OnTogglePlayerStatsHud) },
+                statsSample = playbackStatsSample,
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(2.6f)
@@ -2083,46 +2112,7 @@ fun PlayerScreen(
                     .zIndex(2.7f)
             )
 
-            // Live playback stats overlay, sampled at ~1 Hz while
-            // visible. The sample lives in local state so the 1 Hz tick recomposes
-            // only this small subtree, not anything that reads uiState. The owned TCP
-            // probe runs separately so DNS/connect delays cannot stall these samples.
-            var playbackStatsSample by remember { mutableStateOf<PlaybackStatsSample?>(null) }
-            val statsHostView = LocalView.current
-            LaunchedEffect(uiState.showPlaybackStatsOverlay) {
-                if (!uiState.showPlaybackStatsOverlay) {
-                    playbackStatsSample = null
-                    return@LaunchedEffect
-                }
-                pollPlaybackStats(probe = { viewModel.samplePing() }, sample = { lastPingMs ->
-                    val statsDisplay = statsHostView.display
-                    // Active Display.Mode, not DisplayMetrics/Configuration: on Amlogic-class
-                    // boxes the app framebuffer commonly renders at 1080p while HDMI outputs
-                    // 4K: the metrics APIs report the framebuffer; Display.getMode() reports
-                    // the negotiated output mode, the same object AFR switches through
-                    // preferredDisplayModeId, so the row stays self-consistent with its dot.
-                    val statsActiveMode = statsDisplay?.mode
-                    val refreshRateHz = statsActiveMode?.refreshRate
-                    // Modes on offer at the current resolution. When there is only one, no
-                    // app-side mechanism can change the display rate: preferredDisplayModeId
-                    // has nothing to switch to, so the HUD must not judge the rate as if the
-                    // app could have fixed it.
-                    val displayRateOptions = statsDisplay?.let { d ->
-                        val active = d.mode
-                        d.supportedModes.count {
-                            it.physicalWidth == active.physicalWidth &&
-                                it.physicalHeight == active.physicalHeight
-                        }
-                    }
-                    playbackStatsSample = viewModel.samplePlaybackStats(
-                        refreshRateHz,
-                        displayRateOptions,
-                        statsActiveMode?.physicalWidth,
-                        statsActiveMode?.physicalHeight,
-                        lastPingMs
-                    )
-                })
-            }
+            // Seek-thumb host below HUD overlays.
             SeekThumbnailOverlayHost(uiState = uiState, viewModel = viewModel, modifier = Modifier.zIndex(2.65f))
             if (!prepareVisible) {
                 SeekThumbnailProgressHint(
@@ -2272,21 +2262,19 @@ fun PlayerScreen(
                 !uiState.showEpisodesPanel && !uiState.showChaptersPanel &&
                 !uiState.showSourcesPanel && !uiState.showAudioOverlay &&
                 !uiState.showSubtitleOverlay && !uiState.showSpeedDialog &&
-                !uiState.showMoreDialog && !postPlayRecommendationState.isVisible &&
+                !postPlayRecommendationState.isVisible &&
                 uiState.postPlayMode !is PostPlayMode.StillWatching
             PlayerTouchGesturesOverlay(
                 touchModeActive = touchGesturesActive,
                 gesturesAllowed = touchGesturesAllowed,
                 controlsVisible = playerControlsVisible,
                 timelineProvider = { viewModel.playbackTimeline.value },
-                onToggleControls = {
-                    if (uiState.showControls) viewModel.hideControls()
-                    else viewModel.onEvent(PlayerEvent.OnToggleControls)
-                },
+                onToggleControls = { viewModel.onEvent(PlayerEvent.OnToggleControls) },
                 onHideControls = { viewModel.hideControls() },
                 onPlayPause = { viewModel.onEvent(PlayerEvent.OnPlayPause) },
                 onSeekBy = { deltaMs -> viewModel.onEvent(PlayerEvent.OnSeekBy(deltaMs)) },
                 onSeekTo = { targetMs -> viewModel.onEvent(PlayerEvent.OnSeekTo(targetMs)) },
+                onBack = { exitPlayer() },
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -3909,8 +3897,8 @@ private fun PlayerControlsOverlay(
                     ) {
                         ControlButton(
                             icon = Icons.Default.Info,
-                            contentDescription = stringResource(R.string.cd_playback_stats),
-                            onClick = onTogglePlaybackStats,
+                            contentDescription = stringResource(R.string.cd_stream_info),
+                            onClick = onShowStreamInfo,
                             focusRequester = streamInfoFocusRequester,
                             downFocusRequester = progressBarFocusRequester,
                             onUpKey = onHideControls,

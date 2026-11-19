@@ -2784,6 +2784,7 @@ fun PlayerRuntimeController.onEvent(
         }
         PlayerEvent.OnDismissStreamInfo -> {
             _uiState.update { it.copy(showStreamInfoOverlay = false) }
+            scheduleHideControls()
         }
         PlayerEvent.OnShowPartyPanel -> {
             _uiState.update {

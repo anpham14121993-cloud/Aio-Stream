@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -528,13 +529,7 @@ private fun MonolithBottomDockNavigation(
 ) {
     val visible = currentRoute in rootRoutes
     val contentFocus = remember { FocusRequester() }
-    val searchItem = remember(items) { items.firstOrNull { it.route == Screen.Search.route } }
-    val settingsItem = remember(items) { items.firstOrNull { it.route == Screen.Settings.route } }
-    val dockItems = remember(items) {
-        if (items.size <= 5) items
-        else items.filterNot { it.route == Screen.Search.route || it.route == Screen.Settings.route }
-            .ifEmpty { items }
-    }
+    val dockItems = items
 
     BackHandler(enabled = visible) {
         if (currentRoute != Screen.Home.route) {
@@ -545,14 +540,8 @@ private fun MonolithBottomDockNavigation(
     }
 
     val density = LocalDensity.current
-    var measuredTopInset by remember { mutableStateOf(80.dp) }
     var measuredBottomInset by remember { mutableStateOf(88.dp) }
 
-    val topPadding by animateDpAsState(
-        targetValue = if (visible && currentRoute != Screen.Home.route) measuredTopInset else 0.dp,
-        animationSpec = tween(180),
-        label = "mobile_top_inset"
-    )
     val bottomPadding by animateDpAsState(
         targetValue = if (visible && currentRoute != Screen.Home.route) measuredBottomInset else 0.dp,
         animationSpec = tween(180),
@@ -563,14 +552,15 @@ private fun MonolithBottomDockNavigation(
         Box(
             Modifier
                 .fillMaxSize()
-                .padding(top = topPadding, bottom = bottomPadding)
+                .then(if (visible && currentRoute != Screen.Home.route) Modifier.statusBarsPadding() else Modifier)
+                .padding(bottom = bottomPadding)
                 .focusRequester(contentFocus)
         ) {
             CompositionLocalProvider(
                 LocalContentFocusRequester provides contentFocus,
                 LocalSidebarExpanded provides false,
                 LocalV2TopChrome provides visible,
-                LocalMonolithTopInset provides if (visible) measuredTopInset else 0.dp,
+                LocalMonolithTopInset provides 0.dp,
                 LocalMonolithBottomInset provides if (visible) measuredBottomInset else 0.dp
             ) {
                 navigationContent(false)
@@ -578,74 +568,6 @@ private fun MonolithBottomDockNavigation(
         }
 
         if (visible) {
-            // Top Mobile Header: Brand Emblem + Quick Search / Settings + Profile
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .onSizeChanged {
-                        if (it.height > 0) measuredTopInset = with(density) { it.height.toDp() }
-                    }
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                MonolithChromePalette.DeepObsidian.copy(alpha = 0.88f),
-                                MonolithChromePalette.DeepObsidian.copy(alpha = 0.40f),
-                                Color.Transparent
-                            )
-                        )
-                    )
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    MonolithBrandEmblem(compact = true, showText = true)
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (searchItem != null && items.size > 5) {
-                            MonolithCircleActionButton(
-                                selected = selectedRoute == Screen.Search.route,
-                                onClick = { onNavigate(Screen.Search.route) }
-                            ) {
-                                MonolithNavItemIcon(
-                                    item = searchItem,
-                                    tint = if (selectedRoute == Screen.Search.route) MonolithChromePalette.SilverBright else MonolithChromePalette.SilverMuted,
-                                    size = 19.dp
-                                )
-                            }
-                        }
-                        if (settingsItem != null && items.size > 5) {
-                            MonolithCircleActionButton(
-                                selected = selectedRoute == Screen.Settings.route,
-                                onClick = { onNavigate(Screen.Settings.route) }
-                            ) {
-                                MonolithNavItemIcon(
-                                    item = settingsItem,
-                                    tint = if (selectedRoute == Screen.Settings.route) MonolithChromePalette.SilverBright else MonolithChromePalette.SilverMuted,
-                                    size = 19.dp
-                                )
-                            }
-                        }
-                        if (profile != null) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .clickable(onClick = onSwitchProfile)
-                            ) {
-                                NuvioAvatar(avatar = profile, size = 34.dp)
-                            }
-                        }
-                    }
-                }
-            }
-
             // Bottom Floating Obsidian Glass Dock
             Box(
                 modifier = Modifier
@@ -681,7 +603,7 @@ private fun MonolithBottomDockNavigation(
                         )
                         .border(0.75.dp, MonolithChromePalette.HairlineBorderBrush, RoundedCornerShape(22.dp))
                 ) {
-                    val tightWidth = maxWidth < 300.dp && dockItems.size > 5
+                    val tightWidth = maxWidth < 340.dp && dockItems.size > 5
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -699,7 +621,7 @@ private fun MonolithBottomDockNavigation(
                             )
                             Box(
                                 modifier = Modifier
-                                    .then(if (tightWidth) Modifier.width(64.dp) else Modifier.weight(1f))
+                                    .then(if (tightWidth) Modifier.width(62.dp) else Modifier.weight(1f))
                                     .clip(RoundedCornerShape(16.dp))
                                     .background(
                                         if (isSelected) MonolithChromePalette.ActivePillBrush
@@ -732,7 +654,7 @@ private fun MonolithBottomDockNavigation(
                                     Text(
                                         text = item.label,
                                         color = tint,
-                                        fontSize = 10.5.sp,
+                                        fontSize = if (dockItems.size > 5) 9.5.sp else 10.5.sp,
                                         lineHeight = 14.sp,
                                         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                         maxLines = 1,

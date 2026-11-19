@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.BrightnessHigh
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
@@ -49,6 +50,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -133,6 +135,7 @@ fun BoxScope.PlayerTouchGesturesOverlay(
     onPlayPause: () -> Unit,
     onSeekBy: (Long) -> Unit,
     onSeekTo: (Long) -> Unit,
+    onBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -146,6 +149,14 @@ fun BoxScope.PlayerTouchGesturesOverlay(
     var unlockButtonVisible by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf<TouchHudFeedback?>(null) }
     var feedbackSeq by remember { mutableLongStateOf(0L) }
+    val latestScreenLocked by rememberUpdatedState(screenLocked)
+    val latestTimelineProvider by rememberUpdatedState(timelineProvider)
+    val latestOnToggleControls by rememberUpdatedState(onToggleControls)
+    val latestOnHideControls by rememberUpdatedState(onHideControls)
+    val latestOnPlayPause by rememberUpdatedState(onPlayPause)
+    val latestOnSeekBy by rememberUpdatedState(onSeekBy)
+    val latestOnSeekTo by rememberUpdatedState(onSeekTo)
+    val latestOnBack by rememberUpdatedState(onBack)
 
     LaunchedEffect(feedbackSeq) {
         if (feedbackSeq > 0L && feedback != null) {
@@ -187,26 +198,26 @@ fun BoxScope.PlayerTouchGesturesOverlay(
             modifier = modifier
                 .fillMaxSize()
                 .zIndex(if (screenLocked) 3.8f else 0.2f)
-                .pointerInput(screenLocked) {
+                .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = {
-                                if (screenLocked) {
+                                if (latestScreenLocked) {
                                     unlockButtonVisible = !unlockButtonVisible
                                 } else {
-                                    onToggleControls()
+                                    latestOnToggleControls()
                                 }
                             },
                             onDoubleTap = { offset ->
-                                if (screenLocked) {
+                                if (latestScreenLocked) {
                                     unlockButtonVisible = true
                                     return@detectTapGestures
                                 }
                                 val width = size.width.coerceAtLeast(1)
                                 val ratio = offset.x / width.toFloat()
-                                val timeline = timelineProvider()
+                                val timeline = latestTimelineProvider()
                                 when {
                                     ratio < 0.38f && !timeline.isLive -> {
-                                        onSeekBy(-10_000L)
+                                        latestOnSeekBy(-10_000L)
                                         feedback = TouchHudFeedback.DoubleTapAction(
                                             Icons.Rounded.FastRewind,
                                             "-10 giây"
@@ -214,7 +225,7 @@ fun BoxScope.PlayerTouchGesturesOverlay(
                                         feedbackSeq++
                                     }
                                     ratio > 0.62f && !timeline.isLive -> {
-                                        onSeekBy(10_000L)
+                                        latestOnSeekBy(10_000L)
                                         feedback = TouchHudFeedback.DoubleTapAction(
                                             Icons.Rounded.FastForward,
                                             "+10 giây"
@@ -222,7 +233,7 @@ fun BoxScope.PlayerTouchGesturesOverlay(
                                         feedbackSeq++
                                     }
                                     else -> {
-                                        onPlayPause()
+                                        latestOnPlayPause()
                                         feedback = TouchHudFeedback.DoubleTapAction(
                                             Icons.Rounded.Pause,
                                             "Phát / Tạm dừng"
@@ -251,15 +262,15 @@ fun BoxScope.PlayerTouchGesturesOverlay(
                                     val startVol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: (maxVol / 2)
                                     var volFraction = startVol.toFloat() / maxVol.toFloat()
 
-                                    val timeline = timelineProvider()
+                                    val timeline = latestTimelineProvider()
                                     var pendingSeekTargetMs: Long? = null
 
                                     while (true) {
                                         val event = awaitPointerEvent()
                                         val activeChange = event.changes.firstOrNull { it.id == down.id }
                                         if (activeChange == null || !activeChange.pressed) {
-                                            if (axis == ActiveDragAxis.HORIZONTAL_SEEK && pendingSeekTargetMs != null && !timeline.isLive) {
-                                                onSeekTo(pendingSeekTargetMs!!)
+                                            if (!latestScreenLocked && axis == ActiveDragAxis.HORIZONTAL_SEEK && pendingSeekTargetMs != null && !timeline.isLive) {
+                                                latestOnSeekTo(pendingSeekTargetMs!!)
                                             }
                                             if (axis != ActiveDragAxis.UNDECIDED) {
                                                 feedbackSeq++
@@ -342,7 +353,7 @@ fun BoxScope.PlayerTouchGesturesOverlay(
             }
         }
 
-        // Touch Screen Lock Trigger while controls HUD is open on handheld/touch devices
+        // Touch Back + Screen Lock Pills while controls HUD is open on handheld/touch devices
         AnimatedVisibility(
             visible = !screenLocked && controlsVisible && gesturesAllowed,
             enter = fadeIn(),
@@ -354,31 +365,60 @@ fun BoxScope.PlayerTouchGesturesOverlay(
                 .padding(top = 14.dp)
         ) {
             Row(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(Color(0xD90E1015))
-                    .border(0.75.dp, Color(0x40F4F7FB), CircleShape)
-                    .clickable {
-                        screenLocked = true
-                        unlockButtonVisible = true
-                        onHideControls()
-                    }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Lock,
-                    contentDescription = "Khóa cảm ứng",
-                    tint = Color(0xFFF4F7FB),
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(
-                    text = "Khóa màn hình",
-                    color = Color(0xFFF4F7FB),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Row(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color(0xD90E1015))
+                        .border(0.75.dp, Color(0x40F4F7FB), CircleShape)
+                        .clickable { latestOnBack() }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = "Quay lại",
+                        tint = Color(0xFFF4F7FB),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Quay lại",
+                        color = Color(0xFFF4F7FB),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color(0xD90E1015))
+                        .border(0.75.dp, Color(0x40F4F7FB), CircleShape)
+                        .clickable {
+                            screenLocked = true
+                            unlockButtonVisible = true
+                            latestOnHideControls()
+                        }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Lock,
+                        contentDescription = "Khóa cảm ứng",
+                        tint = Color(0xFFF4F7FB),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Khóa màn hình",
+                        color = Color(0xFFF4F7FB),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
 
