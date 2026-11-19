@@ -179,13 +179,31 @@ internal fun EpisodeOptionsOverlay(
     val titleStyle = episodeOverlayTitleStyle(title.length)
     val descriptionStyle = episodeOverlayDescriptionStyle(description.length)
     val isNoneStyle = !shouldShowEpisodeOverlayBackdrop(style)
+    val windowWidthDp = with(activityDensity) { windowWidthPx.toDp() }
+    val isPhonePortrait = windowWidthDp < 600.dp
     val isCompactLayout = with(activityDensity) {
-        windowWidthPx.toDp() < 1200.dp || windowHeightPx.toDp() < 700.dp
+        windowWidthDp < 1200.dp || windowHeightPx.toDp() < 700.dp
     }
-    val horizontalPadding = if (isNoneStyle || !isCompactLayout) 64.dp else 32.dp
-    val verticalPadding = if (isNoneStyle || !isCompactLayout) 48.dp else 24.dp
-    val contentSpacing = if (isNoneStyle || !isCompactLayout) 72.dp else 40.dp
-    val actionsWidth = if (isNoneStyle || !isCompactLayout) 360.dp else 320.dp
+    val horizontalPadding = when {
+        isPhonePortrait -> 18.dp
+        isNoneStyle || !isCompactLayout -> 64.dp
+        else -> 32.dp
+    }
+    val verticalPadding = when {
+        isPhonePortrait -> 24.dp
+        isNoneStyle || !isCompactLayout -> 48.dp
+        else -> 24.dp
+    }
+    val contentSpacing = when {
+        isPhonePortrait -> 16.dp
+        isNoneStyle || !isCompactLayout -> 72.dp
+        else -> 40.dp
+    }
+    val actionsWidth = when {
+        isPhonePortrait -> (windowWidthDp - 36.dp).coerceAtLeast(240.dp)
+        isNoneStyle || !isCompactLayout -> 360.dp
+        else -> 320.dp
+    }
     val blurBackdrop = shouldBlurEpisodeOverlayBackdrop(
         style = style,
         blurUnwatchedEpisodes = blurUnwatchedEpisodes,
@@ -349,66 +367,58 @@ internal fun EpisodeOptionsOverlay(
                             }
                     )
                 }
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = horizontalPadding, vertical = verticalPadding),
-                    horizontalArrangement = Arrangement.spacedBy(contentSpacing),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                val renderDetailsBlock: @Composable (Modifier) -> Unit = { detailsModifier ->
                     Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .then(
-                                if (isNoneStyle) {
-                                    Modifier.padding(end = 24.dp)
-                                } else {
-                                    Modifier
-                                        .fillMaxHeight()
-                                        .verticalScroll(detailsScrollState)
-                                        .focusRequester(detailsFocusRequester)
-                                        .focusProperties {
-                                            if (isRtl) {
-                                                left = primaryFocusRequester
-                                            } else {
-                                                right = primaryFocusRequester
-                                            }
+                        modifier = detailsModifier.then(
+                            if (isNoneStyle || isPhonePortrait) {
+                                Modifier.padding(end = if (isPhonePortrait) 0.dp else 24.dp)
+                            } else {
+                                Modifier
+                                    .fillMaxHeight()
+                                    .verticalScroll(detailsScrollState)
+                                    .focusRequester(detailsFocusRequester)
+                                    .focusProperties {
+                                        if (isRtl) {
+                                            left = primaryFocusRequester
+                                        } else {
+                                            right = primaryFocusRequester
                                         }
-                                        .focusable()
-                                        .onFocusChanged { descriptionFocused = it.isFocused }
-                                        .semantics { contentDescription = title }
-                                        .onPreviewKeyEvent { event ->
-                                            val step = episodeStepForKey(event.nativeKeyEvent.keyCode, isRtl)
-                                            when {
-                                                event.type != KeyEventType.KeyDown -> false
-                                                onNavigateEpisode != null && (step == -1 || (step == 1 && !hasEnabledAction)) -> {
-                                                    onNavigateEpisode(step)
-                                                    true
-                                                }
-                                                event.key == Key.DirectionDown && detailsScrollState.value < detailsScrollState.maxValue -> {
-                                                    coroutineScope.launch {
-                                                        detailsScrollState.animateScrollTo(
-                                                            (detailsScrollState.value + 260)
-                                                                .coerceAtMost(detailsScrollState.maxValue)
-                                                        )
-                                                    }
-                                                    true
-                                                }
-                                                event.key == Key.DirectionUp && detailsScrollState.value > 0 -> {
-                                                    coroutineScope.launch {
-                                                        detailsScrollState.animateScrollTo(
-                                                            (detailsScrollState.value - 260).coerceAtLeast(0)
-                                                        )
-                                                    }
-                                                    true
-                                                }
-                                                else -> false
+                                    }
+                                    .focusable()
+                                    .onFocusChanged { descriptionFocused = it.isFocused }
+                                    .semantics { contentDescription = title }
+                                    .onPreviewKeyEvent { event ->
+                                        val step = episodeStepForKey(event.nativeKeyEvent.keyCode, isRtl)
+                                        when {
+                                            event.type != KeyEventType.KeyDown -> false
+                                            onNavigateEpisode != null && (step == -1 || (step == 1 && !hasEnabledAction)) -> {
+                                                onNavigateEpisode(step)
+                                                true
                                             }
+                                            event.key == Key.DirectionDown && detailsScrollState.value < detailsScrollState.maxValue -> {
+                                                coroutineScope.launch {
+                                                    detailsScrollState.animateScrollTo(
+                                                        (detailsScrollState.value + 260)
+                                                            .coerceAtMost(detailsScrollState.maxValue)
+                                                    )
+                                                }
+                                                true
+                                            }
+                                            event.key == Key.DirectionUp && detailsScrollState.value > 0 -> {
+                                                coroutineScope.launch {
+                                                    detailsScrollState.animateScrollTo(
+                                                        (detailsScrollState.value - 260).coerceAtLeast(0)
+                                                    )
+                                                }
+                                                true
+                                            }
+                                            else -> false
                                         }
-                                }
-                            ),
-                        verticalArrangement = if (isNoneStyle) {
-                            Arrangement.spacedBy(NuvioTheme.spacing.lg)
+                                    }
+                            }
+                        ),
+                        verticalArrangement = if (isNoneStyle || isPhonePortrait) {
+                            Arrangement.spacedBy(NuvioTheme.spacing.md)
                         } else {
                             Arrangement.spacedBy(NuvioTheme.spacing.lg, Alignment.CenterVertically)
                         }
@@ -445,7 +455,7 @@ internal fun EpisodeOptionsOverlay(
                         Text(
                             text = title,
                             modifier = Modifier.align(title.contentTextDirection().toAbsoluteAlignment()),
-                            style = if (isNoneStyle) MaterialTheme.typography.displayLarge else titleStyle,
+                            style = if (isNoneStyle && !isPhonePortrait) MaterialTheme.typography.displayLarge else titleStyle,
                             color = textColor,
                             maxLines = if (isNoneStyle) 3 else Int.MAX_VALUE,
                             overflow = TextOverflow.Ellipsis
@@ -454,21 +464,22 @@ internal fun EpisodeOptionsOverlay(
                         if (description.isNotBlank()) {
                             Text(
                                 text = description,
-                                style = (if (isNoneStyle) {
+                                style = (if (isNoneStyle && !isPhonePortrait) {
                                     MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Normal)
                                 } else {
                                     descriptionStyle
                                 }).copy(textDirection = description.contentTextDirection()),
                                 color = mutedTextColor,
-                                maxLines = if (isNoneStyle) 8 else Int.MAX_VALUE,
+                                maxLines = if (isPhonePortrait) 6 else if (isNoneStyle) 8 else Int.MAX_VALUE,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
+                }
 
+                val renderActionsBlock: @Composable (Modifier) -> Unit = { actionsModifier ->
                     Column(
-                        modifier = Modifier
-                            .width(actionsWidth)
+                        modifier = actionsModifier
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown || onNavigateEpisode == null) {
                                     return@onPreviewKeyEvent false
@@ -490,7 +501,7 @@ internal fun EpisodeOptionsOverlay(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .then(
-                                        if (isNoneStyle) {
+                                        if (isNoneStyle || isPhonePortrait) {
                                             Modifier
                                         } else {
                                             Modifier.focusProperties {
@@ -511,6 +522,30 @@ internal fun EpisodeOptionsOverlay(
                                     )
                             )
                         }
+                    }
+                }
+
+                if (isPhonePortrait) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(detailsScrollState)
+                            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+                        verticalArrangement = Arrangement.spacedBy(contentSpacing)
+                    ) {
+                        renderDetailsBlock(Modifier.fillMaxWidth())
+                        renderActionsBlock(Modifier.fillMaxWidth())
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+                        horizontalArrangement = Arrangement.spacedBy(contentSpacing),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        renderDetailsBlock(Modifier.weight(1f))
+                        renderActionsBlock(Modifier.width(actionsWidth))
                     }
                 }
             }

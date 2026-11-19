@@ -44,12 +44,16 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -1083,12 +1087,14 @@ private fun ProfileSelectionMainContent(
         )
         return
     }
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .then(if (isCompactPhone) Modifier.verticalScroll(rememberScrollState()) else Modifier)
             .padding(
-                horizontal = ProfileSelectionSpacing.ScreenPaddingHorizontal,
-                vertical = ProfileSelectionSpacing.ScreenPaddingVertical
+                horizontal = if (isCompactPhone) 16.dp else ProfileSelectionSpacing.ScreenPaddingHorizontal,
+                vertical = if (isCompactPhone) 16.dp else ProfileSelectionSpacing.ScreenPaddingVertical
             ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -1102,9 +1108,10 @@ private fun ProfileSelectionMainContent(
         Text(
             text = screenTitle,
             color = NuvioTheme.colors.TextPrimary,
-            fontSize = 44.sp,
+            fontSize = if (isCompactPhone) 28.sp else 44.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.5).sp
+            letterSpacing = (-0.5).sp,
+            textAlign = TextAlign.Center
         )
 
         Spacer(modifier = Modifier.height(ProfileSelectionSpacing.HeadingToSubheading))
@@ -1112,11 +1119,13 @@ private fun ProfileSelectionMainContent(
         Text(
             text = screenSubtitle,
             color = NuvioTheme.colors.TextSecondary,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Medium
+            fontSize = if (isCompactPhone) 15.sp else 18.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.weight(1f, fill = true))
+        Spacer(modifier = Modifier.weight(1f, fill = !isCompactPhone))
+        if (isCompactPhone) Spacer(modifier = Modifier.height(20.dp))
 
         ProfileGrid(
             profiles = profiles,
@@ -1132,17 +1141,20 @@ private fun ProfileSelectionMainContent(
             onAddProfileClick = onAddProfileClick
         )
 
-        Spacer(modifier = Modifier.weight(1f, fill = true))
+        Spacer(modifier = Modifier.weight(1f, fill = !isCompactPhone))
+        if (isCompactPhone) Spacer(modifier = Modifier.height(20.dp))
 
         Text(
             text = screenHint,
             color = NuvioTheme.colors.TextTertiary.copy(alpha = 0.9f),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium
+            fontSize = if (isCompactPhone) 12.5.sp else 14.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center
         )
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ProfileGrid(
     profiles: List<UserProfile>,
@@ -1198,17 +1210,17 @@ internal fun ProfileGrid(
                 cardWidth = ProfileSelectionSpacing.CardWidth,
                 itemGap = ProfileSelectionSpacing.CompactGridItemGap
             )
-            val useCompactCards = defaultGridWidth > maxWidth && fullSizeTightGridWidth > maxWidth
-            val gridItemGap = if (defaultGridWidth > maxWidth) {
+            val isCompactPhone = maxWidth < 600.dp
+            val useCompactCards = isCompactPhone || (defaultGridWidth > maxWidth && fullSizeTightGridWidth > maxWidth)
+            val gridItemGap = if (isCompactPhone) {
+                12.dp
+            } else if (defaultGridWidth > maxWidth) {
                 ProfileSelectionSpacing.CompactGridItemGap
             } else {
                 ProfileSelectionSpacing.GridItemGap
             }
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(gridItemGap),
-                verticalAlignment = Alignment.Top
-            ) {
+            val renderProfileCards: @Composable () -> Unit = {
                 profiles.forEachIndexed { index, profile ->
                     ProfileCard(
                         profile = profile,
@@ -1236,6 +1248,22 @@ internal fun ProfileGrid(
                         },
                         onClick = onAddProfileClick
                     )
+                }
+            }
+
+            if (isCompactPhone) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(gridItemGap, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    renderProfileCards()
+                }
+            } else {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(gridItemGap),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    renderProfileCards()
                 }
             }
         }
@@ -2000,30 +2028,35 @@ internal fun EditProfileOverlay(
             },
         contentAlignment = Alignment.Center
     ) {
+        val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.92f)
+                .fillMaxWidth(if (isCompactPhone) 0.96f else 0.92f)
                 .widthIn(max = ProfileSelectionSpacing.EditorPanelMaxWidth)
                 .clip(RoundedCornerShape(20.dp))
                 .then(if (LocalV2Appearance.current != null) Modifier.nuvioGlass(GlassRole.MODAL) else Modifier.background(NuvioTheme.colors.BackgroundElevated))
                 .border(NuvioTheme.spacing.hairline, NuvioTheme.colors.Border, RoundedCornerShape(20.dp))
                 .pointerInput(Unit) { detectTapGestures { } }
-                .padding(NuvioTheme.spacing.xxl),
+                .then(if (isCompactPhone) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                .padding(if (isCompactPhone) 16.dp else NuvioTheme.spacing.xxl),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Header row: title left, save button right
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = NuvioTheme.spacing.xl),
+                    .padding(start = if (isCompactPhone) 4.dp else NuvioTheme.spacing.xl),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xxs)) {
+                Column(
+                    modifier = Modifier.weight(1f).padding(end = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xxs)
+                ) {
                     Text(
                         text = stringResource(R.string.profile_edit_header),
                         color = NuvioTheme.colors.TextSecondary,
-                        fontSize = 16.sp,
+                        fontSize = if (isCompactPhone) 14.sp else 16.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
@@ -2032,8 +2065,10 @@ internal fun EditProfileOverlay(
                             textDirection = profile.name.contentTextDirection()
                         ),
                         color = Color.White,
-                        fontSize = 30.sp,
-                        fontWeight = FontWeight.Black
+                        fontSize = if (isCompactPhone) 22.sp else 30.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 OverlayButton(
@@ -2057,25 +2092,18 @@ internal fun EditProfileOverlay(
                 )
             }
 
-            Spacer(modifier = Modifier.height(NuvioTheme.spacing.xl))
+            Spacer(modifier = Modifier.height(if (isCompactPhone) NuvioTheme.spacing.md else NuvioTheme.spacing.xl))
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 360.dp),
-                verticalAlignment = Alignment.Top
-            ) {
+            val renderPreviewColumn: @Composable (Modifier) -> Unit = { previewModifier ->
                 Column(
-                    modifier = Modifier
-                        .width(ProfileSelectionSpacing.EditorPreviewWidth)
-                        .padding(start = NuvioTheme.spacing.xl, top = NuvioTheme.spacing.xl + ProfileSelectionSpacing.EditorPreviewTopOffset, end = NuvioTheme.spacing.xl, bottom = NuvioTheme.spacing.xl),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    modifier = previewModifier,
+                    verticalArrangement = Arrangement.spacedBy(if (isCompactPhone) 12.dp else 18.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     ProfileAvatarCircle(
                         name = profileName.ifEmpty { "?" },
                         colorHex = selectedColorHex,
-                        size = ProfileSelectionSpacing.EditorPreviewAvatarSize,
+                        size = if (isCompactPhone) 88.dp else ProfileSelectionSpacing.EditorPreviewAvatarSize,
                         avatarImageUrl = previewAvatarImageUrl
                     )
 
@@ -2085,7 +2113,7 @@ internal fun EditProfileOverlay(
                             textDirection = profileName.contentTextDirection()
                         ),
                         color = if (profileName.isBlank()) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary,
-                        fontSize = 22.sp,
+                        fontSize = if (isCompactPhone) 18.sp else 22.sp,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center,
                         maxLines = 2,
@@ -2128,13 +2156,11 @@ internal fun EditProfileOverlay(
                         onClick = onDismiss
                     )
                 }
+            }
 
-                Spacer(modifier = Modifier.width(ProfileSelectionSpacing.EditorDividerSpacing))
-                EditorSectionDivider()
-                Spacer(modifier = Modifier.width(ProfileSelectionSpacing.EditorDividerSpacing))
-
+            val renderTabsColumn: @Composable (Modifier) -> Unit = { tabsModifier ->
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = tabsModifier,
                     verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
                 ) {
                     ProfileEditorTabs(
@@ -2284,7 +2310,39 @@ internal fun EditProfileOverlay(
                 }
             }
 
-            Spacer(modifier = Modifier.height(NuvioTheme.spacing.xl))
+            if (isCompactPhone) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
+                ) {
+                    renderPreviewColumn(Modifier.fillMaxWidth().padding(horizontal = 4.dp))
+                    renderTabsColumn(Modifier.fillMaxWidth())
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 360.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    renderPreviewColumn(
+                        Modifier
+                            .width(ProfileSelectionSpacing.EditorPreviewWidth)
+                            .padding(
+                                start = NuvioTheme.spacing.xl,
+                                top = NuvioTheme.spacing.xl + ProfileSelectionSpacing.EditorPreviewTopOffset,
+                                end = NuvioTheme.spacing.xl,
+                                bottom = NuvioTheme.spacing.xl
+                            )
+                    )
+                    Spacer(modifier = Modifier.width(ProfileSelectionSpacing.EditorDividerSpacing))
+                    EditorSectionDivider()
+                    Spacer(modifier = Modifier.width(ProfileSelectionSpacing.EditorDividerSpacing))
+                    renderTabsColumn(Modifier.weight(1f))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(if (isCompactPhone) NuvioTheme.spacing.md else NuvioTheme.spacing.xl))
         }
     }
 }
@@ -2479,96 +2537,119 @@ internal fun ProfilePinOverlay(
             NuvioTheme.colors.TextSecondary
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = ProfileSelectionSpacing.ScreenPaddingHorizontal),
-            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xl),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = if (shouldUseCompactLayout) Arrangement.Top else Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(modifier = Modifier.height(topPadding))
-
-            Spacer(modifier = Modifier.height(headingGap))
-
-            Text(
-                text = headingText,
-                color = NuvioTheme.colors.TextPrimary,
-                fontSize = headerFontSize.sp,
-                lineHeight = headerLineHeight.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(boxesGap))
-
-            ProfilePinBoxes(
-                value = pin,
-                isWorking = isWorking,
-                isErrorState = isErrorState,
-                isInputFocused = true,
-                cursorAlpha = cursorAlpha,
-                compactMode = shouldUseCompactLayout,
-                modifier = Modifier.graphicsLayer {
-                    translationX = shakeOffset.value
-                }
-            )
-
-            Spacer(modifier = Modifier.height(supportGap))
-
-            Text(
-                text = supportText,
-                modifier = Modifier
-                    .widthIn(max = ProfileSelectionSpacing.PinSupportMaxWidth)
-                    .semantics { liveRegion = LiveRegionMode.Polite },
-                color = supportTextColor,
-                fontSize = supportFontSize.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center,
-                lineHeight = 24.sp
-            )
-
-            if (state is ProfilePinOverlayState.Unlock ||
-                state is ProfilePinOverlayState.Ask ||
-                state is ProfilePinOverlayState.VerifyCurrentForChange ||
-                state is ProfilePinOverlayState.VerifyCurrentForRemove ||
-                state is ProfilePinOverlayState.VerifyCurrentForDelete
+        val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+        val renderPinInfoColumn: @Composable (Modifier) -> Unit = { infoModifier ->
+            Column(
+                modifier = infoModifier,
+                verticalArrangement = if (shouldUseCompactLayout || isCompactPhone) Arrangement.Top else Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Spacer(modifier = Modifier.height(10.dp))
+                if (!isCompactPhone) {
+                    Spacer(modifier = Modifier.height(topPadding))
+                    Spacer(modifier = Modifier.height(headingGap))
+                }
+
                 Text(
-                    text = stringResource(R.string.profile_pin_overlay_forgot_hint),
-                    modifier = Modifier.widthIn(max = ProfileSelectionSpacing.PinSupportMaxWidth),
-                    color = NuvioTheme.colors.TextTertiary,
-                    fontSize = 14.sp,
+                    text = headingText,
+                    color = NuvioTheme.colors.TextPrimary,
+                    fontSize = (if (isCompactPhone) 22 else headerFontSize).sp,
+                    lineHeight = (if (isCompactPhone) 28 else headerLineHeight).sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(if (isCompactPhone) 16.dp else boxesGap))
+
+                ProfilePinBoxes(
+                    value = pin,
+                    isWorking = isWorking,
+                    isErrorState = isErrorState,
+                    isInputFocused = true,
+                    cursorAlpha = cursorAlpha,
+                    compactMode = shouldUseCompactLayout || isCompactPhone,
+                    modifier = Modifier.graphicsLayer {
+                        translationX = shakeOffset.value
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(if (isCompactPhone) 12.dp else supportGap))
+
+                Text(
+                    text = supportText,
+                    modifier = Modifier
+                        .widthIn(max = ProfileSelectionSpacing.PinSupportMaxWidth)
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                    color = supportTextColor,
+                    fontSize = (if (isCompactPhone) 14 else supportFontSize).sp,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                     lineHeight = 20.sp
                 )
+
+                if (state is ProfilePinOverlayState.Unlock ||
+                    state is ProfilePinOverlayState.Ask ||
+                    state is ProfilePinOverlayState.VerifyCurrentForChange ||
+                    state is ProfilePinOverlayState.VerifyCurrentForRemove ||
+                    state is ProfilePinOverlayState.VerifyCurrentForDelete
+                ) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.profile_pin_overlay_forgot_hint),
+                        modifier = Modifier.widthIn(max = ProfileSelectionSpacing.PinSupportMaxWidth),
+                        color = NuvioTheme.colors.TextTertiary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 18.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(if (isCompactPhone) 8.dp else backHintGap))
+
+                Text(
+                    text = stringResource(R.string.profile_pin_overlay_back_hint),
+                    color = NuvioTheme.colors.TextTertiary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center
+                )
             }
-
-            Spacer(modifier = Modifier.height(backHintGap))
-
-            Text(
-                text = stringResource(R.string.profile_pin_overlay_back_hint),
-                color = NuvioTheme.colors.TextTertiary,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium
-            )
-
         }
-        com.nuvio.tv.ui.components.PinPad(
-            enabled = !isWorking,
-            onKey = { key ->
-                pin = com.nuvio.tv.ui.components.pinAfterKey(pin, key, ProfilePinLength)
-                if (!errorMessage.isNullOrEmpty()) onClearError()
-                if (!isSingleEntryMode) internalErrorMessage = null
-            },
-            startFocus = focusRequester
-        )
+        val renderPinPad: @Composable () -> Unit = {
+            com.nuvio.tv.ui.components.PinPad(
+                enabled = !isWorking,
+                onKey = { key ->
+                    pin = com.nuvio.tv.ui.components.pinAfterKey(pin, key, ProfilePinLength)
+                    if (!errorMessage.isNullOrEmpty()) onClearError()
+                    if (!isSingleEntryMode) internalErrorMessage = null
+                },
+                startFocus = focusRequester
+            )
+        }
+
+        if (isCompactPhone) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                renderPinInfoColumn(Modifier.fillMaxWidth())
+                renderPinPad()
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = ProfileSelectionSpacing.ScreenPaddingHorizontal),
+                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xl),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                renderPinInfoColumn(Modifier.weight(1f))
+                renderPinPad()
+            }
         }
     }
 }
@@ -2585,13 +2666,14 @@ internal fun ProfilePinBoxes(
     length: Int = ProfilePinLength,
     boxSizeOverride: Dp? = null
 ) {
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     val boxSize by animateDpAsState(
-        targetValue = boxSizeOverride ?: if (compactMode) 90.dp else ProfileSelectionSpacing.PinBoxSize,
+        targetValue = boxSizeOverride ?: if (isCompactPhone) 54.dp else if (compactMode) 90.dp else ProfileSelectionSpacing.PinBoxSize,
         animationSpec = tween(NuvioMotion.tokens.durations.fast),
         label = "pinBoxSize"
     )
     val boxGap by animateDpAsState(
-        targetValue = if (compactMode) 10.dp else ProfileSelectionSpacing.PinBoxGap,
+        targetValue = if (isCompactPhone) 8.dp else if (compactMode) 10.dp else ProfileSelectionSpacing.PinBoxGap,
         animationSpec = tween(NuvioMotion.tokens.durations.fast),
         label = "pinBoxGap"
     )

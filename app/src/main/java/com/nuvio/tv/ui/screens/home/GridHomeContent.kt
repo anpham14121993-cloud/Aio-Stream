@@ -390,13 +390,17 @@ fun GridHomeContent(
         val contentFocusRequester = LocalContentFocusRequester.current
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val gridWidth = maxWidth
+        val compactGrid = gridWidth < 600.dp
         // Calculate actual columns from available width (matching GridCells.Adaptive logic)
-        val horizontalPadding = NuvioTheme.spacing.xxxl + NuvioTheme.spacing.xl
-        val spacing = NuvioTheme.spacing.md
+        val startPad = if (compactGrid) 16.dp else NuvioTheme.spacing.xxxl
+        val endPad = if (compactGrid) 16.dp else NuvioTheme.spacing.xl
+        val horizontalPadding = startPad + endPad
+        val spacing = if (compactGrid) 10.dp else NuvioTheme.spacing.md
         val availableWidth = gridWidth - horizontalPadding
         val globalLandscape = LocalLandscapePosterMode.current
         val landscapeGridMinWidth = posterCardStyle.height // portrait height ≈ good landscape card width
-        val gridColumnMinSize = if (globalLandscape) landscapeGridMinWidth else posterCardStyle.width
+        val baseColumnMinSize = if (globalLandscape) landscapeGridMinWidth else posterCardStyle.width
+        val gridColumnMinSize = if (compactGrid) minOf(baseColumnMinSize, 104.dp) else baseColumnMinSize
         val actualColumnsPerRow = remember(availableWidth, gridColumnMinSize, spacing) {
             val cols = ((availableWidth + spacing) / (gridColumnMinSize + spacing)).toInt()
             cols.coerceAtLeast(1)
@@ -476,12 +480,12 @@ fun GridHomeContent(
                 }
                 .dpadRepeatThrottle(),
             contentPadding = PaddingValues(
-                start = NuvioTheme.spacing.xxxl,
-                end = NuvioTheme.spacing.xl,
-                top = topPadding,
-                bottom = NuvioTheme.spacing.xxl
+                start = startPad,
+                end = endPad,
+                top = topPadding + if (!hasHero) com.nuvio.tv.ui.monolith.LocalMonolithTopInset.current else 0.dp,
+                bottom = NuvioTheme.spacing.xxl + com.nuvio.tv.ui.monolith.LocalMonolithBottomInset.current
             ),
-            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
+            horizontalArrangement = Arrangement.spacedBy(spacing),
             verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
         ) {
             var firstGridFocusableAssigned = false

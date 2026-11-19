@@ -740,7 +740,7 @@ fun SearchScreen(
                             onSectionFocusChanged = { focused -> isRecentSearchSectionFocused = focused },
                             clearHistoryFocusRequester = recentClearHistoryFocusRequester,
                             emptyHistoryFocusRequester = searchFocusRequester,
-                            modifier = Modifier.padding(horizontal = 52.dp)
+                            modifier = Modifier.padding(horizontal = if (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600) 16.dp else 52.dp)
                         )
                     }
                 } else {
@@ -775,7 +775,7 @@ fun SearchScreen(
                                     },
                                     clearHistoryFocusRequester = recentClearHistoryFocusRequester,
                                     emptyHistoryFocusRequester = searchFocusRequester,
-                                    modifier = Modifier.padding(horizontal = 52.dp)
+                                    modifier = Modifier.padding(horizontal = if (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600) 16.dp else 52.dp)
                                 )
                             } else {
                                 EmptyScreenState(
@@ -1267,11 +1267,14 @@ private fun SearchInputField(
     var isDiscoverButtonFocused by remember { mutableStateOf(false) }
     var isVoiceButtonFocused by remember { mutableStateOf(false) }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val compactSearch = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val actionButtonSize = if (compactSearch) 44.dp else NuvioTheme.spacing.huge
+    val actionGap = if (compactSearch) 8.dp else NuvioTheme.spacing.md
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = NuvioTheme.spacing.xxxl)
+            .padding(horizontal = if (compactSearch) 16.dp else NuvioTheme.spacing.xxxl)
             .focusGroup(),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1284,7 +1287,7 @@ private fun SearchInputField(
                     )
                     .onFocusChanged { isDiscoverButtonFocused = it.isFocused }
                     .nuvioControlSurface(RoundedCornerShape(NuvioTheme.radii.md))
-                    .size(NuvioTheme.spacing.huge)
+                    .size(actionButtonSize)
                     .border(
                         width = if (isDiscoverButtonFocused) NuvioTheme.spacing.xxs else NuvioTheme.spacing.hairline,
                         color = if (isV2) Color.Transparent else if (isDiscoverButtonFocused) NuvioTheme.colors.FocusRing else NuvioTheme.colors.Border,
@@ -1302,7 +1305,7 @@ private fun SearchInputField(
                 )
             }
 
-            Spacer(modifier = Modifier.width(NuvioTheme.spacing.md))
+            Spacer(modifier = Modifier.width(actionGap))
         }
 
         if (showVoiceSearch) {
@@ -1338,7 +1341,7 @@ private fun SearchInputField(
 
             Box(
                 contentAlignment = Alignment.Center,
-                modifier = Modifier.size(72.dp) // extra room for rings
+                modifier = Modifier.size(if (compactSearch) 48.dp else 72.dp) // extra room for rings
             ) {
                 // Layer 1: Pulsating ring (constant rhythm)
                 if (isVoiceListening) {
@@ -1400,7 +1403,7 @@ private fun SearchInputField(
                 }
             }
 
-            Spacer(modifier = Modifier.width(NuvioTheme.spacing.md))
+            Spacer(modifier = Modifier.width(actionGap))
         }
 
         OutlinedTextField(
@@ -1490,7 +1493,7 @@ private fun SearchInputField(
         // icon so it is reachable with the D-pad, matching the voice button's treatment.
         if (query.isNotEmpty()) {
             var isClearButtonFocused by remember { mutableStateOf(false) }
-            Spacer(modifier = Modifier.width(NuvioTheme.spacing.md))
+            Spacer(modifier = Modifier.width(actionGap))
             IconButton(
                 onClick = {
                     // Clearing drops this button from the row, so hand focus back first.
@@ -1500,7 +1503,7 @@ private fun SearchInputField(
                 modifier = Modifier
                     .onFocusChanged { isClearButtonFocused = it.isFocused }
                     .nuvioControlSurface(RoundedCornerShape(NuvioTheme.radii.md))
-                    .size(NuvioTheme.spacing.huge)
+                    .size(actionButtonSize)
                     .border(
                         width = if (isClearButtonFocused) NuvioTheme.spacing.xxs else NuvioTheme.spacing.hairline,
                         color = if (isV2) Color.Transparent else if (isClearButtonFocused) NuvioTheme.colors.FocusRing else NuvioTheme.colors.Border,

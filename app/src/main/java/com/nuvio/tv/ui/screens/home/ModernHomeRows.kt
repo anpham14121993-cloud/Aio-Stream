@@ -945,10 +945,11 @@ internal fun ModernRowSection(
         )
     ) {
         val rowTitle = row.title
-        val rowLeadingInset = if (LocalV2Appearance.current != null) 24.dp else 52.dp
-        val railHeaderModifier = remember(rowTitleBottom, rowLeadingInset) {
+        val isCompactRow = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+        val rowLeadingInset = if (isCompactRow) 16.dp else if (LocalV2Appearance.current != null) 24.dp else 52.dp
+        val railHeaderModifier = remember(rowTitleBottom, rowLeadingInset, isCompactRow) {
             Modifier
-                .padding(start = rowLeadingInset, end = 52.dp, bottom = rowTitleBottom)
+                .padding(start = rowLeadingInset, end = if (isCompactRow) 16.dp else 52.dp, bottom = rowTitleBottom)
                 .fillMaxWidth()
         }
         Text(
@@ -1094,7 +1095,7 @@ internal fun ModernRowSection(
         }
 
         val density = LocalDensity.current
-        val rowStartPadding = if (LocalV2Appearance.current != null) 24.dp else 52.dp
+        val rowStartPadding = if (isCompactRow) 16.dp else if (LocalV2Appearance.current != null) 24.dp else 52.dp
         val context = LocalContext.current
         val imageLoader = context.imageLoader
         val homeImagePriority = com.nuvio.tv.core.image.LocalHomePosterPriority.current

@@ -762,6 +762,7 @@ open class MainActivity : ComponentActivity() {
                 amoledSurfacesMode = mainUiPrefs.amoledSurfacesMode,
                 settingsUiStyle = mainUiPrefs.settingsUiStyle,
                 uiScalePercent = scaleDecision.percent,
+                compactMobile = resolvedFormFactor == com.nuvio.tv.ui.monolith.DeviceFormFactor.MOBILE,
                 presentation = ResolvedAppearance(device, appearance, scaleDecision, qualityDecision, playbackUiActive)
             ) {
                 SideEffect {

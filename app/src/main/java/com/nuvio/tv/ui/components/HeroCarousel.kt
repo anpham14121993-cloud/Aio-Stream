@@ -328,11 +328,18 @@ private fun HeroCarouselSlide(
             )
         }
 
+        val isCompactCarousel = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+        val topCarouselInset = com.nuvio.tv.ui.monolith.LocalMonolithTopInset.current
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl)
-                .fillMaxWidth(0.42f),
+                .padding(
+                    start = if (isCompactCarousel) 16.dp else NuvioTheme.spacing.xxxl,
+                    top = if (isCompactCarousel) topCarouselInset + 12.dp else 0.dp,
+                    bottom = if (isCompactCarousel) 28.dp else NuvioTheme.spacing.xxxl,
+                    end = if (isCompactCarousel) 16.dp else NuvioTheme.spacing.xxxl
+                )
+                .fillMaxWidth(if (isCompactCarousel) 1f else 0.42f),
             verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
         ) {
             if (showLogo) {
@@ -341,8 +348,8 @@ private fun HeroCarouselSlide(
                     contentDescription = item.name,
                     onError = { logoLoadFailed = true },
                     modifier = Modifier
-                        .height(100.dp)
-                        .widthIn(min = 100.dp, max = 220.dp)
+                        .height(if (isCompactCarousel) 64.dp else 100.dp)
+                        .widthIn(min = 90.dp, max = if (isCompactCarousel) 180.dp else 220.dp)
                         .fillMaxWidth(),
                     contentScale = ContentScale.Fit,
                     alignment = Alignment.CenterStart

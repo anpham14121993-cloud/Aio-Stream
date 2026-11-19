@@ -626,9 +626,10 @@ fun SettingsScreen(
                 .sidebarPageContent()
                 .fillMaxSize()
             .padding(
-                start = if (compactPhoneLayout) 16.dp else if (isV2Settings()) 16.dp else NuvioTheme.spacing.xxl,
-                end = if (compactPhoneLayout) 16.dp else NuvioTheme.spacing.xxl,
+                start = if (compactPhoneLayout) 12.dp else if (isV2Settings()) 16.dp else NuvioTheme.spacing.xxl,
+                end = if (compactPhoneLayout) 12.dp else NuvioTheme.spacing.xxl,
                 top = when {
+                    compactPhoneLayout -> 8.dp
                     com.nuvio.tv.ui.v2.navigation.LocalV2TopChrome.current -> 16.dp
                     showBuiltInHeader -> NuvioTheme.spacing.xl
                     else -> 68.dp
@@ -694,8 +695,8 @@ fun SettingsScreen(
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val isMobileSinglePane = maxWidth < 600.dp
             var mobileShowingDetail by rememberSaveable { mutableStateOf(false) }
-            LaunchedEffect(searchPane, qualityRulesTrip, integrationSection) {
-                if (isMobileSinglePane && (searchPane != null || qualityRulesTrip == QualityRulesTrip.Out || integrationSection != IntegrationSettingsSection.Hub)) {
+            LaunchedEffect(qualityRulesTrip, integrationSection) {
+                if (isMobileSinglePane && (qualityRulesTrip == QualityRulesTrip.Out || integrationSection != IntegrationSettingsSection.Hub)) {
                     mobileShowingDetail = true
                 }
             }
@@ -726,7 +727,7 @@ fun SettingsScreen(
                                     focusRequester = railFocusRequesters[section.category],
                                     onClick = {
                                         onSectionClick(section)
-                                        if (section.category != SettingsCategory.ACCOUNT) {
+                                        if (section.destination == SettingsSectionDestination.Inline) {
                                             mobileShowingDetail = true
                                         }
                                     }

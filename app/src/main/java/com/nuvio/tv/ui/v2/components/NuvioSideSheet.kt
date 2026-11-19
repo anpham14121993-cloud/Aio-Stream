@@ -38,17 +38,25 @@ fun NuvioSideSheet(
         repeat(2) { withFrameNanos { } }
         focus.requestFocus()
     }
-    Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))
-            .padding(horizontal = 48.dp, vertical = 28.dp),
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)),
         contentAlignment = Alignment.CenterEnd
     ) {
-        NuvioGlassSurface(GlassRole.PANEL, Modifier.width(width).fillMaxHeight()) {
-            Column(
-                Modifier.fillMaxSize().padding(24.dp).focusRequester(focus)
-                    .focusProperties { onExit = { cancelFocusChange() } }.focusGroup(),
-                content = content
-            )
+        val compact = maxWidth < 600.dp
+        val outerHoriz = if (compact) 12.dp else 48.dp
+        val outerVert = if (compact) 16.dp else 28.dp
+        val sheetWidth = minOf(width, (maxWidth - outerHoriz * 2).coerceAtLeast(260.dp))
+        Box(
+            Modifier.fillMaxSize().padding(horizontal = outerHoriz, vertical = outerVert),
+            contentAlignment = Alignment.CenterEnd
+        ) {
+            NuvioGlassSurface(GlassRole.PANEL, Modifier.width(sheetWidth).fillMaxHeight()) {
+                Column(
+                    Modifier.fillMaxSize().padding(if (compact) 16.dp else 24.dp).focusRequester(focus)
+                        .focusProperties { onExit = { cancelFocusChange() } }.focusGroup(),
+                    content = content
+                )
+            }
         }
     }
 }

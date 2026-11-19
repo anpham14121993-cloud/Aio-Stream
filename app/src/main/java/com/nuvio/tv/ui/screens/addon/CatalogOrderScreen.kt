@@ -163,76 +163,91 @@ private fun CatalogOrderCard(
     onMoveDown: () -> Unit,
     onToggleEnabled: () -> Unit
 ) {
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val renderCatalogInfo: @Composable (Modifier) -> Unit = { infoModifier ->
+        Column(modifier = infoModifier) {
+            Text(
+                text = if (ServerCatalog.isServerKey(item.key)) {
+                    item.catalogName
+                } else {
+                    "${item.catalogName} - ${item.typeLabel.toDisplayTypeLabel()}"
+                },
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = if (item.isDisabled) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary
+            )
+            Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
+            Text(
+                text = item.addonName,
+                style = MaterialTheme.typography.bodySmall,
+                color = NuvioTheme.colors.TextSecondary
+            )
+            if (item.isDisabled) {
+                Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
+                Text(
+                    text = stringResource(R.string.catalog_order_disabled_on_home),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NuvioTheme.colors.Error
+                )
+            }
+        }
+    }
+    val renderCatalogButtons: @Composable () -> Unit = {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CatalogOrderButton(
+                onClick = onMoveUp,
+                enabled = item.canMoveUp,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ArrowUpward,
+                    contentDescription = stringResource(R.string.cd_move_up)
+                )
+            }
+
+            CatalogOrderButton(
+                onClick = onMoveDown,
+                enabled = item.canMoveDown,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ArrowDownward,
+                    contentDescription = stringResource(R.string.cd_move_down)
+                )
+            }
+
+            CatalogOrderButton(
+                onClick = onToggleEnabled,
+            ) {
+                Text(text = if (item.isDisabled) stringResource(R.string.catalog_order_enable) else stringResource(R.string.catalog_order_disable))
+            }
+        }
+    }
     Card(
         modifier = Modifier.fillMaxWidth().settingsSubmenuSurface(),
         colors = CardDefaults.cardColors(containerColor = if (isV2Settings()) Color.Transparent else NuvioTheme.colors.BackgroundCard),
         shape = RoundedCornerShape(NuvioTheme.radii.md)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (ServerCatalog.isServerKey(item.key)) {
-                        item.catalogName
-                    } else {
-                        "${item.catalogName} - ${item.typeLabel.toDisplayTypeLabel()}"
-                    },
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = if (item.isDisabled) NuvioTheme.colors.TextSecondary else NuvioTheme.colors.TextPrimary
-                )
-                Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
-                Text(
-                    text = item.addonName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = NuvioTheme.colors.TextSecondary
-                )
-                if (item.isDisabled) {
-                    Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
-                    Text(
-                        text = stringResource(R.string.catalog_order_disabled_on_home),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = NuvioTheme.colors.Error
-                    )
-                }
+        if (isCompactPhone) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+            ) {
+                renderCatalogInfo(Modifier.fillMaxWidth())
+                renderCatalogButtons()
             }
-
+        } else {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                CatalogOrderButton(
-                    onClick = onMoveUp,
-                    enabled = item.canMoveUp,
-
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowUpward,
-                        contentDescription = stringResource(R.string.cd_move_up)
-                    )
-                }
-
-                CatalogOrderButton(
-                    onClick = onMoveDown,
-                    enabled = item.canMoveDown,
-
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowDownward,
-                        contentDescription = stringResource(R.string.cd_move_down)
-                    )
-                }
-
-                CatalogOrderButton(
-                    onClick = onToggleEnabled,
-
-                ) {
-                    Text(text = if (item.isDisabled) stringResource(R.string.catalog_order_enable) else stringResource(R.string.catalog_order_disable))
-                }
+                renderCatalogInfo(Modifier.weight(1f))
+                renderCatalogButtons()
             }
         }
     }

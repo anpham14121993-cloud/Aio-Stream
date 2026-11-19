@@ -191,13 +191,15 @@ fun CatalogSeeAllScreen(
         }
     }
 
+    val compactSeeAll = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val seeAllHorizPad = if (compactSeeAll) 16.dp else NuvioTheme.spacing.xxxl
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(vertical = NuvioTheme.spacing.xl)
+            .padding(vertical = if (compactSeeAll) 14.dp else NuvioTheme.spacing.xl)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = NuvioTheme.spacing.xxxl),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = seeAllHorizPad),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -210,7 +212,7 @@ fun CatalogSeeAllScreen(
         if (uiState.catalogAddonNameEnabled) {
             catalogRow?.addonName?.let { addonName ->
                 Text(
-                    modifier = Modifier.padding(horizontal = NuvioTheme.spacing.xxxl),
+                    modifier = Modifier.padding(horizontal = seeAllHorizPad),
                     text = stringResource(R.string.catalog_see_all_from, addonName),
                     style = MaterialTheme.typography.bodyMedium,
                     color = NuvioTheme.colors.TextSecondary
@@ -218,7 +220,7 @@ fun CatalogSeeAllScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(NuvioTheme.spacing.xl))
+        Spacer(modifier = Modifier.height(if (compactSeeAll) 12.dp else NuvioTheme.spacing.xl))
 
         val hasItems = catalogRow?.items?.isNotEmpty() == true
         val isCatalogLoading = if (catalogRow == null) serverFailed?.value != true else catalogRow.isLoading
@@ -228,17 +230,18 @@ fun CatalogSeeAllScreen(
                 catalogRow?.stableItemKeys().orEmpty()
             }
             Box(modifier = Modifier.fillMaxSize()) {
+                val baseCellSize = if (com.nuvio.tv.ui.components.LocalLandscapePosterMode.current) posterCardStyle.height else posterCardStyle.width
                 LazyVerticalGrid(
                     state = gridState,
                     columns = GridCells.Adaptive(
-                        minSize = if (com.nuvio.tv.ui.components.LocalLandscapePosterMode.current) posterCardStyle.height else posterCardStyle.width
+                        minSize = if (compactSeeAll) minOf(baseCellSize, 104.dp) else baseCellSize
                     ),
                     modifier = Modifier.dpadRepeatThrottle(),
                     contentPadding = PaddingValues(
-                        start = NuvioTheme.spacing.xxxl,
-                        end = NuvioTheme.spacing.xl,
+                        start = seeAllHorizPad,
+                        end = if (compactSeeAll) 16.dp else NuvioTheme.spacing.xl,
                         top = NuvioTheme.spacing.md,
-                        bottom = NuvioTheme.spacing.xxl
+                        bottom = NuvioTheme.spacing.xxl + com.nuvio.tv.ui.monolith.LocalMonolithBottomInset.current
                     ),
                     horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
                     verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)

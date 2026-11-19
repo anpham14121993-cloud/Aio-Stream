@@ -1027,13 +1027,21 @@ fun ModernHomeContent(
                 }
             }
             val localDensity = LocalDensity.current
-            val rowsViewportHeightFraction = if (useLandscapePosters) 0.49f else 0.52f
+            val monolithTopInset = com.nuvio.tv.ui.monolith.LocalMonolithTopInset.current
+            val monolithBottomInset = com.nuvio.tv.ui.monolith.LocalMonolithBottomInset.current
+            val rowsViewportHeightFraction = when {
+                isCompactPhone && useLandscapePosters -> 0.56f
+                isCompactPhone -> 0.58f
+                useLandscapePosters -> 0.49f
+                else -> 0.52f
+            }
             val tallestRowCardHeight = maxOf(
                 if (useLandscapePosters) landscapeCatalogCardHeight else portraitCatalogCardHeight,
                 continueWatchingCardHeight
             )
-            val rowsViewportHeight = remember(screenHeight, rowsViewportHeightFraction, tallestRowCardHeight) {
-                modernRowsViewportHeight(screenHeight, rowsViewportHeightFraction, tallestRowCardHeight)
+            val rowsViewportHeight = remember(screenHeight, rowsViewportHeightFraction, tallestRowCardHeight, monolithBottomInset, isCompactPhone) {
+                val base = modernRowsViewportHeight(screenHeight, rowsViewportHeightFraction, tallestRowCardHeight)
+                if (isCompactPhone) (base + monolithBottomInset * 0.35f).coerceAtMost(screenHeight * 0.64f) else base
             }
             val rowTitleLineHeight = MaterialTheme.typography.titleMedium.lineHeight
             val rowTitleHeight = remember(rowTitleLineHeight, localDensity) {
@@ -1118,22 +1126,27 @@ fun ModernHomeContent(
             val foregroundModifier = remember(sidebarPageLayout, heroLayoutDirection) {
                 Modifier.sidebarPageContent(sidebarPageLayout, heroLayoutDirection)
             }
-            val heroMetadataModifier = remember(rowHorizontalPadding, rowsViewportHeight, screenHeight, foregroundModifier, isCompactPhone) {
+            val heroMetadataModifier = remember(rowHorizontalPadding, rowsViewportHeight, screenHeight, foregroundModifier, isCompactPhone, monolithTopInset) {
+                val maxHeroHeight = (modernHeroTextMaxHeight(screenHeight, rowsViewportHeight) - if (isCompactPhone) monolithTopInset else 0.dp)
+                    .coerceAtLeast(110.dp)
                 foregroundModifier
                     .align(Alignment.BottomStart)
                     .padding(
                         start = rowHorizontalPadding,
                         end = if (isCompactPhone) 16.dp else NuvioTheme.spacing.xxxl,
-                        bottom = NuvioTheme.spacing.none + rowsViewportHeight + NuvioTheme.spacing.lg
+                        top = if (isCompactPhone) monolithTopInset + 4.dp else 0.dp,
+                        bottom = NuvioTheme.spacing.none + rowsViewportHeight + if (isCompactPhone) 10.dp else NuvioTheme.spacing.lg
                     )
-                    .heightIn(max = modernHeroTextMaxHeight(screenHeight, rowsViewportHeight))
+                    .heightIn(max = maxHeroHeight)
                     .fillMaxWidth(if (isCompactPhone) 1f else MODERN_HERO_TEXT_WIDTH_FRACTION)
             }
 
             val appContext = LocalContext.current.applicationContext
             val uiScaleFlow = remember(appContext) { com.nuvio.tv.data.local.UiScalePreference.flow(appContext) }
             val heroDescriptionScalePercent by uiScaleFlow.collectAsState(initial = 100)
-            val heroDescriptionMaxLines = when {
+            val heroDescriptionMaxLines = if (isCompactPhone) {
+                2
+            } else when {
                 heroDescriptionScalePercent <= 95 -> 4
                 heroDescriptionScalePercent <= 100 -> 4
                 else -> 2

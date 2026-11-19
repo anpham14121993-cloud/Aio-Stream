@@ -272,11 +272,11 @@ fun AuthQrSignInScreen(
                     .fillMaxSize()
                     .then(safePaddingModifier)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 24.dp),
+                    .padding(horizontal = 14.dp, vertical = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(20.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Spacer(modifier = Modifier.height(28.dp))
+                Spacer(modifier = Modifier.height(40.dp))
                 AuthQrBrandPanel(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -296,7 +296,7 @@ fun AuthQrSignInScreen(
                         .widthIn(max = 440.dp)
                         .background(AuthPaneBackground, RoundedCornerShape(18.dp))
                         .border(1.dp, AuthPaneBorder, RoundedCornerShape(18.dp))
-                        .padding(horizontal = 20.dp, vertical = 22.dp),
+                        .padding(horizontal = 14.dp, vertical = 18.dp),
                     uiState = uiState,
                     isSignedIn = isSignedIn,
                     isOnboardingMode = isOnboardingMode,
@@ -498,14 +498,15 @@ private fun AuthQrBrandPanel(
             )
         }
         if (showRestore) {
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(if (compact) 12.dp else 18.dp))
             Text(
                 text = stringResource(R.string.backup_signin_hint),
                 modifier = Modifier.widthIn(max = 400.dp),
+                textAlign = if (compact) TextAlign.Center else TextAlign.Start,
                 style = MaterialTheme.typography.bodyLarge.copy(
                     color = AuthTextSecondary,
-                    fontSize = 17.sp,
-                    lineHeight = 26.sp,
+                    fontSize = if (compact) 14.sp else 17.sp,
+                    lineHeight = if (compact) 21.sp else 26.sp,
                     fontWeight = FontWeight.Normal
                 )
             )
@@ -781,6 +782,7 @@ private fun AuthModeTabButton(
     Button(
         onClick = onClick,
         modifier = modifier,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp),
         colors = ButtonDefaults.colors(
             containerColor = if (selected) Color.White else AuthSecondaryButtonBackground,
             focusedContainerColor = Color.White,
@@ -804,9 +806,12 @@ private fun AuthModeTabButton(
         ) {
             Text(
                 text = label,
+                fontSize = 13.sp,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                 textAlign = TextAlign.Center,
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
         }
     }

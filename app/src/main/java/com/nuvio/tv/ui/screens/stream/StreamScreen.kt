@@ -804,7 +804,7 @@ private fun LeftContentSection(
             } else {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.displaySmall,
+                    style = if (compactPadding) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.displaySmall,
                     color = NuvioTheme.colors.TextPrimary,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
@@ -985,9 +985,15 @@ private fun RightStreamSection(
         }
     }
 
+    val compactStreamSection = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     Column(
         modifier = modifier
-            .padding(top = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.xxxl)
+            .padding(
+                start = if (compactStreamSection) 12.dp else 0.dp,
+                top = if (compactStreamSection) 8.dp else NuvioTheme.spacing.xxxl,
+                end = if (compactStreamSection) 12.dp else NuvioTheme.spacing.xxxl,
+                bottom = if (compactStreamSection) 16.dp else NuvioTheme.spacing.xxxl
+            )
     ) {
         resumeText?.let { text ->
             StreamResumePill(text = text, modifier = Modifier.padding(bottom = NuvioTheme.spacing.sm))
@@ -1647,7 +1653,9 @@ private fun StreamCard(
             }
 
             if (showAddonLogo) {
+                val compactStreamCard = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
                 Column(
+                    modifier = if (compactStreamCard) Modifier.widthIn(max = 76.dp) else Modifier,
                     horizontalAlignment = Alignment.End
                 ) {
                     if (addonLogoModel != null) {
@@ -1657,7 +1665,7 @@ private fun StreamCard(
                             // so naming the logo too would duplicate it in the merged card.
                             contentDescription = null,
                             modifier = Modifier
-                                .size(NuvioTheme.spacing.xxl)
+                                .size(if (compactStreamCard) 26.dp else NuvioTheme.spacing.xxl)
                                 .clip(RoundedCornerShape(NuvioTheme.radii.xs)),
                             contentScale = ContentScale.Fit
                         )
@@ -1671,7 +1679,8 @@ private fun StreamCard(
                             textDirection = stream.addonName.contentTextDirection()
                         ),
                         color = NuvioTheme.extendedColors.textTertiary,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

@@ -6,6 +6,7 @@ import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.requiredWidth
@@ -319,10 +320,14 @@ private fun CalendarWeekStrip(
     onFilter: (CalendarFilter) -> Unit
 ) {
     val v2 = LocalV2Appearance.current != null
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     val chipShape = RoundedCornerShape(if (v2) NuvioTheme.radii.lg else NuvioTheme.radii.md)
     val pill = RoundedCornerShape(NuvioTheme.radii.full)
     Row(
-        modifier = modifier.fillMaxWidth().focusRestorer(),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (isCompactPhone) Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()) else Modifier)
+            .focusRestorer(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
     ) {
@@ -448,7 +453,8 @@ internal fun CalendarRoundButton(
 /** The focused title's logo, episode, when, where, rating and summary, the way Home shows its hero. */
 @Composable
 private fun CalendarWeekHero(row: CalendarRow, details: CalendarRowDetails?, formats: CalendarFormats, today: LocalDate) {
-    Column(Modifier.width(560.dp)) {
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    Column(if (isCompactPhone) Modifier.fillMaxWidth() else Modifier.width(560.dp)) {
         CalendarLogo(
             logo = row.logo ?: details?.logo,
             name = row.name,
@@ -550,7 +556,8 @@ private fun CalendarDayShelf(
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val gap = 14.dp
-            val cardWidth = (maxWidth - gap * (WEEK_CARDS_ACROSS - 1)) / WEEK_CARDS_ACROSS
+            val cardsAcross = if (maxWidth < 420.dp) 2 else WEEK_CARDS_ACROSS
+            val cardWidth = (maxWidth - gap * (cardsAcross - 1)) / cardsAcross
             // The row reaches past the page margin by the focus room, so the focused card's ring and lift are not cut.
             CompositionLocalProvider(LocalBringIntoViewSpec provides CalendarMinimalScroll) {
             LazyRow(

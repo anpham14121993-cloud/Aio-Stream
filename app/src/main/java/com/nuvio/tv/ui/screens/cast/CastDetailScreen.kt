@@ -326,17 +326,15 @@ private fun HeroSection(
         }
     }
 
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, top = NuvioTheme.spacing.xxl, bottom = NuvioTheme.spacing.sm),
-        verticalAlignment = Alignment.Top
-    ) {
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val horizontalPad = if (isCompactPhone) 16.dp else NuvioTheme.spacing.xxxl
+
+    val renderPortraitCard: @Composable () -> Unit = {
         // Avatar / Profile Photo
         Card(
             onClick = onPortraitClick,
             modifier = Modifier
-                .heightIn(max = 240.dp)
+                .heightIn(max = if (isCompactPhone) 180.dp else 240.dp)
                 .aspectRatio(2f / 3f, matchHeightConstraintsFirst = true)
                 .focusRequester(portraitFocusRequester)
                 .focusProperties {
@@ -421,14 +419,13 @@ private fun HeroSection(
                 }
             }
         }
+    }
 
-        Spacer(modifier = Modifier.width(NuvioTheme.spacing.xl))
-
+    val renderBioColumn: @Composable (Modifier) -> Unit = { bioModifier ->
         // Bio Column
         Column(
-            modifier = Modifier
-                .weight(1f)
-                .then(if (isBiographyExpanded) Modifier.fillMaxHeight() else Modifier)
+            modifier = bioModifier
+                .then(if (isBiographyExpanded && !isCompactPhone) Modifier.fillMaxHeight() else Modifier)
                 .padding(top = NuvioTheme.spacing.xs)
         ) {
             // Name
@@ -440,13 +437,13 @@ private fun HeroSection(
                     textDirection = person.name.contentTextDirection()
                 ),
                 color = NuvioTheme.colors.TextPrimary,
-                maxLines = 1,
+                maxLines = if (isCompactPhone) 2 else 1,
                 overflow = TextOverflow.Ellipsis
             )
 
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(if (isCompactPhone) 4.dp else 10.dp))
 
             // Personal Info Row
             val strBorn = stringResource(R.string.cast_detail_born)
@@ -473,7 +470,7 @@ private fun HeroSection(
                         text = info,
                         style = MaterialTheme.typography.bodyMedium,
                         color = NuvioTheme.colors.TextSecondary,
-                        maxLines = 1,
+                        maxLines = if (isCompactPhone) 2 else 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
@@ -487,7 +484,7 @@ private fun HeroSection(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
+                            .then(if (isCompactPhone) Modifier.heightIn(max = 260.dp) else Modifier.weight(1f))
                             .verticalScroll(biographyScrollState)
                     ) {
                         Text(
@@ -526,15 +523,39 @@ private fun HeroSection(
             }
         }
     }
+
+    if (isCompactPhone) {
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(start = horizontalPad, end = horizontalPad, top = NuvioTheme.spacing.lg, bottom = NuvioTheme.spacing.sm),
+            verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
+        ) {
+            renderPortraitCard()
+            renderBioColumn(Modifier.fillMaxWidth())
+        }
+    } else {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(start = horizontalPad, end = horizontalPad, top = NuvioTheme.spacing.xxl, bottom = NuvioTheme.spacing.sm),
+            verticalAlignment = Alignment.Top
+        ) {
+            renderPortraitCard()
+            Spacer(modifier = Modifier.width(NuvioTheme.spacing.xl))
+            renderBioColumn(Modifier.weight(1f))
+        }
+    }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SectionHeader(title: String, count: Int) {
+    val horizontalPad = if (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600) 16.dp else NuvioTheme.spacing.xxxl
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, top = NuvioTheme.spacing.md, bottom = NuvioTheme.spacing.sm),
+            .padding(start = horizontalPad, end = horizontalPad, top = NuvioTheme.spacing.md, bottom = NuvioTheme.spacing.sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -591,12 +612,13 @@ private fun FilmographyRow(
         restoreFocusRequester.requestFocusAfterFrames()
     }
 
+    val horizontalPad = if (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600) 16.dp else NuvioTheme.spacing.xxxl
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
             .focusRestorer { if (restorePending) restoreFocusRequester else firstItemFocusRequester },
         state = lazyListState,
-        contentPadding = PaddingValues(horizontal = NuvioTheme.spacing.xxxl, vertical = NuvioTheme.spacing.xs),
+        contentPadding = PaddingValues(horizontal = horizontalPad, vertical = NuvioTheme.spacing.xs),
         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
     ) {
         itemsIndexed(

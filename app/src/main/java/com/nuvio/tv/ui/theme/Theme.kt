@@ -82,6 +82,7 @@ fun NuvioTheme(
     settingsUiStyle: SettingsUiStyle = SettingsUiStyle.CLASSIC,
     customThemeColors: CustomThemeColors = CustomThemeColors.Default,
     uiScalePercent: Int = 100,
+    compactMobile: Boolean = false,
     presentation: ResolvedAppearance? = null,
     content: @Composable () -> Unit
 ) {
@@ -111,7 +112,7 @@ fun NuvioTheme(
         amoledSurfacesMode = appearance == null && amoledSurfacesMode,
         glassPresentation = appearance != null
     ) }
-    val typography = remember(appFont) { buildNuvioTypography(getFontFamily(appFont)) }
+    val typography = remember(appFont, compactMobile) { buildNuvioTypography(getFontFamily(appFont), compactMobile) }
     val textStyles = remember(typography) { buildNuvioTextStyles(typography) }
 
     val materialColorScheme = darkColorScheme(

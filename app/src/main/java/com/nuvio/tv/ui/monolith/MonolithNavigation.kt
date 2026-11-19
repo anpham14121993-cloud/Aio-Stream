@@ -69,7 +69,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -183,7 +185,7 @@ private fun MonolithBrandEmblem(
     ) {
         Box(
             modifier = Modifier
-                .size(if (compact) 32.dp else 36.dp)
+                .size(if (compact) 28.dp else 34.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.linearGradient(
@@ -196,7 +198,7 @@ private fun MonolithBrandEmblem(
             Image(
                 painter = painterResource(id = R.drawable.arc_launcher_foreground),
                 contentDescription = "AioStream",
-                modifier = Modifier.size(if (compact) 25.dp else 28.dp),
+                modifier = Modifier.size(if (compact) 22.dp else 26.dp),
                 contentScale = ContentScale.Fit
             )
         }
@@ -204,9 +206,9 @@ private fun MonolithBrandEmblem(
             Text(
                 text = "AIOSTREAM",
                 color = MonolithChromePalette.SilverBright,
-                fontSize = if (compact) 14.sp else 15.sp,
+                fontSize = if (compact) 13.sp else 14.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = if (compact) 1.6.sp else 2.2.sp,
+                letterSpacing = if (compact) 1.4.sp else 2.0.sp,
                 maxLines = 1
             )
         }
@@ -542,13 +544,17 @@ private fun MonolithBottomDockNavigation(
         }
     }
 
+    val density = LocalDensity.current
+    var measuredTopInset by remember { mutableStateOf(80.dp) }
+    var measuredBottomInset by remember { mutableStateOf(88.dp) }
+
     val topPadding by animateDpAsState(
-        targetValue = if (visible && currentRoute != Screen.Home.route) 64.dp else 0.dp,
+        targetValue = if (visible && currentRoute != Screen.Home.route) measuredTopInset else 0.dp,
         animationSpec = tween(180),
         label = "mobile_top_inset"
     )
     val bottomPadding by animateDpAsState(
-        targetValue = if (visible && currentRoute != Screen.Home.route) 86.dp else 0.dp,
+        targetValue = if (visible && currentRoute != Screen.Home.route) measuredBottomInset else 0.dp,
         animationSpec = tween(180),
         label = "mobile_bottom_inset"
     )
@@ -564,8 +570,8 @@ private fun MonolithBottomDockNavigation(
                 LocalContentFocusRequester provides contentFocus,
                 LocalSidebarExpanded provides false,
                 LocalV2TopChrome provides visible,
-                LocalMonolithTopInset provides if (visible) 64.dp else 0.dp,
-                LocalMonolithBottomInset provides if (visible) 92.dp else 0.dp
+                LocalMonolithTopInset provides if (visible) measuredTopInset else 0.dp,
+                LocalMonolithBottomInset provides if (visible) measuredBottomInset else 0.dp
             ) {
                 navigationContent(false)
             }
@@ -577,17 +583,20 @@ private fun MonolithBottomDockNavigation(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
+                    .onSizeChanged {
+                        if (it.height > 0) measuredTopInset = with(density) { it.height.toDp() }
+                    }
                     .background(
                         Brush.verticalGradient(
                             listOf(
-                                MonolithChromePalette.DeepObsidian.copy(alpha = 0.84f),
-                                MonolithChromePalette.DeepObsidian.copy(alpha = 0.35f),
+                                MonolithChromePalette.DeepObsidian.copy(alpha = 0.88f),
+                                MonolithChromePalette.DeepObsidian.copy(alpha = 0.40f),
                                 Color.Transparent
                             )
                         )
                     )
                     .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -608,7 +617,7 @@ private fun MonolithBottomDockNavigation(
                                 MonolithNavItemIcon(
                                     item = searchItem,
                                     tint = if (selectedRoute == Screen.Search.route) MonolithChromePalette.SilverBright else MonolithChromePalette.SilverMuted,
-                                    size = 21.dp
+                                    size = 19.dp
                                 )
                             }
                         }
@@ -620,7 +629,7 @@ private fun MonolithBottomDockNavigation(
                                 MonolithNavItemIcon(
                                     item = settingsItem,
                                     tint = if (selectedRoute == Screen.Settings.route) MonolithChromePalette.SilverBright else MonolithChromePalette.SilverMuted,
-                                    size = 21.dp
+                                    size = 19.dp
                                 )
                             }
                         }
@@ -630,7 +639,7 @@ private fun MonolithBottomDockNavigation(
                                     .clip(CircleShape)
                                     .clickable(onClick = onSwitchProfile)
                             ) {
-                                NuvioAvatar(avatar = profile, size = 36.dp)
+                                NuvioAvatar(avatar = profile, size = 34.dp)
                             }
                         }
                     }
@@ -642,23 +651,26 @@ private fun MonolithBottomDockNavigation(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    .onSizeChanged {
+                        if (it.height > 0) measuredBottomInset = with(density) { it.height.toDp() }
+                    }
                     .background(
                         Brush.verticalGradient(
                             listOf(
                                 Color.Transparent,
-                                MonolithChromePalette.DeepObsidian.copy(alpha = 0.90f)
+                                MonolithChromePalette.DeepObsidian.copy(alpha = 0.92f)
                             )
                         )
                     )
                     .navigationBarsPadding()
                     .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
                 BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp))
+                        .clip(RoundedCornerShape(22.dp))
                         .background(
                             Brush.verticalGradient(
                                 listOf(
@@ -667,15 +679,15 @@ private fun MonolithBottomDockNavigation(
                                 )
                             )
                         )
-                        .border(0.75.dp, MonolithChromePalette.HairlineBorderBrush, RoundedCornerShape(24.dp))
+                        .border(0.75.dp, MonolithChromePalette.HairlineBorderBrush, RoundedCornerShape(22.dp))
                 ) {
-                    val tightWidth = maxWidth < 360.dp && dockItems.size > 4
+                    val tightWidth = maxWidth < 300.dp && dockItems.size > 5
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .then(if (tightWidth) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
-                            .padding(horizontal = 6.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                            .padding(horizontal = 4.dp, vertical = 5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         dockItems.forEach { item ->
@@ -687,8 +699,8 @@ private fun MonolithBottomDockNavigation(
                             )
                             Box(
                                 modifier = Modifier
-                                    .then(if (tightWidth) Modifier.width(68.dp) else Modifier.weight(1f))
-                                    .clip(RoundedCornerShape(18.dp))
+                                    .then(if (tightWidth) Modifier.width(64.dp) else Modifier.weight(1f))
+                                    .clip(RoundedCornerShape(16.dp))
                                     .background(
                                         if (isSelected) MonolithChromePalette.ActivePillBrush
                                         else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
@@ -698,7 +710,7 @@ private fun MonolithBottomDockNavigation(
                                             Modifier.border(
                                                 0.6.dp,
                                                 MonolithChromePalette.SilverRimTop,
-                                                RoundedCornerShape(18.dp)
+                                                RoundedCornerShape(16.dp)
                                             )
                                         } else {
                                             Modifier
@@ -709,18 +721,19 @@ private fun MonolithBottomDockNavigation(
                                         indication = null,
                                         onClick = { onNavigate(item.route) }
                                     )
-                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                                    .padding(vertical = 7.dp, horizontal = 2.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
-                                    MonolithNavItemIcon(item = item, tint = tint, size = 22.dp)
+                                    MonolithNavItemIcon(item = item, tint = tint, size = 20.dp)
                                     Text(
                                         text = item.label,
                                         color = tint,
-                                        fontSize = 11.5.sp,
+                                        fontSize = 10.5.sp,
+                                        lineHeight = 14.sp,
                                         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                         maxLines = 1,
                                         softWrap = false,
@@ -744,7 +757,7 @@ private fun MonolithCircleActionButton(
 ) {
     Box(
         modifier = Modifier
-            .size(38.dp)
+            .size(36.dp)
             .clip(CircleShape)
             .background(
                 if (selected) MonolithChromePalette.SlateElevated

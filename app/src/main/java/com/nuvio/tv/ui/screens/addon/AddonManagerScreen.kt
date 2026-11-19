@@ -381,7 +381,10 @@ fun AddonManagerScreen(
                     },
                     fallbackRequester = surfaceFocusRequester
                 ),
-            contentPadding = PaddingValues(horizontal = 36.dp, vertical = 28.dp),
+            contentPadding = PaddingValues(
+                horizontal = if (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600) 14.dp else 36.dp,
+                vertical = if (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600) 16.dp else 28.dp
+            ),
             verticalArrangement = Arrangement.spacedBy(if (isV2Settings()) 12.dp else 20.dp)
         ) {
             item {
@@ -411,6 +414,7 @@ fun AddonManagerScreen(
 
             if (!viewModel.isReadOnly) {
                 item {
+                    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
                     Card(
                         modifier = Modifier
                             .fillMaxWidth().settingsSubmenuSurface()
@@ -418,23 +422,18 @@ fun AddonManagerScreen(
                         colors = CardDefaults.cardColors(containerColor = settingsItemColor(NuvioTheme.colors.BackgroundCard)),
                         shape = settingsItemShape(NuvioTheme.radii.md)
                     ) {
-                        Column(modifier = Modifier.padding(if (isV2Settings()) 14.dp else 20.dp)) {
+                        Column(modifier = Modifier.padding(if (isV2Settings() || isCompactPhone) 14.dp else 20.dp)) {
                             Text(
                                 text = stringResource(R.string.addon_install_title),
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, textDirection = TextDirection.Content),
                                 color = NuvioTheme.colors.TextPrimary,
                             )
                             Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            val renderUrlInput: @Composable (Modifier) -> Unit = { inputModifier ->
                                 // Surface always stays in the tree for stable D-pad focus
                                 Surface(
                                     onClick = { isEditing = true },
-                                    modifier = Modifier
-                                        .weight(1f)
+                                    modifier = inputModifier
                                         .focusRequester(surfaceFocusRequester),
                                     colors = ClickableSurfaceDefaults.colors(
                                         containerColor = settingsItemColor(NuvioTheme.colors.BackgroundElevated),
@@ -499,7 +498,8 @@ fun AddonManagerScreen(
                                         }
                                     }
                                 }
-
+                            }
+                            val renderInstallButton: @Composable (Modifier) -> Unit = { btnModifier ->
                                 Button(
                                     onClick = {
                                         viewModel.installAddon()
@@ -508,7 +508,7 @@ fun AddonManagerScreen(
                                         installButtonFocusRequester.requestFocus()
                                     },
                                     enabled = !uiState.isInstalling,
-                                    modifier = Modifier
+                                    modifier = btnModifier
                                         .focusRequester(installButtonFocusRequester)
                                         .semantics { role = Role.Button },
                                     colors = ButtonDefaults.colors(
@@ -520,6 +520,24 @@ fun AddonManagerScreen(
                                     shape = ButtonDefaults.shape(settingsItemShape(NuvioTheme.radii.md))
                                 ) {
                                     Text(text = if (uiState.isInstalling) stringResource(R.string.addon_installing) else stringResource(R.string.addon_install_btn))
+                                }
+                            }
+                            if (isCompactPhone) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+                                ) {
+                                    renderUrlInput(Modifier.fillMaxWidth())
+                                    renderInstallButton(Modifier.fillMaxWidth())
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    renderUrlInput(Modifier.weight(1f))
+                                    renderInstallButton(Modifier)
                                 }
                             }
 
@@ -1501,143 +1519,160 @@ private fun AddonCardContent(
     toggleFocusRequester: FocusRequester? = null,
     healthLevel: AddonHealthLevel? = null
 ) {
-    Column(modifier = Modifier.padding(if (isV2Settings()) 14.dp else 20.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = addon.displayName,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, textDirection = TextDirection.Content),
-                    color = NuvioTheme.colors.TextPrimary,
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (addon.version.isNotBlank()) {
-                        Text(
-                            text = "v${addon.version}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = NuvioTheme.colors.TextSecondary
-                        )
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val renderAddonHeaderInfo: @Composable (Modifier) -> Unit = { infoModifier ->
+        Column(modifier = infoModifier) {
+            Text(
+                text = addon.displayName,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, textDirection = TextDirection.Content),
+                color = NuvioTheme.colors.TextPrimary,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (addon.version.isNotBlank()) {
+                    Text(
+                        text = "v${addon.version}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NuvioTheme.colors.TextSecondary
+                    )
+                }
+                if (addon.enabled) {
+                    val setup = addon.behaviorHints?.configurationRequired == true
+                    val chip = when {
+                        setup -> stringResource(R.string.addon_health_setup) to NuvioTheme.colors.Warning
+                        healthLevel == AddonHealthLevel.HEALTHY -> stringResource(R.string.addon_health_ok) to NuvioTheme.colors.Success
+                        healthLevel == AddonHealthLevel.DEGRADED -> stringResource(R.string.addon_health_slow) to NuvioTheme.colors.Warning
+                        healthLevel == AddonHealthLevel.DOWN -> stringResource(R.string.addon_health_down) to NuvioTheme.colors.Error
+                        else -> null
                     }
-                    if (addon.enabled) {
-                        val setup = addon.behaviorHints?.configurationRequired == true
-                        val chip = when {
-                            setup -> stringResource(R.string.addon_health_setup) to NuvioTheme.colors.Warning
-                            healthLevel == AddonHealthLevel.HEALTHY -> stringResource(R.string.addon_health_ok) to NuvioTheme.colors.Success
-                            healthLevel == AddonHealthLevel.DEGRADED -> stringResource(R.string.addon_health_slow) to NuvioTheme.colors.Warning
-                            healthLevel == AddonHealthLevel.DOWN -> stringResource(R.string.addon_health_down) to NuvioTheme.colors.Error
-                            else -> null
-                        }
-                        if (chip != null) {
-                            Text(
-                                text = chip.first,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = chip.second
-                            )
-                        }
-                    }
-                    if (!addon.enabled) {
+                    if (chip != null) {
                         Text(
-                            text = stringResource(R.string.addons_badge_disabled),
+                            text = chip.first,
                             style = MaterialTheme.typography.labelSmall,
-                            color = NuvioTheme.colors.TextSecondary
+                            color = chip.second
                         )
                     }
                 }
+                if (!addon.enabled) {
+                    Text(
+                        text = stringResource(R.string.addons_badge_disabled),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NuvioTheme.colors.TextSecondary
+                    )
+                }
             }
-            if (!isReadOnly) {
-                // The card carries the name as visible text, but the toggle is its own node, so
-                // without this a screen reader hears only "switch, on".
-                val toggleLabel = stringResource(R.string.cd_enable_addon, addon.displayName)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
-                    verticalAlignment = Alignment.CenterVertically
+        }
+    }
+    val renderAddonActions: @Composable () -> Unit = {
+        if (!isReadOnly) {
+            // The card carries the name as visible text, but the toggle is its own node, so
+            // without this a screen reader hears only "switch, on".
+            val toggleLabel = stringResource(R.string.cd_enable_addon, addon.displayName)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    onClick = { onEnabledChange(!addon.enabled) },
+                    modifier = Modifier
+                        .focusRequester(toggleFocusRequester ?: remember { FocusRequester() })
+                        .semantics {
+                            role = Role.Switch
+                            contentDescription = toggleLabel
+                            toggleableState = if (addon.enabled) ToggleableState.On else ToggleableState.Off
+                        },
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = Color.Transparent,
+                        focusedContainerColor = NuvioTheme.colors.FocusBackground
+                    ),
+                    border = ClickableSurfaceDefaults.border(
+                        focusedBorder = Border(
+                            border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                            shape = settingsItemShape(NuvioTheme.radii.md)
+                        )
+                    ),
+                    shape = ClickableSurfaceDefaults.shape(settingsItemShape(NuvioTheme.radii.md)),
+                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1f)
                 ) {
-                    Surface(
-                        onClick = { onEnabledChange(!addon.enabled) },
-                        modifier = Modifier
-                            .focusRequester(toggleFocusRequester ?: remember { FocusRequester() })
-                            .semantics {
-                                role = Role.Switch
-                                contentDescription = toggleLabel
-                                toggleableState = if (addon.enabled) ToggleableState.On else ToggleableState.Off
-                            },
-                        colors = ClickableSurfaceDefaults.colors(
-                            containerColor = Color.Transparent,
-                            focusedContainerColor = NuvioTheme.colors.FocusBackground
-                        ),
-                        border = ClickableSurfaceDefaults.border(
-                            focusedBorder = Border(
-                                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
-                                shape = settingsItemShape(NuvioTheme.radii.md)
-                            )
-                        ),
-                        shape = ClickableSurfaceDefaults.shape(settingsItemShape(NuvioTheme.radii.md)),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f)
+                    Box(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Switch(
-                                checked = addon.enabled,
-                                onCheckedChange = null,
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = NuvioTheme.colors.Secondary,
-                                    checkedTrackColor = NuvioTheme.colors.Secondary.copy(alpha = 0.3f)
-                                )
+                        Switch(
+                            checked = addon.enabled,
+                            onCheckedChange = null,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = NuvioTheme.colors.Secondary,
+                                checkedTrackColor = NuvioTheme.colors.Secondary.copy(alpha = 0.3f)
                             )
-                        }
+                        )
                     }
-                    if (showReorder) {
-                        Button(
-                            onClick = onMoveUp,
-                            enabled = canMoveUp,
-                            modifier = Modifier.semantics { role = Role.Button },
-                            colors = ButtonDefaults.colors(
-                                containerColor = settingsItemColor(NuvioTheme.colors.BackgroundCard),
-                                contentColor = NuvioTheme.colors.TextSecondary,
-                                focusedContainerColor = NuvioTheme.colors.FocusBackground,
-                                focusedContentColor = NuvioTheme.colors.Primary
-                            ),
-                            shape = ButtonDefaults.shape(settingsItemShape(NuvioTheme.radii.md))
-                        ) {
-                            Icon(imageVector = Icons.Default.ArrowUpward, contentDescription = stringResource(R.string.cd_move_up))
-                        }
-                        Button(
-                            onClick = onMoveDown,
-                            enabled = canMoveDown,
-                            modifier = Modifier.semantics { role = Role.Button },
-                            colors = ButtonDefaults.colors(
-                                containerColor = settingsItemColor(NuvioTheme.colors.BackgroundCard),
-                                contentColor = NuvioTheme.colors.TextSecondary,
-                                focusedContainerColor = NuvioTheme.colors.FocusBackground,
-                                focusedContentColor = NuvioTheme.colors.Primary
-                            ),
-                            shape = ButtonDefaults.shape(settingsItemShape(NuvioTheme.radii.md))
-                        ) {
-                            Icon(imageVector = Icons.Default.ArrowDownward, contentDescription = stringResource(R.string.cd_move_down))
-                        }
-                    }
+                }
+                if (showReorder) {
                     Button(
-                        onClick = onRemove,
+                        onClick = onMoveUp,
+                        enabled = canMoveUp,
                         modifier = Modifier.semantics { role = Role.Button },
                         colors = ButtonDefaults.colors(
                             containerColor = settingsItemColor(NuvioTheme.colors.BackgroundCard),
                             contentColor = NuvioTheme.colors.TextSecondary,
                             focusedContainerColor = NuvioTheme.colors.FocusBackground,
-                            focusedContentColor = NuvioTheme.colors.Error
+                            focusedContentColor = NuvioTheme.colors.Primary
                         ),
                         shape = ButtonDefaults.shape(settingsItemShape(NuvioTheme.radii.md))
                     ) {
-                        Text(text = stringResource(R.string.addon_remove))
+                        Icon(imageVector = Icons.Default.ArrowUpward, contentDescription = stringResource(R.string.cd_move_up))
+                    }
+                    Button(
+                        onClick = onMoveDown,
+                        enabled = canMoveDown,
+                        modifier = Modifier.semantics { role = Role.Button },
+                        colors = ButtonDefaults.colors(
+                            containerColor = settingsItemColor(NuvioTheme.colors.BackgroundCard),
+                            contentColor = NuvioTheme.colors.TextSecondary,
+                            focusedContainerColor = NuvioTheme.colors.FocusBackground,
+                            focusedContentColor = NuvioTheme.colors.Primary
+                        ),
+                        shape = ButtonDefaults.shape(settingsItemShape(NuvioTheme.radii.md))
+                    ) {
+                        Icon(imageVector = Icons.Default.ArrowDownward, contentDescription = stringResource(R.string.cd_move_down))
                     }
                 }
+                Button(
+                    onClick = onRemove,
+                    modifier = Modifier.semantics { role = Role.Button },
+                    colors = ButtonDefaults.colors(
+                        containerColor = settingsItemColor(NuvioTheme.colors.BackgroundCard),
+                        contentColor = NuvioTheme.colors.TextSecondary,
+                        focusedContainerColor = NuvioTheme.colors.FocusBackground,
+                        focusedContentColor = NuvioTheme.colors.Error
+                    ),
+                    shape = ButtonDefaults.shape(settingsItemShape(NuvioTheme.radii.md))
+                ) {
+                    Text(text = stringResource(R.string.addon_remove))
+                }
+            }
+        }
+    }
+    Column(modifier = Modifier.padding(if (isV2Settings() || isCompactPhone) 14.dp else 20.dp)) {
+        if (isCompactPhone) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+            ) {
+                renderAddonHeaderInfo(Modifier.fillMaxWidth())
+                renderAddonActions()
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                renderAddonHeaderInfo(Modifier.weight(1f))
+                renderAddonActions()
             }
         }
 

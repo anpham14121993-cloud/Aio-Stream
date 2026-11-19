@@ -62,7 +62,7 @@ class UiScaleResolverTest {
     fun `mobile and tablet automatic scales stay enlarged and independent of tv reference`() {
         val phone = UiCanvasSnapshot(1080, 2400, 3f, 480, 360, 800, 1, 1080, 2400, 120f)
         val tablet = UiCanvasSnapshot(1600, 2560, 2f, 320, 800, 1280, 1, 1600, 2560, 60f)
-        assertEquals(112, resolver.resolve(phone, DeviceUiPreferences(), DeviceFormFactor.MOBILE).percent)
-        assertEquals(108, resolver.resolve(tablet, DeviceUiPreferences(), DeviceFormFactor.TABLET).percent)
+        assertEquals(100, resolver.resolve(phone, DeviceUiPreferences(), DeviceFormFactor.MOBILE).percent)
+        assertEquals(100, resolver.resolve(tablet, DeviceUiPreferences(), DeviceFormFactor.TABLET).percent)
     }
 }

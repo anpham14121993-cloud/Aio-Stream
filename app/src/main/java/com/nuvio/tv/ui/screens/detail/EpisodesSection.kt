@@ -1331,14 +1331,16 @@ private fun rememberEpisodeCardMetrics(posterCardCornerRadiusDp: Int = 12): Epis
                 statusBadgeInset = NuvioTheme.spacing.md
             )
 
-            else -> EpisodeCardMetrics(
-                rowHorizontalPadding = NuvioTheme.spacing.xxl,
+            else -> {
+                val compactEp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+                EpisodeCardMetrics(
+                rowHorizontalPadding = if (compactEp) 16.dp else NuvioTheme.spacing.xxl,
                 rowVerticalPadding = 14.dp,
-                itemSpacing = 14.dp,
-                cardWidth = 280.dp,
-                cardHeight = 179.dp,
+                itemSpacing = if (compactEp) 10.dp else 14.dp,
+                cardWidth = if (compactEp) 224.dp else 280.dp,
+                cardHeight = if (compactEp) 144.dp else 179.dp,
                 cornerRadius = userCornerRadius,
-                contentPadding = 14.dp,
+                contentPadding = if (compactEp) 12.dp else 14.dp,
                 contentBottomPadding = NuvioTheme.spacing.lg,
                 episodeBadgeHorizontalPadding = 7.dp,
                 episodeBadgeVerticalPadding = 3.dp,
@@ -1355,6 +1357,7 @@ private fun rememberEpisodeCardMetrics(posterCardCornerRadiusDp: Int = 12): Epis
                 statusIconSize = 14.dp,
                 statusBadgeInset = 10.dp
             )
+            }
         }
     }
 }

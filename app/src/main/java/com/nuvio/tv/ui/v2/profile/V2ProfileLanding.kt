@@ -50,6 +50,7 @@ import com.nuvio.tv.ui.v2.components.AvatarModel
 import com.nuvio.tv.ui.v2.components.NuvioActionPill
 import com.nuvio.tv.ui.v2.components.NuvioAvatar
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun V2ProfileLanding(
     title: String,
@@ -95,19 +96,27 @@ fun V2ProfileLanding(
         restoringFocus = false
     }
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+    val isCompactPhone = maxWidth < 600.dp
     val compactHeight = maxHeight < 600.dp
-    val gap = if (profiles.size >= 5) 20.dp else 32.dp
+    val horizontalPad = if (isCompactPhone) 16.dp else 48.dp
+    val gap = if (isCompactPhone) 16.dp else if (profiles.size >= 5) 20.dp else 32.dp
     // Include label gutters, focus overscan and row padding in the six-profile fit.
     val count = profiles.size.coerceIn(1, 6)
-    val available = (maxWidth - 96.dp - 32.dp - gap * (count - 1)).coerceAtLeast(0.dp)
-    val groupTop = minOf(maxHeight * .26f, maxHeight * .52f - 160.dp).coerceAtLeast(80.dp)
-    val portraitSize = minOf(144.dp, maxHeight * .205f, available / count - 22.dp).coerceAtLeast(56.dp)
+    val available = (maxWidth - horizontalPad * 2 - 32.dp - gap * (count - 1)).coerceAtLeast(0.dp)
+    val groupTop = minOf(maxHeight * .26f, maxHeight * .52f - 160.dp).coerceAtLeast(if (isCompactPhone) 68.dp else 80.dp)
+    val portraitSize = if (isCompactPhone) 88.dp else minOf(144.dp, maxHeight * .205f, available / count - 22.dp).coerceAtLeast(56.dp)
     androidx.compose.foundation.layout.Box(Modifier.align(Alignment.TopCenter).padding(top = 24.dp)) {
         MemberBrandWordmark(height = 40.dp, contentDescription = stringResource(R.string.cd_nuvio_logo))
     }
-    Column(Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(horizontal = 48.dp).padding(top = groupTop),
+    Column(Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(horizontal = horizontalPad).padding(top = groupTop),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, color = NuvioTheme.colors.TextPrimary, fontSize = if (compactHeight) 30.sp else 34.sp, fontWeight = FontWeight.Normal)
+        Text(
+            title,
+            color = NuvioTheme.colors.TextPrimary,
+            fontSize = if (isCompactPhone) 24.sp else if (compactHeight) 30.sp else 34.sp,
+            fontWeight = FontWeight.Normal,
+            textAlign = TextAlign.Center
+        )
         Spacer(Modifier.height(if (compactHeight) 18.dp else 36.dp))
         LazyRow(Modifier.fillMaxWidth(), state = listState, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(gap, Alignment.CenterHorizontally)) {
@@ -162,8 +171,14 @@ fun V2ProfileLanding(
             }
         }
     }
-    Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 88.dp),
-        horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+    androidx.compose.foundation.layout.FlowRow(
+        Modifier
+            .align(Alignment.BottomCenter)
+            .padding(horizontal = 16.dp)
+            .padding(bottom = if (isCompactPhone) 72.dp else 88.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (isCompactPhone) 12.dp else 20.dp, Alignment.CenterHorizontally),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
             if (canAdd) NuvioActionPill({ freezeReturnTarget(); onAdd() }, Modifier.focusRequester(addFocus)
                 .focusProperties { returnFocus?.let { up = it } }, enabled = interactive, neutralBackdrop = true) {
                 androidx.tv.material3.Icon(androidx.compose.material.icons.Icons.Default.Add, null, Modifier.width(20.dp))
@@ -176,8 +191,13 @@ fun V2ProfileLanding(
                 Text(stringResource(if (management) R.string.sync_generate_done else R.string.profile_manage_button))
             }
         }
-    Text(hint, color = NuvioTheme.colors.TextTertiary, fontSize = 14.sp,
-        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp))
+    Text(
+        hint,
+        color = NuvioTheme.colors.TextTertiary,
+        fontSize = if (isCompactPhone) 12.5.sp else 14.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, bottom = 20.dp)
+    )
 }
 
 }

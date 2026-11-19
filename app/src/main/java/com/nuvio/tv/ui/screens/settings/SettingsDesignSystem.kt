@@ -234,10 +234,14 @@ internal fun SettingsStandaloneScaffold(
     classicContainer: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val compactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = NuvioTheme.spacing.xxl, vertical = NuvioTheme.spacing.xl)
+            .padding(
+                horizontal = if (compactPhone) 12.dp else NuvioTheme.spacing.xxl,
+                vertical = if (compactPhone) 12.dp else NuvioTheme.spacing.xl
+            )
     ) {
         SettingsWorkspaceSurface(
             modifier = Modifier
@@ -833,13 +837,14 @@ internal fun SettingsToggleRow(
                 SettingsRowLeadingIcon(icon = leadingIcon, enabled = enabled, focused = isFocused)
                 Spacer(modifier = Modifier.width(NuvioTheme.spacing.lg))
             }
+            val compactToggle = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = title,
                         style = MaterialTheme.typography.bodyLarge,
                         color = NuvioTheme.colors.TextPrimary.copy(alpha = contentAlpha),
-                        maxLines = 1,
+                        maxLines = if (compactToggle) 2 else 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
@@ -946,13 +951,14 @@ internal fun SettingsActionRow(
                 SettingsRowLeadingIcon(icon = leadingIcon, enabled = enabled, focused = isFocused)
                 Spacer(modifier = Modifier.width(NuvioTheme.spacing.lg))
             }
+            val compactAction = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = annotatedTitle ?: AnnotatedString(title),
                         style = MaterialTheme.typography.bodyLarge,
                         color = NuvioTheme.colors.TextPrimary.copy(alpha = contentAlpha),
-                        maxLines = 1,
+                        maxLines = if (compactAction) 2 else 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
@@ -982,14 +988,14 @@ internal fun SettingsActionRow(
             }
 
             if (!value.isNullOrBlank()) {
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = value,
                     style = MaterialTheme.typography.labelLarge,
                     color = valueColor.copy(alpha = contentAlpha),
-                    maxLines = 1,
+                    maxLines = if (compactAction) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 260.dp)
+                    modifier = Modifier.widthIn(max = if (compactAction) 116.dp else 260.dp)
                 )
             }
 

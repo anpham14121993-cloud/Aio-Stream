@@ -36,21 +36,21 @@ class UiScaleResolver(
         if (!canvas.hasValidGeometry) return UiScaleDecision(100, "Waiting for valid window geometry")
         val fineTune = 1f + preferences.autoScaleFineTunePercent.coerceIn(-10, 10) / 100f
         val raw = when (formFactor) {
-            DeviceFormFactor.MOBILE -> 1.12f
-            DeviceFormFactor.TABLET -> 1.08f
+            DeviceFormFactor.MOBILE -> 1.00f
+            DeviceFormFactor.TABLET -> 1.00f
             DeviceFormFactor.TV -> minOf(
                 canvas.logicalWidthDp!! / referenceWidthDp,
                 canvas.logicalHeightDp!! / referenceHeightDp
             ).coerceIn(0.75f, 1.15f)
         }
         val minPercent = when (formFactor) {
-            DeviceFormFactor.MOBILE -> 94
-            DeviceFormFactor.TABLET -> 90
+            DeviceFormFactor.MOBILE -> 88
+            DeviceFormFactor.TABLET -> 88
             DeviceFormFactor.TV -> 72
         }
         val maxPercent = when (formFactor) {
-            DeviceFormFactor.MOBILE -> 126
-            DeviceFormFactor.TABLET -> 122
+            DeviceFormFactor.MOBILE -> 115
+            DeviceFormFactor.TABLET -> 115
             DeviceFormFactor.TV -> 120
         }
         val reason = when (formFactor) {

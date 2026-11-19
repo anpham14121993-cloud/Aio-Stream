@@ -255,13 +255,16 @@ fun ScoutScreen(
     val tasteModel = if (tasteOpened) hiltViewModel<ScoutTasteViewModel>() else null
     val taste = tasteModel?.state?.collectAsStateWithLifecycle()?.value
 
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val horizontalPad = if (isCompactPhone) 16.dp else NuvioTheme.spacing.screen.overscanHorizontal
+
     if (showThumbs && taste != null && tasteModel != null) {
         LaunchedEffect(taste.thumbs) { if (taste.thumbs == 0) showThumbs = false }
         Box(
             Modifier
                 .fillMaxSize()
                 .background(NuvioTheme.colors.Background)
-                .padding(horizontal = NuvioTheme.spacing.screen.overscanHorizontal, vertical = NuvioTheme.spacing.screen.overscanVertical)
+                .padding(horizontal = horizontalPad, vertical = NuvioTheme.spacing.screen.overscanVertical)
         ) {
             ScoutThumbsPage(
                 entries = taste.profile.ratings.values.sortedByDescending { it.ratedAt },
@@ -282,13 +285,14 @@ fun ScoutScreen(
         if (mixesOpen) Box(Modifier.matchParentSize().background(NuvioTheme.colors.Background)) {
             ScoutBackdrop(readyState?.focusedTile?.art)
         }
+        val scoutContentSidePad = if (isCompactPhone) 16.dp else (NuvioTheme.spacing.screen.overscanHorizontal - FOCUS_ROOM)
         BoxWithConstraints(
             modifier = Modifier
                 .sidebarPageContent()
                 .fillMaxSize()
                 .padding(
-                    start = NuvioTheme.spacing.screen.overscanHorizontal - FOCUS_ROOM,
-                    end = NuvioTheme.spacing.screen.overscanHorizontal - FOCUS_ROOM,
+                    start = scoutContentSidePad,
+                    end = scoutContentSidePad,
                     top = NuvioTheme.spacing.md
                 )
         ) {

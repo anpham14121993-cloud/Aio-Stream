@@ -138,11 +138,12 @@ internal fun DiscoverSection(
     val selectedCatalogLabel = selectedCatalog?.catalogName ?: stringResource(R.string.discover_select_catalog)
     val selectedGenreLabel = uiState.selectedDiscoverGenre?.let { localizedGenreLabel(it) } ?: stringResource(R.string.discover_genre_default)
 
+    val isCompactDiscover = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = NuvioTheme.spacing.xxxl),
-        verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
+            .padding(horizontal = if (isCompactDiscover) 16.dp else NuvioTheme.spacing.xxxl),
+        verticalArrangement = Arrangement.spacedBy(if (isCompactDiscover) 10.dp else NuvioTheme.spacing.md)
     ) {
         Text(
             text = stringResource(R.string.discover_title),
@@ -150,13 +151,13 @@ internal fun DiscoverSection(
             color = if (showBuiltInHeader) NuvioTheme.colors.TextPrimary else Color.Transparent
         )
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
-        ) {
+        val letters = selectedCatalog?.letters.orEmpty()
+        val hasLetters = letters.isNotEmpty()
+        val hasUnwatched = selectedCatalog?.offersUnwatched == true
+
+        val typePicker: @Composable (Modifier) -> Unit = { pickerMod ->
             DiscoverDropdownPicker(
-                modifier = Modifier.weight(1f)
-                    .focusRequester(filterFocusRequester),
+                modifier = pickerMod.focusRequester(filterFocusRequester),
                 title = stringResource(R.string.discover_filter_type),
                 value = selectedTypeLabel,
                 selectedValue = uiState.selectedDiscoverType,
@@ -174,9 +175,10 @@ internal fun DiscoverSection(
                 },
                 blockFocus = blockFilterFocus
             )
-
+        }
+        val catalogPicker: @Composable (Modifier) -> Unit = { pickerMod ->
             DiscoverDropdownPicker(
-                modifier = Modifier.weight(1f),
+                modifier = pickerMod,
                 title = stringResource(R.string.discover_filter_catalog),
                 value = selectedCatalogLabel,
                 selectedValue = uiState.selectedDiscoverCatalogKey,
@@ -191,9 +193,10 @@ internal fun DiscoverSection(
                 },
                 blockFocus = blockFilterFocus
             )
-
+        }
+        val genrePicker: @Composable (Modifier) -> Unit = { pickerMod ->
             DiscoverDropdownPicker(
-                modifier = Modifier.weight(1f),
+                modifier = pickerMod,
                 title = stringResource(R.string.discover_filter_genre),
                 value = selectedGenreLabel,
                 selectedValue = uiState.selectedDiscoverGenre ?: "__default__",
@@ -211,47 +214,81 @@ internal fun DiscoverSection(
                 },
                 blockFocus = blockFilterFocus
             )
+        }
+        val letterPicker: @Composable (Modifier) -> Unit = { pickerMod ->
+            val allLetters = stringResource(R.string.discover_letter_all)
+            DiscoverDropdownPicker(
+                modifier = pickerMod,
+                title = stringResource(R.string.discover_filter_letter),
+                value = uiState.selectedDiscoverLetter ?: allLetters,
+                selectedValue = uiState.selectedDiscoverLetter ?: "__default__",
+                expanded = expandedPicker == "letter",
+                options = listOf(DiscoverOption(allLetters, "__default__")) + letters.map { DiscoverOption(it, it) },
+                onExpandedChange = { shouldExpand ->
+                    expandedPicker = if (shouldExpand) "letter" else null
+                },
+                onSelect = { option ->
+                    onSelectLetter(option.value.takeUnless { it == "__default__" })
+                    expandedPicker = null
+                },
+                blockFocus = blockFilterFocus
+            )
+        }
+        val unwatchedPicker: @Composable (Modifier) -> Unit = { pickerMod ->
+            val allTitles = stringResource(R.string.discover_show_all)
+            val unwatched = stringResource(R.string.discover_show_unwatched)
+            DiscoverDropdownPicker(
+                modifier = pickerMod,
+                title = stringResource(R.string.discover_filter_show),
+                value = if (uiState.discoverUnwatchedOnly) unwatched else allTitles,
+                selectedValue = if (uiState.discoverUnwatchedOnly) "unwatched" else "all",
+                expanded = expandedPicker == "show",
+                options = listOf(DiscoverOption(allTitles, "all"), DiscoverOption(unwatched, "unwatched")),
+                onExpandedChange = { shouldExpand ->
+                    expandedPicker = if (shouldExpand) "show" else null
+                },
+                onSelect = { option ->
+                    onSetUnwatched(option.value == "unwatched")
+                    expandedPicker = null
+                },
+                blockFocus = blockFilterFocus
+            )
+        }
 
-            val letters = selectedCatalog?.letters.orEmpty()
-            if (letters.isNotEmpty()) {
-                val allLetters = stringResource(R.string.discover_letter_all)
-                DiscoverDropdownPicker(
-                    modifier = Modifier.weight(1f),
-                    title = stringResource(R.string.discover_filter_letter),
-                    value = uiState.selectedDiscoverLetter ?: allLetters,
-                    selectedValue = uiState.selectedDiscoverLetter ?: "__default__",
-                    expanded = expandedPicker == "letter",
-                    options = listOf(DiscoverOption(allLetters, "__default__")) + letters.map { DiscoverOption(it, it) },
-                    onExpandedChange = { shouldExpand ->
-                        expandedPicker = if (shouldExpand) "letter" else null
-                    },
-                    onSelect = { option ->
-                        onSelectLetter(option.value.takeUnless { it == "__default__" })
-                        expandedPicker = null
-                    },
-                    blockFocus = blockFilterFocus
-                )
+        if (isCompactDiscover) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    typePicker(Modifier.weight(1f))
+                    catalogPicker(Modifier.weight(1f))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    genrePicker(Modifier.weight(1f))
+                    if (hasLetters) {
+                        letterPicker(Modifier.weight(1f))
+                    } else if (hasUnwatched) {
+                        unwatchedPicker(Modifier.weight(1f))
+                    }
+                }
+                if (hasLetters && hasUnwatched) {
+                    unwatchedPicker(Modifier.fillMaxWidth())
+                }
             }
-
-            if (selectedCatalog?.offersUnwatched == true) {
-                val allTitles = stringResource(R.string.discover_show_all)
-                val unwatched = stringResource(R.string.discover_show_unwatched)
-                DiscoverDropdownPicker(
-                    modifier = Modifier.weight(1f),
-                    title = stringResource(R.string.discover_filter_show),
-                    value = if (uiState.discoverUnwatchedOnly) unwatched else allTitles,
-                    selectedValue = if (uiState.discoverUnwatchedOnly) "unwatched" else "all",
-                    expanded = expandedPicker == "show",
-                    options = listOf(DiscoverOption(allTitles, "all"), DiscoverOption(unwatched, "unwatched")),
-                    onExpandedChange = { shouldExpand ->
-                        expandedPicker = if (shouldExpand) "show" else null
-                    },
-                    onSelect = { option ->
-                        onSetUnwatched(option.value == "unwatched")
-                        expandedPicker = null
-                    },
-                    blockFocus = blockFilterFocus
-                )
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
+            ) {
+                typePicker(Modifier.weight(1f))
+                catalogPicker(Modifier.weight(1f))
+                genrePicker(Modifier.weight(1f))
+                if (hasLetters) letterPicker(Modifier.weight(1f))
+                if (hasUnwatched) unwatchedPicker(Modifier.weight(1f))
             }
         }
 
@@ -442,6 +479,7 @@ private fun DiscoverDropdownPicker(
                 ) {
                     Text(
                         text = value,
+                        modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleMedium.copy(
                             textDirection = value.contentTextDirection()
                         ),
@@ -466,7 +504,7 @@ private fun DiscoverDropdownPicker(
                 onExpandedChange(false)
             },
             modifier = Modifier
-                .width(with(LocalDensity.current) { anchorSize.width.toDp() })
+                .width(maxOf(with(LocalDensity.current) { anchorSize.width.toDp() }, 168.dp))
                 .heightIn(max = 320.dp)
                 .then(if (LocalV2Appearance.current != null) Modifier.nuvioGlass(GlassRole.PANEL, shape = RoundedCornerShape(14.dp)) else Modifier),
             shape = RoundedCornerShape(14.dp),
@@ -661,10 +699,12 @@ internal fun DiscoverGrid(
     // and was causing focus to jump to a different column after long drags.
     var fastScrollStartColumn by remember { mutableStateOf<Int?>(null) }
 
+    val isCompactDiscoverGrid = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val baseDiscoverMinSize = if (globalLandscape) posterCardStyle.height else adaptiveStyle.width
     LazyVerticalGrid(
         state = gridState,
         columns = GridCells.Adaptive(
-            minSize = if (globalLandscape) posterCardStyle.height else adaptiveStyle.width
+            minSize = if (isCompactDiscoverGrid) minOf(baseDiscoverMinSize, 102.dp) else baseDiscoverMinSize
         ),
         modifier = Modifier.fillMaxSize()
             .focusRestorer { focusedItemRequester }

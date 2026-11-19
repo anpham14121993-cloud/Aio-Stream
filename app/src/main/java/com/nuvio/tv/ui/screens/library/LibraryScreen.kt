@@ -330,10 +330,12 @@ fun LibraryScreen(
     Box(Modifier.fillMaxSize().background(NuvioTheme.colors.Background)) {
     if (LocalV2Appearance.current != null) V2Atmosphere(background = LocalV2Appearance.current!!.settingsBackground)
     val globalLandscape = com.nuvio.tv.ui.components.LocalLandscapePosterMode.current
+    val compactLibrary = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val baseLibMinSize = if (globalLandscape) posterCardStyle.height else posterCardStyle.width
 
     LazyVerticalGrid(
         columns = GridCells.Adaptive(
-            minSize = if (globalLandscape) posterCardStyle.height else posterCardStyle.width
+            minSize = if (compactLibrary) minOf(baseLibMinSize, 102.dp) else baseLibMinSize
         ),
         state = gridState,
         modifier = Modifier
@@ -358,8 +360,13 @@ fun LibraryScreen(
                 }
                 false
             },
-        contentPadding = PaddingValues(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, top = NuvioTheme.spacing.xl, bottom = NuvioTheme.spacing.xxl),
-        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
+        contentPadding = PaddingValues(
+            start = if (compactLibrary) 16.dp else NuvioTheme.spacing.xxxl,
+            end = if (compactLibrary) 16.dp else NuvioTheme.spacing.xxxl,
+            top = if (compactLibrary) 12.dp else NuvioTheme.spacing.xl,
+            bottom = NuvioTheme.spacing.xxl
+        ),
+        horizontalArrangement = Arrangement.spacedBy(if (compactLibrary) 10.dp else NuvioTheme.spacing.md),
         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
@@ -778,12 +785,18 @@ private fun LibraryViewModeRow(
     /** Optional action pinned to the right of the tabs (used for the cloud refresh button). */
     trailing: (@Composable () -> Unit)? = null
 ) {
+    val isCompactLibModes = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+        Row(
+            modifier = if (isCompactLibModes) {
+                Modifier.weight(1f).then(androidx.compose.foundation.horizontalScroll(androidx.compose.foundation.rememberScrollState()))
+            } else Modifier,
+            horizontalArrangement = Arrangement.spacedBy(if (isCompactLibModes) 8.dp else NuvioTheme.spacing.md)
+        ) {
             modes.forEach { mode ->
                 val selected = mode == selectedMode
                 Button(
@@ -1209,19 +1222,12 @@ private fun LibrarySelectorsRow(
     val selectedGenreLabel = selectedGenre?.let { localizedGenreLabel(it) } ?: allLabel
     val selectedYearLabel = selectedYear ?: allLabel
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
-        ) {
-            if (sourceMode != LibrarySourceMode.LOCAL) {
+    val compactLibFilters = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val filterPickers: List<@Composable (Modifier) -> Unit> = buildList {
+        if (sourceMode != LibrarySourceMode.LOCAL) {
+            add { mod ->
                 LibraryDropdownPicker(
-                    modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(primaryFocusRequester),
+                    modifier = mod.focusRequester(primaryFocusRequester),
                     upFocusRequester = upFocusRequester,
                     title = stringResource(R.string.library_filter_list),
                     value = selectedListLabel,
@@ -1232,15 +1238,10 @@ private fun LibrarySelectorsRow(
                     onSelect = { onSelectList(it.value) }
                 )
             }
-
+        }
+        add { mod ->
             LibraryDropdownPicker(
-                modifier = if (sourceMode != LibrarySourceMode.LOCAL) {
-                    Modifier.weight(1f)
-                } else {
-                    Modifier
-                        .weight(1f)
-                        .focusRequester(primaryFocusRequester)
-                },
+                modifier = if (sourceMode != LibrarySourceMode.LOCAL) mod else mod.focusRequester(primaryFocusRequester),
                 upFocusRequester = upFocusRequester,
                 title = stringResource(R.string.library_filter_type),
                 value = selectedTypeLabel,
@@ -1259,10 +1260,11 @@ private fun LibrarySelectorsRow(
                     typeTabs.firstOrNull { it.key == option.value }?.let(onSelectType)
                 }
             )
-
-            if (sortOptions.isNotEmpty()) {
+        }
+        if (sortOptions.isNotEmpty()) {
+            add { mod ->
                 LibraryDropdownPicker(
-                    modifier = Modifier.weight(1f),
+                    modifier = mod,
                     upFocusRequester = upFocusRequester,
                     title = stringResource(R.string.library_filter_sort),
                     value = selectedSortLabel,
@@ -1276,15 +1278,11 @@ private fun LibrarySelectorsRow(
                 )
             }
         }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
-        ) {
-            if (genres.isNotEmpty()) {
+        if (genres.isNotEmpty()) {
+            add { mod ->
                 val genreAllOption = LibraryOption(allLabel, "__all__")
                 LibraryDropdownPicker(
-                    modifier = Modifier.weight(1f),
+                    modifier = mod,
                     title = stringResource(R.string.library_filter_genre),
                     value = selectedGenreLabel,
                     selectedValue = selectedGenre ?: "__all__",
@@ -1298,11 +1296,12 @@ private fun LibrarySelectorsRow(
                     }
                 )
             }
-
-            if (years.isNotEmpty()) {
+        }
+        if (years.isNotEmpty()) {
+            add { mod ->
                 val yearAllOption = LibraryOption(allLabel, "__all__")
                 LibraryDropdownPicker(
-                    modifier = Modifier.weight(1f),
+                    modifier = mod,
                     title = stringResource(R.string.library_filter_year),
                     value = selectedYearLabel,
                     selectedValue = selectedYear ?: "__all__",
@@ -1316,10 +1315,11 @@ private fun LibrarySelectorsRow(
                     }
                 )
             }
-
+        }
+        add { mod ->
             val watchedFilterLabel = stringResource(selectedWatchedFilter.labelResId)
             LibraryDropdownPicker(
-                modifier = Modifier.weight(1f),
+                modifier = mod,
                 title = stringResource(R.string.library_filter_watched),
                 value = watchedFilterLabel,
                 selectedValue = selectedWatchedFilter.key,
@@ -1333,6 +1333,23 @@ private fun LibrarySelectorsRow(
                         ?.let(onSelectWatchedFilter)
                 }
             )
+        }
+    }
+
+    val perRow = if (compactLibFilters) 2 else 3
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(if (compactLibFilters) 8.dp else 10.dp)
+    ) {
+        filterPickers.chunked(perRow).forEach { rowPickers ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(if (compactLibFilters) 8.dp else NuvioTheme.spacing.md)
+            ) {
+                rowPickers.forEach { picker ->
+                    picker(Modifier.weight(1f))
+                }
+            }
         }
     }
 }
@@ -1434,6 +1451,7 @@ private fun LibraryDropdownPicker(
                 ) {
                     Text(
                         text = value,
+                        modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleMedium,
                         color = NuvioTheme.colors.TextPrimary,
                         maxLines = 1,
@@ -1455,7 +1473,7 @@ private fun LibraryDropdownPicker(
                 onExpandedChange(false)
             },
             modifier = Modifier
-                .width(with(LocalDensity.current) { anchorSize.width.toDp() })
+                .width(maxOf(with(LocalDensity.current) { anchorSize.width.toDp() }, 168.dp))
                 .heightIn(max = 320.dp)
                 .then(if (LocalV2Appearance.current != null) Modifier.nuvioGlass(GlassRole.PANEL, shape = RoundedCornerShape(14.dp)) else Modifier),
             shape = RoundedCornerShape(14.dp),

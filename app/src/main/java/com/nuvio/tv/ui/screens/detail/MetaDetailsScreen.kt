@@ -3648,10 +3648,15 @@ private fun PeopleSectionTabs(
     onTabFocused: (PeopleSectionTab) -> Unit
 ) {
 
+    val compactTabs = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 20.dp, start = detailStartInset, end = NuvioTheme.spacing.xxxl),
+            .padding(
+                top = 20.dp,
+                start = detailStartInset,
+                end = if (compactTabs) 16.dp else NuvioTheme.spacing.xxxl
+            ),
         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
     ) {
         @Composable
@@ -3680,6 +3685,11 @@ private fun PeopleSectionTabs(
         }
 
         Row(
+            modifier = if (compactTabs) {
+                Modifier.fillMaxWidth().then(
+                    androidx.compose.foundation.horizontalScroll(androidx.compose.foundation.rememberScrollState())
+                )
+            } else Modifier,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             renderTabs(tabs)

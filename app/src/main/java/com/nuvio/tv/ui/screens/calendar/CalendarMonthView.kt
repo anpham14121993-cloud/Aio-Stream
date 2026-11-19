@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.screens.calendar
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -93,15 +94,9 @@ internal fun CalendarMonthView(
         if (first == null) viewModel.clearFocus() else viewModel.onRowFocused(first, fromList = false)
     }
 
-    // Back anywhere in the month goes straight up to Week / List / Month; Back there leaves the Calendar as usual.
-    Row(
-        Modifier.fillMaxSize().onPreviewKeyEvent { event ->
-            if (event.nativeKeyEvent.keyCode != AndroidKeyEvent.KEYCODE_BACK) return@onPreviewKeyEvent false
-            if (event.nativeKeyEvent.action == AndroidKeyEvent.ACTION_UP) runCatching { tabsRequester.requestFocus() }
-            true
-        }
-    ) {
-        Column(Modifier.weight(0.62f).fillMaxHeight().padding(bottom = NuvioTheme.spacing.xxl)) {
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val renderMonthGridColumn: @Composable (Modifier) -> Unit = { gridColumnModifier ->
+        Column(gridColumnModifier) {
             // Up from the grid turns the month, so the month row is how focus gets back up to Week / List / Month;
             // Back from the grid jumps here.
             Row(
@@ -195,6 +190,7 @@ internal fun CalendarMonthView(
                                 selected = date == focusedDay,
                                 mosaic = calendarMosaic(uiState.days[date]),
                                 performance = performance,
+                                onClick = { viewModel.focusDay(date) },
                                 modifier = Modifier.weight(1f).fillMaxHeight()
                             )
                         }
@@ -202,19 +198,48 @@ internal fun CalendarMonthView(
                 }
             }
         }
-        Spacer(Modifier.width(NuvioTheme.spacing.xl))
-        CalendarDayPanel(
-            date = focusedDay,
-            today = today,
-            rows = dayRows,
-            formats = formats,
-            performance = performance,
-            firstRequester = dayListRequester,
-            modifier = Modifier.weight(0.38f).fillMaxHeight().padding(bottom = NuvioTheme.spacing.xxl),
-            onFocused = { viewModel.onRowFocused(it, fromList = false) },
-            onOpen = onOpen,
-            onOptions = onOptions
-        )
+    }
+
+    // Back anywhere in the month goes straight up to Week / List / Month; Back there leaves the Calendar as usual.
+    val backInterceptor = Modifier.onPreviewKeyEvent { event ->
+        if (event.nativeKeyEvent.keyCode != AndroidKeyEvent.KEYCODE_BACK) return@onPreviewKeyEvent false
+        if (event.nativeKeyEvent.action == AndroidKeyEvent.ACTION_UP) runCatching { tabsRequester.requestFocus() }
+        true
+    }
+    if (isCompactPhone) {
+        Column(Modifier.fillMaxSize().then(backInterceptor)) {
+            renderMonthGridColumn(Modifier.weight(0.56f).fillMaxWidth())
+            Spacer(Modifier.height(NuvioTheme.spacing.md))
+            CalendarDayPanel(
+                date = focusedDay,
+                today = today,
+                rows = dayRows,
+                formats = formats,
+                performance = performance,
+                firstRequester = dayListRequester,
+                modifier = Modifier.weight(0.44f).fillMaxWidth().padding(bottom = NuvioTheme.spacing.md),
+                onFocused = { viewModel.onRowFocused(it, fromList = false) },
+                onOpen = onOpen,
+                onOptions = onOptions
+            )
+        }
+    } else {
+        Row(Modifier.fillMaxSize().then(backInterceptor)) {
+            renderMonthGridColumn(Modifier.weight(0.62f).fillMaxHeight().padding(bottom = NuvioTheme.spacing.xxl))
+            Spacer(Modifier.width(NuvioTheme.spacing.xl))
+            CalendarDayPanel(
+                date = focusedDay,
+                today = today,
+                rows = dayRows,
+                formats = formats,
+                performance = performance,
+                firstRequester = dayListRequester,
+                modifier = Modifier.weight(0.38f).fillMaxHeight().padding(bottom = NuvioTheme.spacing.xxl),
+                onFocused = { viewModel.onRowFocused(it, fromList = false) },
+                onOpen = onOpen,
+                onOptions = onOptions
+            )
+        }
     }
 }
 
@@ -227,6 +252,7 @@ private fun CalendarMonthCell(
     selected: Boolean,
     mosaic: CalendarMosaic,
     performance: Boolean,
+    onClick: () -> Unit = {},
     modifier: Modifier
 ) {
     val v2 = LocalV2Appearance.current != null
@@ -244,6 +270,7 @@ private fun CalendarMonthCell(
                     }
                 )
                 .clip(shape)
+                .clickable { onClick() }
                 .background(
                     when {
                         selected && !focused -> NuvioTheme.colors.FocusBackground.copy(alpha = .5f)

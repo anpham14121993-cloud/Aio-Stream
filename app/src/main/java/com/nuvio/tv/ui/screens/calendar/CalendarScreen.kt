@@ -181,11 +181,14 @@ fun CalendarScreen(
             CalendarPageBackdrop(backdrop)
         }
 
+        val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+        val horizontalPad = if (isCompactPhone) 16.dp else NuvioTheme.spacing.xxxl
+
         Column(
             modifier = Modifier
                 .sidebarPageContent()
                 .fillMaxSize()
-                .padding(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, top = NuvioTheme.spacing.xl)
+                .padding(start = horizontalPad, end = horizontalPad, top = if (isCompactPhone) NuvioTheme.spacing.md else NuvioTheme.spacing.xl)
         ) {
             CalendarHeader(
                 showBuiltInHeader = showBuiltInHeader,
@@ -272,12 +275,9 @@ private fun CalendarHeader(
     onViewMode: (CalendarViewMode) -> Unit
 ) {
     val v2 = LocalV2Appearance.current != null
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    val renderHeaderTitle: @Composable (Modifier) -> Unit = { titleModifier ->
+        Column(titleModifier) {
             Text(
                 text = stringResource(R.string.calendar_title),
                 style = MaterialTheme.typography.headlineMedium,
@@ -301,7 +301,9 @@ private fun CalendarHeader(
                 )
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)) {
+    }
+    val renderViewModeButtons: @Composable () -> Unit = {
+        Row(horizontalArrangement = Arrangement.spacedBy(if (isCompactPhone) NuvioTheme.spacing.sm else NuvioTheme.spacing.md)) {
             CalendarViewMode.entries.forEach { mode ->
                 val selected = mode == viewMode
                 val pill = RoundedCornerShape(NuvioTheme.radii.full)
@@ -343,6 +345,24 @@ private fun CalendarHeader(
                     )
                 }
             }
+        }
+    }
+    if (isCompactPhone) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+        ) {
+            renderHeaderTitle(Modifier.fillMaxWidth())
+            renderViewModeButtons()
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            renderHeaderTitle(Modifier.weight(1f))
+            renderViewModeButtons()
         }
     }
 }
@@ -448,33 +468,65 @@ private fun CalendarListView(
         viewModel.consumePendingListKey()
     }
 
-    Row(Modifier.fillMaxSize()) {
-        CalendarList(
-            list = list,
-            listState = listState,
-            formats = formats,
-            performance = performance,
-            targetKey = targetKey,
-            targetRequester = targetRequester,
-            modifier = Modifier.weight(0.62f).fillMaxHeight(),
-            onFocused = { viewModel.onRowFocused(it, fromList = userMoved[0]) },
-            onUserKey = { userMoved[0] = true },
-            onOpen = onOpen,
-            onBell = viewModel::toggleBell,
-            onOptions = onOptions
-        )
-        Spacer(Modifier.width(NuvioTheme.spacing.xl))
-        CalendarSidePanel(
-            focus = focus,
-            formats = formats,
-            today = uiState.today,
-            next = focus?.row?.let { calendarNextFrom(uiState.byTitle, it) }.orEmpty(),
-            performance = performance,
-            onWatch = onWatch,
-            onOpen = onOpen,
-            onBell = viewModel::toggleBell,
-            modifier = Modifier.weight(0.38f).fillMaxHeight().padding(bottom = NuvioTheme.spacing.xxl)
-        )
+    val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+    if (isCompactPhone) {
+        Column(Modifier.fillMaxSize()) {
+            CalendarList(
+                list = list,
+                listState = listState,
+                formats = formats,
+                performance = performance,
+                targetKey = targetKey,
+                targetRequester = targetRequester,
+                modifier = Modifier.weight(0.58f).fillMaxWidth(),
+                onFocused = { viewModel.onRowFocused(it, fromList = userMoved[0]) },
+                onUserKey = { userMoved[0] = true },
+                onOpen = onOpen,
+                onBell = viewModel::toggleBell,
+                onOptions = onOptions
+            )
+            Spacer(Modifier.height(NuvioTheme.spacing.md))
+            CalendarSidePanel(
+                focus = focus,
+                formats = formats,
+                today = uiState.today,
+                next = focus?.row?.let { calendarNextFrom(uiState.byTitle, it) }.orEmpty(),
+                performance = performance,
+                onWatch = onWatch,
+                onOpen = onOpen,
+                onBell = viewModel::toggleBell,
+                modifier = Modifier.weight(0.42f).fillMaxWidth().padding(bottom = NuvioTheme.spacing.md)
+            )
+        }
+    } else {
+        Row(Modifier.fillMaxSize()) {
+            CalendarList(
+                list = list,
+                listState = listState,
+                formats = formats,
+                performance = performance,
+                targetKey = targetKey,
+                targetRequester = targetRequester,
+                modifier = Modifier.weight(0.62f).fillMaxHeight(),
+                onFocused = { viewModel.onRowFocused(it, fromList = userMoved[0]) },
+                onUserKey = { userMoved[0] = true },
+                onOpen = onOpen,
+                onBell = viewModel::toggleBell,
+                onOptions = onOptions
+            )
+            Spacer(Modifier.width(NuvioTheme.spacing.xl))
+            CalendarSidePanel(
+                focus = focus,
+                formats = formats,
+                today = uiState.today,
+                next = focus?.row?.let { calendarNextFrom(uiState.byTitle, it) }.orEmpty(),
+                performance = performance,
+                onWatch = onWatch,
+                onOpen = onOpen,
+                onBell = viewModel::toggleBell,
+                modifier = Modifier.weight(0.38f).fillMaxHeight().padding(bottom = NuvioTheme.spacing.xxl)
+            )
+        }
     }
 }
 

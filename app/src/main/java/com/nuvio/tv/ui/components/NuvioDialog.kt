@@ -129,11 +129,12 @@ fun NuvioDialog(
                     }
             ) {
                 backgroundContent()
+                val effectivePadding = if (availableWidthDp < 600.dp) minOf(contentPadding, 18.dp) else contentPadding
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(contentPadding),
-                    verticalArrangement = Arrangement.spacedBy(contentSpacing)
+                        .padding(effectivePadding),
+                    verticalArrangement = Arrangement.spacedBy(if (availableWidthDp < 600.dp) minOf(contentSpacing, 12.dp) else contentSpacing)
                 ) {
                     if (title.isNotBlank()) {
                         Text(
@@ -142,7 +143,7 @@ fun NuvioDialog(
                             color = NuvioTheme.colors.TextPrimary,
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = titleTextAlign,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }

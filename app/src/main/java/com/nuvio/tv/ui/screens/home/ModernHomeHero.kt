@@ -519,12 +519,16 @@ private fun HeroTitleContent(
             .clearAndSetSemantics { contentDescription = heroDescription },
         verticalArrangement = Arrangement.spacedBy(titleSpacing)
     ) {
+        val isCompactHero = LocalConfiguration.current.screenWidthDp < 600
         // Text remains readable on logo failure/timeout; both choices occupy the same slot.
-        Box(Modifier.height(100.dp).fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+        Box(
+            Modifier.height(if (isCompactHero) 56.dp else 100.dp).fillMaxWidth(),
+            contentAlignment = Alignment.CenterStart
+        ) {
             if (preparedLogo != null) {
                 Image(
                     painter = preparedLogo.asPainter(context), contentDescription = preview.title,
-                    modifier = Modifier.widthIn(max = 220.dp).fillMaxSize().graphicsLayer { alpha = metaAlpha },
+                    modifier = Modifier.widthIn(max = if (isCompactHero) 176.dp else 220.dp).fillMaxSize().graphicsLayer { alpha = metaAlpha },
                     contentScale = ContentScale.Fit, alignment = Alignment.CenterStart
                 )
             } else if (!logoPending) {
@@ -652,24 +656,8 @@ private fun HeroTitleContent(
         }
 
         if (secondaryHighlightText != null || ageRatingBadge != null || reserveImdbInSecondary || statusBadge != null || secondaryDetails.isNotEmpty() || hasMdbListRatings) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .graphicsLayer { alpha = metaAlpha },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(metaSpacing)
-            ) {
-                val semiBoldLabelMedium = remember(labelMedium) { labelMedium.copy(fontWeight = FontWeight.SemiBold) }
-        secondaryHighlightText?.let { text ->
-                    Text(
-                        text = text,
-                        modifier = Modifier.weight(1f, fill = false),
-                        style = semiBoldLabelMedium,
-                        color = NuvioTheme.colors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+            val semiBoldLabelMedium = remember(labelMedium) { labelMedium.copy(fontWeight = FontWeight.SemiBold) }
+            val secondaryTrailingContent: @Composable () -> Unit = {
                 if (secondaryHighlightText != null && (hasSecondaryBadge || reserveImdbInSecondary || secondaryDetails.isNotEmpty() || hasMdbListRatings)) {
                     HeroMetaDivider(
                         scale = metaScale,
@@ -733,11 +721,7 @@ private fun HeroTitleContent(
                         HeroMetaDivider(metaScale)
                     }
                 }
-                // MDBList ratings inline after other secondary meta.
                 if (showImdbRatings && hasMdbListRatings) {
-                    // Divider before MDBList ratings is already handled by the
-                    // badge/IMDb/details divider logic above — only add one
-                    // when IMDb or details were the last visible element.
                     if (showImdbInSecondary || secondaryDetails.isNotEmpty()) {
                         HeroMetaDivider(metaScale)
                     }
@@ -746,6 +730,48 @@ private fun HeroTitleContent(
                         maxItems = 3,
                         order = mdbListRatingOrder
                     )
+                }
+            }
+            if (isCompactHero) {
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer { alpha = metaAlpha },
+                    horizontalArrangement = Arrangement.spacedBy(metaSpacing),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically
+                ) {
+                    secondaryHighlightText?.let { text ->
+                        Text(
+                            text = text,
+                            style = semiBoldLabelMedium,
+                            color = NuvioTheme.colors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    secondaryTrailingContent()
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer { alpha = metaAlpha },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(metaSpacing)
+                ) {
+                    secondaryHighlightText?.let { text ->
+                        Text(
+                            text = text,
+                            modifier = Modifier.weight(1f, fill = false),
+                            style = semiBoldLabelMedium,
+                            color = NuvioTheme.colors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    secondaryTrailingContent()
                 }
             }
         }

@@ -7,4 +7,8 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.v2.appearance.LocalV2Appearance
 
 internal val detailStartInset: Dp
-    @Composable get() = if (LocalV2Appearance.current != null) 24.dp else NuvioTheme.spacing.xxxl
+    @Composable get() = when {
+        androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600 -> 16.dp
+        LocalV2Appearance.current != null -> 24.dp
+        else -> NuvioTheme.spacing.xxxl
+    }

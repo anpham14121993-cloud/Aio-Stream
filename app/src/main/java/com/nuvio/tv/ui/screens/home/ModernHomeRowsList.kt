@@ -506,7 +506,6 @@ internal fun ModernHomeRowsList(
                 .fillMaxWidth()
                 .recompositionHighlighter()
                 .height(rowsViewportHeight)
-                .padding(bottom = catalogBottomPadding)
                 .clipToBounds()
                 .graphicsLayer { alpha = trailerContentAlpha() }
                 .focusRequester(contentFocusRequester)
@@ -646,7 +645,7 @@ internal fun ModernHomeRowsList(
                         }
                     },
                 ),
-            contentPadding = PaddingValues(bottom = rowsViewportHeight),
+            contentPadding = PaddingValues(bottom = rowsViewportHeight + catalogBottomPadding),
             verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xl)
         ) {
             itemsIndexed(

@@ -26,12 +26,15 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -313,18 +316,23 @@ fun HeroContentSection(
         }
     }
 
+    val isCompactPhone = LocalConfiguration.current.screenWidthDp < 600
     // Animate logo properties for trailer mode
     val logoHeight by animateDpAsState(
-        targetValue = if (isTrailerPlaying) 60.dp else 100.dp,
+        targetValue = when {
+            isCompactPhone && isTrailerPlaying -> 48.dp
+            isCompactPhone -> 68.dp
+            isTrailerPlaying -> 60.dp
+            else -> 100.dp
+        },
         animationSpec = tween(600),
         label = "logoHeight"
     )
     val logoBottomPadding by animateDpAsState(
-        targetValue = if (isTrailerPlaying) NuvioTheme.spacing.xl else NuvioTheme.spacing.lg,
+        targetValue = if (isTrailerPlaying) NuvioTheme.spacing.xl else if (isCompactPhone) NuvioTheme.spacing.md else NuvioTheme.spacing.lg,
         animationSpec = tween(600),
         label = "logoPadding"
     )
-    val isCompactPhone = LocalConfiguration.current.screenWidthDp < 600
     val logoMaxWidth by animateFloatAsState(
         targetValue = when {
             isCompactPhone && isTrailerPlaying -> 0.45f
@@ -341,7 +349,7 @@ fun HeroContentSection(
     val heroHeight by animateDpAsState(
         targetValue = when {
             isCompactPhone && isTrailerPlaying -> maxOf(340.dp, screenHeight * 0.52f)
-            isCompactPhone -> 380.dp
+            isCompactPhone -> 320.dp
             isTrailerPlaying -> maxOf(540.dp, screenHeight)
             else -> 540.dp
         },
@@ -351,7 +359,13 @@ fun HeroContentSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(heroHeight)
+            .then(
+                if (isCompactPhone && !isTrailerPlaying) {
+                    Modifier.heightIn(min = heroHeight)
+                } else {
+                    Modifier.height(heroHeight)
+                }
+            )
             .drawWithContent {
                 drawContent()
                 com.nuvio.tv.core.performance.DetailEntryTrace.mark("hero_draw", once = true)
@@ -361,12 +375,14 @@ fun HeroContentSection(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (isCompactPhone) Modifier.windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars) else Modifier)
                 .then(if (v2Hero) Modifier else Modifier.animateContentSize(
                     animationSpec = tween(600)
                 ))
                 .padding(
                     start = if (isCompactPhone) 16.dp else detailStartInset,
                     end = if (isCompactPhone) 16.dp else NuvioTheme.spacing.xxxl,
+                    top = if (isCompactPhone) 40.dp else 0.dp,
                     bottom = NuvioTheme.spacing.lg
                 ),
             verticalArrangement = Arrangement.Bottom
@@ -611,7 +627,11 @@ fun HeroContentSection(
                             upFocusRequester = playButtonFocusRequester,
                             onFocused = onHeroActionFocused,
                             onTruncationChanged = onTruncationChanged,
-                            maxLines = if (sourceLineShown) 6 else 8,
+                            maxLines = when {
+                                isCompactPhone -> 4
+                                sourceLineShown -> 6
+                                else -> 8
+                            },
                             modifier = Modifier
                                 .fillMaxWidth(if (isCompactPhone) 1f else 0.6f)
                                 .padding(bottom = NuvioTheme.spacing.md)
@@ -993,6 +1013,7 @@ private fun ActionIconButton(
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MetaInfoRow(
     meta: Meta,
@@ -1062,27 +1083,10 @@ private fun MetaInfoRow(
         }
     }
 
+    val isCompactPhoneMeta = LocalConfiguration.current.screenWidthDp < 600
     Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)) {
         // Primary row: Genres, Release, Ratings
-        Row(
-            modifier = if (reserveImdbRatingHeight) Modifier.height(30.dp) else Modifier,
-            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (meta.genres.isNotEmpty()) {
-                Text(
-                    text = genresText,
-                    modifier = Modifier.weight(1f, fill = false),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = NuvioTheme.extendedColors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (yearText != null || shouldShowImdbRating || shouldShowTmdbRating) {
-                    MetaInfoDivider()
-                }
-            }
-
+        val primaryMetaTrailing: @Composable () -> Unit = {
             yearText?.let { year ->
                 Text(
                     text = year,
@@ -1100,7 +1104,7 @@ private fun MetaInfoRow(
                     horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
                 ) {
                     ImdbRatingSourceLabel(
-                        logoModifier = Modifier.size(30.dp),
+                        logoModifier = Modifier.size(if (isCompactPhoneMeta) 24.dp else 30.dp),
                         textStyle = MaterialTheme.typography.labelLarge,
                         textColor = NuvioTheme.extendedColors.textSecondary
                     )
@@ -1121,7 +1125,7 @@ private fun MetaInfoRow(
                     AsyncImage(
                         model = tmdbModel,
                         contentDescription = null,
-                        modifier = Modifier.size(NuvioTheme.spacing.xl),
+                        modifier = Modifier.size(if (isCompactPhoneMeta) 20.dp else NuvioTheme.spacing.xl),
                         contentScale = ContentScale.Fit
                     )
                     val ratingText = remember(rating) { (rating * 10).toInt().toString() }
@@ -1133,13 +1137,53 @@ private fun MetaInfoRow(
                 }
             }
         }
-
-        // Secondary row: Runtime, Age Rating, Status, Country, Language
-        if (ageRatingBadge != null || statusBadge != null || secondaryItems.isNotEmpty()) {
+        if (isCompactPhoneMeta) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                itemVerticalAlignment = Alignment.CenterVertically
+            ) {
+                if (meta.genres.isNotEmpty()) {
+                    Text(
+                        text = genresText,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = NuvioTheme.extendedColors.textSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (yearText != null || shouldShowImdbRating || shouldShowTmdbRating) {
+                        MetaInfoDivider()
+                    }
+                }
+                primaryMetaTrailing()
+            }
+        } else {
             Row(
+                modifier = if (reserveImdbRatingHeight) Modifier.height(30.dp) else Modifier,
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (meta.genres.isNotEmpty()) {
+                    Text(
+                        text = genresText,
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = NuvioTheme.extendedColors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (yearText != null || shouldShowImdbRating || shouldShowTmdbRating) {
+                        MetaInfoDivider()
+                    }
+                }
+                primaryMetaTrailing()
+            }
+        }
+
+        // Secondary row: Runtime, Age Rating, Status, Country, Language
+        if (ageRatingBadge != null || statusBadge != null || secondaryItems.isNotEmpty()) {
+            val secondaryMetaContent: @Composable () -> Unit = {
                 if (ageRatingBadge != null && statusBadge != null) {
                     CombinedMetaBadge(
                         leftText = ageRatingBadge,
@@ -1170,6 +1214,23 @@ private fun MetaInfoRow(
                     if (index < secondaryItems.lastIndex) {
                         MetaInfoDivider()
                     }
+                }
+            }
+            if (isCompactPhoneMeta) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically
+                ) {
+                    secondaryMetaContent()
+                }
+            } else {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    secondaryMetaContent()
                 }
             }
         }

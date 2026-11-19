@@ -41,35 +41,79 @@ internal fun <T> V2VisualOptions(title: String, selectedValue: T, options: List<
     val entry = requesters.getValue(selectedValue)
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, style = MaterialTheme.typography.titleSmall, color = NuvioTheme.colors.TextPrimary)
-        Row(Modifier.fillMaxWidth().settingsOptionRow(entry), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            options.forEach { (value, label) ->
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val stackVertically = maxWidth < 400.dp
+            val previewWidth = if (stackVertically) 92.dp else 112.dp
+            val previewHeight = if (stackVertically) 52.dp else 63.dp
+            val renderOption: @Composable (Modifier, T, String) -> Unit = { cardMod, value, label ->
                 var focused by remember { mutableStateOf(false) }
                 val chosen = selectedValue == value
                 val shape = RoundedCornerShape(12.dp)
-                Card(onClick = { onSelect(value) },
-                    modifier = Modifier.weight(1f)
+                Card(
+                    onClick = { onSelect(value) },
+                    modifier = cardMod
                         .then(if (chosen) Modifier.settingsJumpAnchor(title, shape) else Modifier)
                         .focusRequester(requesters.getValue(value)).onFocusChanged { focused = it.isFocused }
                         .settingsItemFocus(focused)
                         .semantics { selected = chosen },
                     shape = CardDefaults.shape(shape),
                     scale = CardDefaults.scale(focusedScale = 1f),
-                    colors = CardDefaults.colors(containerColor = settingsItemColor(NuvioTheme.colors.BackgroundCard.copy(alpha = .7f)),
-                        focusedContainerColor = settingsFocusFillColor()),
+                    colors = CardDefaults.colors(
+                        containerColor = settingsItemColor(NuvioTheme.colors.BackgroundCard.copy(alpha = .7f)),
+                        focusedContainerColor = settingsFocusFillColor()
+                    ),
                     border = CardDefaults.border(
-                        border = Border(BorderStroke(if (chosen) 1.5.dp else 1.dp,
-                            if (chosen) accent.copy(alpha = .8f) else Color.White.copy(alpha = .14f)), shape = shape),
-                        focusedBorder = Border.None)) {
-                    Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        V2OptionPreview(value, accent, Modifier.width(112.dp).height(63.dp))
-                        Row(Modifier.weight(1f), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(label, style = MaterialTheme.typography.labelLarge, color = Color.White,
-                                modifier = Modifier.weight(1f))
+                        border = Border(
+                            BorderStroke(
+                                if (chosen) 1.5.dp else 1.dp,
+                                if (chosen) accent.copy(alpha = .8f) else Color.White.copy(alpha = .14f)
+                            ),
+                            shape = shape
+                        ),
+                        focusedBorder = Border.None
+                    )
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(10.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        V2OptionPreview(value, accent, Modifier.width(previewWidth).height(previewHeight))
+                        Row(
+                            Modifier.weight(1f),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Color.White,
+                                modifier = Modifier.weight(1f)
+                            )
                             Canvas(Modifier.padding(start = 10.dp).size(16.dp)) {
                                 drawCircle(if (chosen) accent else Color.White.copy(alpha = .55f), style = Stroke(1.5.dp.toPx()))
                                 if (chosen) drawCircle(Color.White, radius = size.minDimension * .2f)
                             }
                         }
+                    }
+                }
+            }
+            if (stackVertically) {
+                Column(
+                    Modifier.fillMaxWidth().settingsOptionRow(entry),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    options.forEach { (value, label) ->
+                        renderOption(Modifier.fillMaxWidth(), value, label)
+                    }
+                }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth().settingsOptionRow(entry),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    options.forEach { (value, label) ->
+                        renderOption(Modifier.weight(1f), value, label)
                     }
                 }
             }

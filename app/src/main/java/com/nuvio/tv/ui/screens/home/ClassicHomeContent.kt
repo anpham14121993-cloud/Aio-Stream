@@ -610,7 +610,10 @@ fun ClassicHomeContent(
                     null // Classic uses imperative requestFocus
                 },
             ),
-        contentPadding = PaddingValues(top = if (heroVisible) NuvioTheme.spacing.none else NuvioTheme.spacing.xl, bottom = NuvioTheme.spacing.xl),
+        contentPadding = PaddingValues(
+            top = if (heroVisible) NuvioTheme.spacing.none else NuvioTheme.spacing.xl + com.nuvio.tv.ui.monolith.LocalMonolithTopInset.current,
+            bottom = NuvioTheme.spacing.xl + com.nuvio.tv.ui.monolith.LocalMonolithBottomInset.current
+        ),
         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xxl)
     ) {
         if (heroVisible) {
