@@ -956,7 +956,6 @@ class LayoutSettingsViewModel @Inject constructor(
     }
 
     private fun setHideUnreleasedContent(enabled: Boolean) {
-        if (_uiState.value.hideUnreleasedContent == enabled) return
         viewModelScope.launch {
             layoutPreferenceDataStore.setHideUnreleasedContent(enabled)
             homeCatalogSettingsSyncService.triggerPush()
