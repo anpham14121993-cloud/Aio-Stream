@@ -307,10 +307,10 @@ fun ProfileEntryIdent(
                 androidx.compose.foundation.Image(
                     painter = androidx.compose.ui.res.painterResource(com.nuvio.tv.R.drawable.aio_splash_badge),
                     contentDescription = description,
-                    modifier = Modifier.size(156.dp),
+                    modifier = Modifier.size(196.dp),
                     contentScale = androidx.compose.ui.layout.ContentScale.Fit
                 )
-                BrandWordmark(Modifier.height(84.dp), contentDescription = null)
+                BrandWordmark(Modifier.height(88.dp), contentDescription = null)
             }
         } else {
             key(palette) {

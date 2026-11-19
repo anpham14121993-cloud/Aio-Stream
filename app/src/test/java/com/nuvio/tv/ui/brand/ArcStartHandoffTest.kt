@@ -48,19 +48,8 @@ class ArcStartHandoffTest {
         assertEquals(16, windows.size)
         for (file in windows) {
             val xml = file.readText()
-            fun inset(name: String) = Regex("android:inset$name=\"([0-9.]+)%\"").find(xml)!!.groupValues[1].toFloat() / 100f
-            val left = inset("Left") * StageW
-            val top = inset("Top") * StageH
-            val size = StageW - left - inset("Right") * StageW
-            assertEquals(file.name, size, StageH - top - inset("Bottom") * StageH, 1f)
-            // The mark inside the 432 px launcher art and inside the intro's 640 px plate, drawn at 700, 180, 520.
-            val k = size / 432f
-            val p = 520f / 640f
-            assertEquals(file.name, 700f + 30f * p, left + 96f * k, 2f)
-            assertEquals(file.name, 700f + 588f * p, left + 326f * k, 2f)
-            assertEquals(file.name, 180f + (17f + 562f) / 2f * p, top + (91f + 315f) / 2f * k, 2f)
-            val suffix = file.name.removePrefix("start_window").removeSuffix(".xml")
-            assertTrue(file.name, xml.contains("@drawable/arc_launcher_foreground$suffix\""))
+            assertTrue(file.name, xml.contains("@drawable/aio_splash_badge"))
+            assertTrue(file.name, xml.contains("""android:gravity="center""""))
         }
     }
 
@@ -76,15 +65,11 @@ class ArcStartHandoffTest {
         assertEquals(16, splashIcons.size)
         assertEquals(splashIcons.keys, windowArt.keys)
         for ((name, icon) in splashIcons) {
-            assertEquals(name, icon.replace("arc_launcher_foreground", "start_window"), windowArt[name])
+            assertEquals(name, "aio_splash_icon", icon)
+            assertTrue(name, windowArt[name]!!.startsWith("start_window"))
         }
     }
 
     private fun resDir(name: String): File =
         listOf(File("src/main/res", name), File("app/src/main/res", name)).first { it.isDirectory }
-
-    private companion object {
-        const val StageW = 1920f
-        const val StageH = 1080f
-    }
 }

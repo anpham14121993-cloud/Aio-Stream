@@ -120,7 +120,7 @@ class ArcIgnitionScene private constructor(
      */
     fun draw(canvas: Canvas, width: Int, height: Int, clock: Float, alpha: Float = 1f, content: Float = 1f, handoff: Boolean = false) {
         val scale = if (height > width) {
-            min(width / 900f, height / StageH)
+            min(width / 780f, height / StageH)
         } else {
             min(width / StageW, height / StageH)
         }
@@ -179,7 +179,7 @@ class ArcIgnitionScene private constructor(
     }
 
     private fun drawStage(canvas: Canvas, width: Int, height: Int, scale: Float, stageAlpha: Int) {
-        if (backdrop.width == width && backdrop.height == height) {
+        if (backdrop.width == width && backdrop.height == height && height <= width) {
             // The backdrop is opaque and covers the whole buffer, so one translucent draw is the whole stage.
             plainPaint.alpha = stageAlpha
             canvas.drawBitmap(backdrop, 0f, 0f, plainPaint)

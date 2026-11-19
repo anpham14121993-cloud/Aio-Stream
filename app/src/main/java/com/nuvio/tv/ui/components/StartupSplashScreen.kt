@@ -106,12 +106,12 @@ fun StartupSplashScreen(
             Image(
                 painter = painterResource(id = R.drawable.aio_splash_badge),
                 contentDescription = stringResource(R.string.cd_nuvio_logo),
-                modifier = Modifier.size(164.dp),
+                modifier = Modifier.size(204.dp),
                 contentScale = ContentScale.Fit
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(18.dp))
             BrandWordmark(
-                modifier = Modifier.height(64.dp),
+                modifier = Modifier.height(72.dp),
                 contentDescription = null,
                 drawableOverride = brandWordmarkRes
             )

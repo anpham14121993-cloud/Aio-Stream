@@ -204,7 +204,9 @@ class AuthManager @Inject constructor(
                             mapOf("authState" to _authState.value.nameForLog())
                         )
                         Log.d(TAG, "SessionStatus.Initializing")
-                        _authState.value = AuthState.Loading
+                        if (_authState.value !is AuthState.SignedOut) {
+                            _authState.value = AuthState.Loading
+                        }
                     }
                     else -> {
                         val diagnostics = getStartupAuthDiagnostics()
