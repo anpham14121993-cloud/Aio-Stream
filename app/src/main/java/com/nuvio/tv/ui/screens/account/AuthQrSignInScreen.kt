@@ -42,6 +42,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -104,6 +106,11 @@ private val AuthPaneBorder = Color.White.copy(alpha = 0.07f)
 private val AuthSecondaryButtonBackground = Color.White.copy(alpha = 0.05f)
 private val AuthSecondaryButtonBorder = Color.White.copy(alpha = 0.09f)
 
+private enum class AuthLoginMethod {
+    EMAIL,
+    QR
+}
+
 @Composable
 fun AuthQrSignInScreen(
     onBackPress: () -> Unit = {},
@@ -114,8 +121,27 @@ fun AuthQrSignInScreen(
     val fullAccount = uiState.authState as? AuthState.FullAccount
     val isSignedIn = fullAccount != null
     val isOnboardingMode = onContinue != null
-    val useEmailLogin = viewModel.usesEmailPasswordLogin
-    val useQrLogin = !useEmailLogin
+    val formFactor = LocalDeviceFormFactor.current
+    val isHandheld = formFactor != DeviceFormFactor.TV
+    val defaultMethod = when {
+        uiState.supportsEmailPassword && !uiState.supportsQrLogin -> AuthLoginMethod.EMAIL
+        !uiState.supportsEmailPassword && uiState.supportsQrLogin -> AuthLoginMethod.QR
+        isHandheld -> AuthLoginMethod.EMAIL
+        else -> AuthLoginMethod.QR
+    }
+    var selectedMethod by rememberSaveable(
+        uiState.supportsEmailPassword,
+        uiState.supportsQrLogin,
+        isHandheld
+    ) {
+        mutableStateOf(defaultMethod)
+    }
+    val useEmailLogin = when {
+        !uiState.supportsQrLogin && uiState.supportsEmailPassword -> true
+        !uiState.supportsEmailPassword && uiState.supportsQrLogin -> false
+        else -> selectedMethod == AuthLoginMethod.EMAIL
+    }
+    val useQrLogin = uiState.supportsQrLogin && !useEmailLogin
     val isApproved = remember(uiState.qrLoginStatus) {
         uiState.qrLoginStatus?.contains("approved", ignoreCase = true) == true
     }
@@ -161,7 +187,7 @@ fun AuthQrSignInScreen(
         }
     }
 
-    LaunchedEffect(uiState.authState, uiState.isServerConfigured, isSignedIn, uiState.qrLoginCode, uiState.isLoading, uiState.error, exitRequested) {
+    LaunchedEffect(useQrLogin, uiState.authState, uiState.isServerConfigured, isSignedIn, uiState.qrLoginCode, uiState.isLoading, uiState.error, exitRequested) {
         if (
             useQrLogin &&
             uiState.isServerConfigured &&
@@ -176,13 +202,13 @@ fun AuthQrSignInScreen(
         }
     }
 
-    LaunchedEffect(isSignedIn) {
+    LaunchedEffect(useQrLogin, isSignedIn) {
         if (useQrLogin && isSignedIn && !uiState.qrLoginCode.isNullOrBlank()) {
             viewModel.clearQrLoginSession()
         }
     }
 
-    LaunchedEffect(isApproved, uiState.isLoading) {
+    LaunchedEffect(useQrLogin, isApproved, uiState.isLoading) {
         if (useQrLogin && isApproved && !uiState.isLoading) {
             viewModel.exchangeQrLogin()
         }
@@ -198,8 +224,34 @@ fun AuthQrSignInScreen(
         }
     }
 
-    val formFactor = LocalDeviceFormFactor.current
-    val isHandheld = formFactor != DeviceFormFactor.TV
+    val onSelectMethod: (AuthLoginMethod) -> Unit = { method ->
+        if (selectedMethod != method) {
+            selectedMethod = method
+            viewModel.clearError()
+            viewModel.clearInfoMessage()
+            if (method == AuthLoginMethod.EMAIL) {
+                viewModel.clearQrLoginSession()
+            }
+        }
+    }
+    val onClearFeedback: () -> Unit = {
+        viewModel.clearError()
+        viewModel.clearInfoMessage()
+    }
+    val onRefreshOrSignOut: () -> Unit = {
+        if (isSignedIn) {
+            showSignOutConfirmation = true
+        } else {
+            viewModel.startQrLogin()
+        }
+    }
+    val onBackOrContinue: () -> Unit = {
+        if (isOnboardingMode) {
+            continueFromAuthScreen()
+        } else {
+            leaveAuthScreen()
+        }
+    }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -249,23 +301,15 @@ fun AuthQrSignInScreen(
                     isSignedIn = isSignedIn,
                     isOnboardingMode = isOnboardingMode,
                     useEmailLogin = useEmailLogin,
+                    selectedMethod = selectedMethod,
+                    onSelectMethod = onSelectMethod,
                     isCompactMobile = true,
                     isHandheld = isHandheld,
                     onSignIn = viewModel::signIn,
-                    onRefreshOrSignOut = {
-                        if (isSignedIn) {
-                            showSignOutConfirmation = true
-                        } else {
-                            viewModel.startQrLogin()
-                        }
-                    },
-                    onBackOrContinue = {
-                        if (isOnboardingMode) {
-                            continueFromAuthScreen()
-                        } else {
-                            leaveAuthScreen()
-                        }
-                    },
+                    onSignUp = viewModel::signUp,
+                    onClearFeedback = onClearFeedback,
+                    onRefreshOrSignOut = onRefreshOrSignOut,
+                    onBackOrContinue = onBackOrContinue,
                     initialFocusRequester = loginFocusRequester,
                     showSupportButton = supportState.showSupportButton && !(isSignedIn && isOnboardingMode),
                     supporterTier = supportState.tier.takeIf { supportState.status == SupportStatus.SUPPORTER },
@@ -316,23 +360,15 @@ fun AuthQrSignInScreen(
                     isSignedIn = isSignedIn,
                     isOnboardingMode = isOnboardingMode,
                     useEmailLogin = useEmailLogin,
+                    selectedMethod = selectedMethod,
+                    onSelectMethod = onSelectMethod,
                     isCompactMobile = isNarrowWide,
                     isHandheld = isHandheld,
                     onSignIn = viewModel::signIn,
-                    onRefreshOrSignOut = {
-                        if (isSignedIn) {
-                            showSignOutConfirmation = true
-                        } else {
-                            viewModel.startQrLogin()
-                        }
-                    },
-                    onBackOrContinue = {
-                        if (isOnboardingMode) {
-                            continueFromAuthScreen()
-                        } else {
-                            leaveAuthScreen()
-                        }
-                    },
+                    onSignUp = viewModel::signUp,
+                    onClearFeedback = onClearFeedback,
+                    onRefreshOrSignOut = onRefreshOrSignOut,
+                    onBackOrContinue = onBackOrContinue,
                     initialFocusRequester = loginFocusRequester,
                     showSupportButton = supportState.showSupportButton && !(isSignedIn && isOnboardingMode),
                     supporterTier = supportState.tier.takeIf { supportState.status == SupportStatus.SUPPORTER },
@@ -504,9 +540,13 @@ private fun AuthQrLoginPane(
     isSignedIn: Boolean,
     isOnboardingMode: Boolean,
     useEmailLogin: Boolean,
+    selectedMethod: AuthLoginMethod,
+    onSelectMethod: (AuthLoginMethod) -> Unit,
     isCompactMobile: Boolean,
     isHandheld: Boolean,
     onSignIn: (String, String) -> Unit,
+    onSignUp: (String, String) -> Unit,
+    onClearFeedback: () -> Unit,
     onRefreshOrSignOut: () -> Unit,
     onBackOrContinue: () -> Unit,
     initialFocusRequester: FocusRequester,
@@ -515,17 +555,27 @@ private fun AuthQrLoginPane(
     onSupport: () -> Unit
 ) {
     val context = LocalContext.current
+    var isSignUpMode by rememberSaveable { mutableStateOf(false) }
     val focusEmail = useEmailLogin && uiState.isServerConfigured && !isSignedIn
     val focusMainAction = !focusEmail && uiState.isServerConfigured && !uiState.isLoading
+    val showMethodSwitcher = !isSignedIn && uiState.isServerConfigured && uiState.supportsEmailPassword && uiState.supportsQrLogin
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
+        if (showMethodSwitcher) {
+            AuthLoginMethodSwitcher(
+                selectedMethod = selectedMethod,
+                onSelectMethod = onSelectMethod
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
         Text(
             text = when {
                 isSignedIn -> stringResource(R.string.auth_qr_synced_data)
                 !uiState.isServerConfigured -> stringResource(R.string.auth_cloud_not_configured)
+                useEmailLogin && isSignUpMode -> stringResource(R.string.auth_email_signup_instruction)
                 useEmailLogin -> stringResource(R.string.auth_email_instruction)
                 else -> stringResource(R.string.auth_qr_scan_instruction)
             },
@@ -562,7 +612,15 @@ private fun AuthQrLoginPane(
         } else if (useEmailLogin) {
             AuthEmailLoginForm(
                 uiState = uiState,
+                isSignUpMode = isSignUpMode,
+                onToggleSignUp = { next ->
+                    if (isSignUpMode != next) {
+                        isSignUpMode = next
+                        onClearFeedback()
+                    }
+                },
                 onSignIn = onSignIn,
+                onSignUp = onSignUp,
                 initialFocusRequester = initialFocusRequester
             )
         } else {
@@ -607,7 +665,7 @@ private fun AuthQrLoginPane(
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md, Alignment.CenterHorizontally),
                 verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm, Alignment.CenterVertically)
             ) {
-                if (isSignedIn || (!useEmailLogin && uiState.isServerConfigured)) {
+                if (isSignedIn || (!useEmailLogin && uiState.supportsQrLogin && uiState.isServerConfigured)) {
                     Button(
                         onClick = onRefreshOrSignOut,
                         enabled = !uiState.isLoading,
@@ -714,17 +772,90 @@ private fun AuthSupportButton(
 }
 
 @Composable
+private fun AuthModeTabButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        colors = ButtonDefaults.colors(
+            containerColor = if (selected) Color.White else AuthSecondaryButtonBackground,
+            focusedContainerColor = Color.White,
+            contentColor = if (selected) Color.Black else AuthTextPrimary,
+            focusedContentColor = Color.Black
+        ),
+        border = ButtonDefaults.border(
+            border = androidx.tv.material3.Border(
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (selected) Color.White else AuthSecondaryButtonBorder
+                ),
+                shape = RoundedCornerShape(14.dp)
+            )
+        ),
+        shape = ButtonDefaults.shape(RoundedCornerShape(14.dp))
+    ) {
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                textAlign = TextAlign.Center,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun AuthLoginMethodSwitcher(
+    selectedMethod: AuthLoginMethod,
+    onSelectMethod: (AuthLoginMethod) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        AuthModeTabButton(
+            label = stringResource(R.string.auth_method_email),
+            selected = selectedMethod == AuthLoginMethod.EMAIL,
+            onClick = { onSelectMethod(AuthLoginMethod.EMAIL) },
+            modifier = Modifier.weight(1f)
+        )
+        AuthModeTabButton(
+            label = stringResource(R.string.auth_method_qr),
+            selected = selectedMethod == AuthLoginMethod.QR,
+            onClick = { onSelectMethod(AuthLoginMethod.QR) },
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
 private fun AuthEmailLoginForm(
     uiState: AccountUiState,
+    isSignUpMode: Boolean,
+    onToggleSignUp: (Boolean) -> Unit,
     onSignIn: (String, String) -> Unit,
+    onSignUp: (String, String) -> Unit,
     initialFocusRequester: FocusRequester
 ) {
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
-    val canSignIn = email.isNotBlank() && password.isNotBlank() && !uiState.isLoading
+    var showPassword by rememberSaveable { mutableStateOf(false) }
+    val canSubmit = email.isNotBlank() && password.length >= if (isSignUpMode) 6 else 1 && !uiState.isLoading
     val submit = {
-        if (canSignIn) {
-            onSignIn(email.trim(), password)
+        if (canSubmit) {
+            if (isSignUpMode) {
+                onSignUp(email.trim(), password)
+            } else {
+                onSignIn(email.trim(), password)
+            }
         }
     }
 
@@ -732,6 +863,23 @@ private fun AuthEmailLoginForm(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            AuthModeTabButton(
+                label = stringResource(R.string.auth_email_sign_in),
+                selected = !isSignUpMode,
+                onClick = { onToggleSignUp(false) },
+                modifier = Modifier.weight(1f)
+            )
+            AuthModeTabButton(
+                label = stringResource(R.string.auth_email_sign_up),
+                selected = isSignUpMode,
+                onClick = { onToggleSignUp(true) },
+                modifier = Modifier.weight(1f)
+            )
+        }
         InputField(
             value = email,
             onValueChange = { email = it },
@@ -745,13 +893,27 @@ private fun AuthEmailLoginForm(
             onValueChange = { password = it },
             placeholder = stringResource(R.string.auth_password_placeholder),
             keyboardType = KeyboardType.Password,
-            isPassword = true,
+            isPassword = !showPassword,
             imeAction = ImeAction.Done,
-            onImeAction = submit
+            onImeAction = submit,
+            trailingContent = {
+                Box(
+                    modifier = Modifier
+                        .clickable { showPassword = !showPassword }
+                        .padding(4.dp)
+                ) {
+                    Icon(
+                        imageVector = if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                        contentDescription = stringResource(R.string.auth_password_toggle_cd),
+                        tint = AuthTextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
         )
         Button(
             onClick = submit,
-            enabled = canSignIn,
+            enabled = canSubmit,
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.colors(
                 containerColor = Color.White,
@@ -770,10 +932,11 @@ private fun AuthEmailLoginForm(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = if (uiState.isLoading) {
-                        stringResource(R.string.auth_email_signing_in)
-                    } else {
-                        stringResource(R.string.auth_email_sign_in)
+                    text = when {
+                        uiState.isLoading && isSignUpMode -> stringResource(R.string.auth_email_signing_up)
+                        uiState.isLoading -> stringResource(R.string.auth_email_signing_in)
+                        isSignUpMode -> stringResource(R.string.auth_email_sign_up)
+                        else -> stringResource(R.string.auth_email_sign_in)
                     },
                     fontWeight = FontWeight.SemiBold,
                     textAlign = TextAlign.Center
@@ -781,6 +944,13 @@ private fun AuthEmailLoginForm(
             }
         }
         AuthTermsAcknowledgement()
+        uiState.infoMessage?.takeIf { it.isNotBlank() }?.let { message ->
+            StatusPill(
+                text = message,
+                containerColor = Color(0x2E2E7D32),
+                contentColor = Color(0xFF9EFFA9)
+            )
+        }
         uiState.error?.takeIf { it.isNotBlank() }?.let { error ->
             StatusPill(
                 text = error,

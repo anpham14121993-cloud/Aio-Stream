@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.components
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.Composable
@@ -20,6 +21,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.tv.material3.Border
 import androidx.tv.material3.Glow
+import com.nuvio.tv.ui.tvhybrid.rememberHybridInteractionAndModifier
 import com.nuvio.tv.ui.v2.components.nuvioV2Focus
 
 /**
@@ -39,6 +41,8 @@ fun NuvioCard(
     focusedGlow: Glow = Glow.None,
     focusChromeHidden: () -> Boolean = { false },
     ownFocusEdge: OwnFocusEdge? = null,
+    onLongClick: (() -> Unit)? = null,
+    interactionSource: MutableInteractionSource? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     if (!light) {
@@ -50,23 +54,32 @@ fun NuvioCard(
             focusedBorder = focusedBorder,
             focusedGlow = focusedGlow,
             focusChromeHidden = focusChromeHidden,
+            onLongClick = onLongClick,
+            interactionSource = interactionSource,
             content = content
         )
         return
     }
     val press = remember { SelectKeyPress() }
+    val (resolvedInteraction, touchModifier) = rememberHybridInteractionAndModifier(
+        baseModifier = modifier,
+        enabled = true,
+        interactionSource = interactionSource,
+        onClick = onClick,
+        onLongClick = onLongClick
+    )
     val edge = if (ownFocusEdge != null) {
         Modifier.nuvioV2Focus(ownFocusEdge.focused.value, ownFocusEdge.shape, stationary = true)
     } else {
         Modifier
     }
     Column(
-        modifier = modifier
+        modifier = touchModifier
             .then(edge)
             .semantics { onClick { onClick(); true } }
             .onFocusChanged { if (!it.isFocused) press.keyCode = null }
             .onKeyEvent { press.handle(it.nativeKeyEvent, onClick) }
-            .focusable()
+            .focusable(interactionSource = resolvedInteraction)
             .clip(shape)
             .then(if (containerColor.alpha > 0f) Modifier.background(containerColor) else Modifier),
         content = content

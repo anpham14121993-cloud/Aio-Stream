@@ -1915,6 +1915,7 @@ private fun ModernCarouselCard(
                     onClick()
                 }
             },
+            onLongClick = onLongPress,
             shape = cardShape,
             light = isV2,
             modifier = Modifier

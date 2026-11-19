@@ -9,8 +9,11 @@ import com.nuvio.tv.ui.screens.settings.settingsItemShape
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -21,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -31,9 +35,9 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextDirection
-import androidx.compose.ui.text.TextStyle
 import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -50,7 +54,8 @@ internal fun InputField(
     isPassword: Boolean = false,
     imeAction: ImeAction = ImeAction.Done,
     onImeAction: () -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    trailingContent: (@Composable () -> Unit)? = null
 ) {
     val textFieldFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -93,52 +98,65 @@ internal fun InputField(
         shape = ClickableSurfaceDefaults.shape(shape),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f)
     ) {
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = NuvioTheme.spacing.lg, vertical = 14.dp)
-                .focusRequester(textFieldFocusRequester)
-                .onFocusChanged {
-                    if (!it.isFocused && isEditing) {
+                .padding(horizontal = NuvioTheme.spacing.lg, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(textFieldFocusRequester)
+                    .onFocusChanged {
+                        if (it.isFocused && !isEditing) {
+                            isEditing = true
+                            keyboardController?.show()
+                        } else if (!it.isFocused && isEditing) {
+                            isEditing = false
+                            keyboardController?.hide()
+                        }
+                    },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = keyboardType,
+                    imeAction = imeAction
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        onImeAction()
+                        isEditing = false
+                        keyboardController?.hide()
+                    },
+                    onNext = {
+                        onImeAction()
                         isEditing = false
                         keyboardController?.hide()
                     }
-                },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = keyboardType,
-                imeAction = imeAction
-            ),
-            keyboardActions = KeyboardActions(
-                onDone = {
-                    onImeAction()
-                    isEditing = false
-                    keyboardController?.hide()
-                },
-                onNext = {
-                    onImeAction()
-                    isEditing = false
-                    keyboardController?.hide()
+                ),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    color = NuvioTheme.colors.TextPrimary,
+                    textDirection = TextDirection.Content
+                ),
+                cursorBrush = SolidColor(if (isEditing) NuvioTheme.colors.Secondary else Color.Transparent),
+                visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+                decorationBox = { innerTextField ->
+                    if (value.isEmpty()) {
+                        Text(
+                            text = placeholder,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NuvioTheme.colors.TextTertiary
+                        )
+                    }
+                    innerTextField()
                 }
-            ),
-            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                color = NuvioTheme.colors.TextPrimary,
-                textDirection = TextDirection.Content
-            ),
-            cursorBrush = SolidColor(if (isEditing) NuvioTheme.colors.Secondary else Color.Transparent),
-            visualTransformation = if (isPassword) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-            decorationBox = { innerTextField ->
-                if (value.isEmpty()) {
-                    Text(
-                        text = placeholder,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = NuvioTheme.colors.TextTertiary
-                    )
-                }
-                innerTextField()
+            )
+            if (trailingContent != null) {
+                Spacer(modifier = Modifier.width(8.dp))
+                trailingContent()
             }
-        )
+        }
     }
 }

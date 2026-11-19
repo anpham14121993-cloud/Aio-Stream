@@ -635,7 +635,7 @@
     <string name="advanced_remember_last_profile">Nhớ hồ sơ gần nhất</string>
     <string name="advanced_remember_last_profile_subtitle">Nhớ hồ sơ được chọn lần cuối khi khởi động</string>
     <string name="advanced_confirm_exit">Thoát hoàn toàn khi đóng</string>
-    <string name="advanced_confirm_exit_subtitle">Đóng ứng dụng hoàn toàn và giải phóng bộ nhớ khi thoát. Cần nhấn quay lại hai lần để xác nhận.</string>
+    <string name="advanced_confirm_exit_subtitle">Hiển thị hộp thoại xác nhận khi bấm quay lại ở trang chủ và đóng hoàn toàn ứng dụng.</string>
     <string name="confirm_exit_toast">Nhấn quay lại lần nữa để thoát</string>
     <string name="settings_debug">Gỡ lỗi</string>
     <string name="settings_plugins_section_subtitle">Quản lý kho lưu trữ, nhà cung cấp và trạng thái trình mở rộng</string>
@@ -2250,7 +2250,8 @@
     <string name="account_signin_qr_title">Đăng nhập bằng mã QR</string>
     <string name="account_signin_qr_subtitle">Quét mã QR và hoàn tất đăng nhập email trên điện thoại</string>
     <string name="account_signin_email_title">Đăng nhập</string>
-    <string name="account_signin_email_subtitle">Nhập email và mật khẩu tài khoản tự lưu trữ của bạn</string>
+    <string name="account_signin_email_subtitle">Nhập email và mật khẩu tài khoản của bạn</string>
+    <string name="account_signin_combined_subtitle">Đăng nhập bằng Email, mật khẩu hoặc quét mã QR</string>
     <string name="account_signed_in_label">Đã đăng nhập</string>
     <string name="account_total_label">Tổng cộng</string>
     <string name="account_loading_sync">Đang tải dữ liệu đồng bộ\u2026</string>
@@ -2269,12 +2270,19 @@
     <string name="auth_signin_title">Đăng nhập</string>
     <string name="auth_signin_tv_disabled">Tính năng nhập email/mật khẩu trên TV đã bị tắt. Tiếp tục bằng cách đăng nhập qua mã QR.</string>
     <string name="auth_signin_qr_btn">Tiếp tục bằng mã QR</string>
-    <string name="auth_email_hint">Đăng nhập trực tiếp bằng tài khoản trên máy chủ riêng của bạn.</string>
+    <string name="auth_email_hint">Đăng nhập hoặc đăng ký tài khoản AioStream Cloud bằng email hoặc mã QR để đồng bộ.</string>
     <string name="auth_email_instruction">Nhập email và mật khẩu để tiếp tục.</string>
+    <string name="auth_email_signup_instruction">Tạo tài khoản mới bằng email và mật khẩu (tối thiểu 6 ký tự).</string>
     <string name="auth_email_placeholder">Địa chỉ email</string>
     <string name="auth_password_placeholder">Mật khẩu</string>
     <string name="auth_email_sign_in">Đăng nhập</string>
     <string name="auth_email_signing_in">Đang đăng nhập\u2026</string>
+    <string name="auth_email_sign_up">Đăng ký</string>
+    <string name="auth_email_signing_up">Đang đăng ký\u2026</string>
+    <string name="auth_email_signup_check_inbox">Đăng ký thành công. Vui lòng kiểm tra email để xác nhận tài khoản rồi đăng nhập.</string>
+    <string name="auth_method_email">Email &amp; mật khẩu</string>
+    <string name="auth_method_qr">Mã QR</string>
+    <string name="auth_password_toggle_cd">Hiện hoặc ẩn mật khẩu</string>
     <string name="server_options_content_description">Tùy chọn máy chủ</string>
     <string name="server_options_connect_custom">Kết nối với máy chủ tùy chỉnh</string>
     <string name="server_options_change_custom">Kết nối với máy chủ khác</string>
@@ -4650,4 +4658,8 @@
     <string name="aio_device_mode_mobile">Điện thoại (Cảm ứng)</string>
     <string name="aio_device_mode_tablet">Máy tính bảng (Thanh cạnh)</string>
     <string name="aio_device_mode_tv">TV / TV Box (Remote D-Pad)</string>
+    <string name="exit_confirm_title">Thoát AioStream?</string>
+    <string name="exit_confirm_message">Bạn có đồng ý thoát ứng dụng không?</string>
+    <string name="exit_confirm_ok">OK</string>
+    <string name="exit_confirm_cancel">Hủy</string>
 </resources>

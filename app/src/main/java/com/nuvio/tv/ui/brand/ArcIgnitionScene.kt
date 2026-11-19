@@ -119,8 +119,12 @@ class ArcIgnitionScene private constructor(
      * mark, lettering and light, leaving the stage. On a [handoff] the logo plate is there from the start.
      */
     fun draw(canvas: Canvas, width: Int, height: Int, clock: Float, alpha: Float = 1f, content: Float = 1f, handoff: Boolean = false) {
-        val scale = min(width / StageW, height / StageH)
-        val backdropFits = backdrop.width == width && backdrop.height == height
+        val scale = if (height > width) {
+            min(width / 900f, height / StageH)
+        } else {
+            min(width / StageW, height / StageH)
+        }
+        val backdropFits = backdrop.width == width && backdrop.height == height && height <= width
         // A fitting backdrop is opaque and covers every pixel, so an opaque frame needs no clear underneath it.
         if (!backdropFits || alpha < 0.997f || content <= 0.003f) canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         if (alpha <= 0.003f) return

@@ -905,7 +905,7 @@ private fun EpisodeCard(
 
     if (isV2) {
         Column(Modifier.width(cardMetrics.cardWidth)) {
-            Card(onClick = cardClick,
+            Card(onClick = cardClick, onLongClick = onLongPress,
                 modifier = interactiveModifier.nuvioV2Focus(isFocused, shape),
                 shape = cardShape, colors = cardColors, border = cardBorder, scale = cardScale, glow = cardGlow) {
                 Box(Modifier.fillMaxWidth().height(cardMetrics.cardHeight).clip(shape).background(cardBgColor)) {
@@ -931,7 +931,7 @@ private fun EpisodeCard(
         }
         return
     }
-    LightweightCard(onClick = cardClick, modifier = interactiveModifier, shape = shape,
+    LightweightCard(onClick = cardClick, onLongClick = onLongPress, modifier = interactiveModifier, shape = shape,
         containerColor = Color.Transparent, focusedBorder = Border(border = focusRingBorder, shape = shape)) {
         Box(
             modifier = Modifier

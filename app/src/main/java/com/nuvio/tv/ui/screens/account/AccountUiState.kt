@@ -35,9 +35,12 @@ data class SyncOverview(
 data class AccountUiState(
     val authState: AuthState = AuthState.Loading,
     val isServerConfigured: Boolean = true,
+    val supportsEmailPassword: Boolean = true,
+    val supportsQrLogin: Boolean = true,
     val isLoading: Boolean = false,
     val isStatsLoading: Boolean = false,
     val error: String? = null,
+    val infoMessage: String? = null,
     val generatedSyncCode: String? = null,
     val syncClaimSuccess: Boolean = false,
     val linkedDevices: List<SupabaseLinkedDevice> = emptyList(),

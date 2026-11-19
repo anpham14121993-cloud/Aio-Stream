@@ -94,7 +94,19 @@ class AccountViewModel @Inject constructor(
     private val isCloudConfigured: Boolean
         get() = serverConfiguration.backendUrl.isNotBlank() && serverConfiguration.publishableKey.isNotBlank()
 
-    private val _uiState = MutableStateFlow(AccountUiState(isServerConfigured = isCloudConfigured))
+    val supportsEmailPassword: Boolean
+        get() = isCloudConfigured && serverConfiguration.capabilities.emailPasswordAuth
+
+    val supportsQrLogin: Boolean
+        get() = isCloudConfigured && serverConfiguration.capabilities.tvLogin
+
+    private val _uiState = MutableStateFlow(
+        AccountUiState(
+            isServerConfigured = isCloudConfigured,
+            supportsEmailPassword = supportsEmailPassword,
+            supportsQrLogin = supportsQrLogin
+        )
+    )
     val uiState: StateFlow<AccountUiState> = _uiState.asStateFlow()
     private var qrLoginPollJob: Job? = null
     private var activeQrLoginTraceId: Long? = null
@@ -103,7 +115,7 @@ class AccountViewModel @Inject constructor(
     private var qrLoginExchangeInFlight: Boolean = false
 
     val usesEmailPasswordLogin: Boolean
-        get() = serverConfiguration.isCustom && serverConfiguration.capabilities.emailPasswordAuth
+        get() = supportsEmailPassword && !supportsQrLogin
 
     init {
         observeAuthState()
@@ -149,11 +161,21 @@ class AccountViewModel @Inject constructor(
 
     fun signUp(email: String, password: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-            authManager.signUpWithEmail(email, password).fold(
+            _uiState.update { it.copy(isLoading = true, error = null, infoMessage = null) }
+            authManager.signUpWithEmail(email.trim(), password).fold(
                 onSuccess = {
-                    pushLocalDataToRemote()
-                    _uiState.update { it.copy(isLoading = false) }
+                    if (authManager.isAuthenticated) {
+                        pushLocalDataToRemote()
+                        loadConnectedStats()
+                        _uiState.update { it.copy(isLoading = false) }
+                    } else {
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                infoMessage = context.getString(R.string.auth_email_signup_check_inbox)
+                            )
+                        }
+                    }
                 },
                 onFailure = { e ->
                     _uiState.update { it.copy(isLoading = false, error = userFriendlyError(e)) }
@@ -164,8 +186,8 @@ class AccountViewModel @Inject constructor(
 
     fun signIn(email: String, password: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-            authManager.signInWithEmail(email, password).fold(
+            _uiState.update { it.copy(isLoading = true, error = null, infoMessage = null) }
+            authManager.signInWithEmail(email.trim(), password).fold(
                 onSuccess = {
                     pullRemoteData().onFailure { e ->
                         Log.e("AccountViewModel", "signIn: pullRemoteData failed, continuing signed-in flow", e.forLog())
@@ -278,6 +300,10 @@ class AccountViewModel @Inject constructor(
         _uiState.update { it.copy(error = null) }
     }
 
+    fun clearInfoMessage() {
+        _uiState.update { it.copy(infoMessage = null) }
+    }
+
     fun clearSyncClaimSuccess() {
         _uiState.update { it.copy(syncClaimSuccess = false) }
     }
@@ -334,6 +360,7 @@ class AccountViewModel @Inject constructor(
                 it.copy(
                     isLoading = true,
                     error = null,
+                    infoMessage = null,
                     qrLoginCode = null,
                     qrLoginUserCode = null,
                     qrLoginUrl = null,

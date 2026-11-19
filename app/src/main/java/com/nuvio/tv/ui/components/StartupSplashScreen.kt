@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +19,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -101,13 +103,20 @@ fun StartupSplashScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            BrandWordmark(
-                modifier = Modifier.height(48.dp),
+            Image(
+                painter = painterResource(id = R.drawable.aio_splash_badge),
                 contentDescription = stringResource(R.string.cd_nuvio_logo),
+                modifier = Modifier.size(164.dp),
+                contentScale = ContentScale.Fit
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            BrandWordmark(
+                modifier = Modifier.height(64.dp),
+                contentDescription = null,
                 drawableOverride = brandWordmarkRes
             )
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.xxl))
-            LoadingIndicator(modifier = Modifier.size(NuvioTheme.spacing.xxxl))
+            LoadingIndicator(modifier = Modifier.size(44.dp))
         }
     }
 }

@@ -72,11 +72,19 @@ fun LightweightCard(
     focusedBorder: Border = Border.None,
     focusedGlow: Glow = Glow.None,
     focusChromeHidden: () -> Boolean = FocusChromeShown,
+    onLongClick: (() -> Unit)? = null,
+    interactionSource: MutableInteractionSource? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val focusedState = interactionSource.collectIsFocusedAsState()
-    val pressedState = interactionSource.collectIsPressedAsState()
+    val (resolvedInteraction, touchModifier) = com.nuvio.tv.ui.tvhybrid.rememberHybridInteractionAndModifier(
+        baseModifier = modifier,
+        enabled = true,
+        interactionSource = interactionSource,
+        onClick = onClick,
+        onLongClick = onLongClick
+    )
+    val focusedState = resolvedInteraction.collectIsFocusedAsState()
+    val pressedState = resolvedInteraction.collectIsPressedAsState()
     val chrome = remember(focusedState, pressedState) { CardFocusChrome(focusedState, pressedState) }
     chrome.hidden = focusChromeHidden
     val glowColor = if (focusedGlow.elevationColor == MaterialTheme.colorScheme.surface) {
@@ -90,11 +98,11 @@ fun LightweightCard(
 
     CompositionLocalProvider(LocalContentColor provides contentColorFor(containerColor)) {
         Box(
-            modifier = modifier
+            modifier = touchModifier
                 .onFocusChanged {
                     if (!it.isFocused && pressedState.value) {
                         coroutineScope.launch {
-                            interactionSource.emit(PressInteraction.Release(pressInteraction))
+                            resolvedInteraction.emit(PressInteraction.Release(pressInteraction))
                         }
                     }
                 }
@@ -103,18 +111,18 @@ fun LightweightCard(
                     if (native.keyCode !in SELECT_KEY_CODES) return@onKeyEvent false
                     when (native.action) {
                         AndroidKeyEvent.ACTION_DOWN -> if (native.repeatCount == 0) {
-                            coroutineScope.launch { interactionSource.emit(pressInteraction) }
+                            coroutineScope.launch { resolvedInteraction.emit(pressInteraction) }
                         }
                         AndroidKeyEvent.ACTION_UP -> {
                             coroutineScope.launch {
-                                interactionSource.emit(PressInteraction.Release(pressInteraction))
+                                resolvedInteraction.emit(PressInteraction.Release(pressInteraction))
                             }
                             onClick()
                         }
                     }
                     true
                 }
-                .focusable(interactionSource = interactionSource)
+                .focusable(interactionSource = resolvedInteraction)
                 .semantics(mergeDescendants = true) {
                     onClick {
                         onClick()

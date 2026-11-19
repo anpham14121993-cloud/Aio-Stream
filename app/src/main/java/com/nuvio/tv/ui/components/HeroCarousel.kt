@@ -137,8 +137,8 @@ fun HeroCarousel(
         }
     }
 
-    Box(
-        modifier = modifier
+    val (heroInteraction, heroTouchModifier) = com.nuvio.tv.ui.tvhybrid.rememberHybridInteractionAndModifier(
+        baseModifier = modifier
             .then(
                 if (fullWidth != Dp.Unspecified)
                     Modifier.requiredWidth(fullWidth)
@@ -149,9 +149,16 @@ fun HeroCarousel(
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged {
                 isFocused = it.hasFocus || it.isFocused
-            }
+            },
+        enabled = true,
+        interactionSource = null,
+        onClick = { items.getOrNull(activeIndex)?.let { currentOnItemClick(it) } }
+    )
+
+    Box(
+        modifier = heroTouchModifier
             .semantics { this.contentDescription = items.getOrNull(activeIndex)?.name.orEmpty() }
-            .focusable()
+            .focusable(interactionSource = heroInteraction)
             .semantics {
                 role = Role.Button
                 contentDescription = items[activeIndex].name

@@ -5,8 +5,10 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import android.os.SystemClock
 import android.provider.Settings
 import androidx.compose.runtime.Composable
@@ -298,7 +300,18 @@ fun ProfileEntryIdent(
         contentAlignment = Alignment.Center
     ) {
         if (failed) {
-            BrandWordmark(Modifier.height(72.dp), contentDescription = description)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(18.dp)
+            ) {
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(com.nuvio.tv.R.drawable.aio_splash_badge),
+                    contentDescription = description,
+                    modifier = Modifier.size(156.dp),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                )
+                BrandWordmark(Modifier.height(84.dp), contentDescription = null)
+            }
         } else {
             key(palette) {
                 AndroidView(

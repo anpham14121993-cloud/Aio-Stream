@@ -653,6 +653,7 @@ fun ContinueWatchingCard(
                 onClick()
             }
         },
+        onLongClick = onLongPress,
         shape = cwCardShape,
         light = isV2,
         modifier = modifier

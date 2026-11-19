@@ -76,7 +76,7 @@ import androidx.tv.material3.Tab as TvTab
  * while preserving D-Pad focus rings, key handling, and parent scroll cancellation.
  */
 @Composable
-private fun rememberHybridInteractionAndModifier(
+fun rememberHybridInteractionAndModifier(
     baseModifier: Modifier,
     enabled: Boolean,
     interactionSource: MutableInteractionSource?,

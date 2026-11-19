@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.v2.scale
 
 import com.nuvio.tv.domain.model.DeviceUiPreferences
 import com.nuvio.tv.domain.model.UiScaleMode
+import com.nuvio.tv.ui.monolith.DeviceFormFactor
 import com.nuvio.tv.ui.v2.diagnostics.UiCanvasSnapshot
 import kotlin.math.roundToInt
 
@@ -24,19 +25,42 @@ class UiScaleResolver(
         require(referenceHeightDp.isFinite() && referenceHeightDp > 0)
     }
 
-    fun resolve(canvas: UiCanvasSnapshot, preferences: DeviceUiPreferences): UiScaleDecision {
+    fun resolve(
+        canvas: UiCanvasSnapshot,
+        preferences: DeviceUiPreferences,
+        formFactor: DeviceFormFactor = DeviceFormFactor.TV
+    ): UiScaleDecision {
         if (preferences.uiScaleMode == UiScaleMode.MANUAL) {
             return UiScaleDecision(preferences.manualUiScalePercent.coerceIn(75, 115), "Manual")
         }
         if (!canvas.hasValidGeometry) return UiScaleDecision(100, "Waiting for valid window geometry")
-        val raw = minOf(
-            canvas.logicalWidthDp!! / referenceWidthDp,
-            canvas.logicalHeightDp!! / referenceHeightDp
-        ).coerceIn(0.75f, 1.15f)
         val fineTune = 1f + preferences.autoScaleFineTunePercent.coerceIn(-10, 10) / 100f
+        val raw = when (formFactor) {
+            DeviceFormFactor.MOBILE -> 1.12f
+            DeviceFormFactor.TABLET -> 1.08f
+            DeviceFormFactor.TV -> minOf(
+                canvas.logicalWidthDp!! / referenceWidthDp,
+                canvas.logicalHeightDp!! / referenceHeightDp
+            ).coerceIn(0.75f, 1.15f)
+        }
+        val minPercent = when (formFactor) {
+            DeviceFormFactor.MOBILE -> 94
+            DeviceFormFactor.TABLET -> 90
+            DeviceFormFactor.TV -> 72
+        }
+        val maxPercent = when (formFactor) {
+            DeviceFormFactor.MOBILE -> 126
+            DeviceFormFactor.TABLET -> 122
+            DeviceFormFactor.TV -> 120
+        }
+        val reason = when (formFactor) {
+            DeviceFormFactor.MOBILE -> "Mobile adaptive typography & icon scale"
+            DeviceFormFactor.TABLET -> "Tablet adaptive typography & icon scale"
+            DeviceFormFactor.TV -> "Logical canvas (${referenceWidthDp.toInt()} x ${referenceHeightDp.toInt()} dp reference)"
+        }
         return UiScaleDecision(
-            (raw * fineTune * 100).roundToInt().coerceIn(72, 120),
-            "Logical canvas (${referenceWidthDp.toInt()} x ${referenceHeightDp.toInt()} dp reference)",
+            (raw * fineTune * 100).roundToInt().coerceIn(minPercent, maxPercent),
+            reason,
             calibrationPercent = (raw * 100).roundToInt()
         )
     }

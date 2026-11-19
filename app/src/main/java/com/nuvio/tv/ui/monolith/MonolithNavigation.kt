@@ -183,7 +183,7 @@ private fun MonolithBrandEmblem(
     ) {
         Box(
             modifier = Modifier
-                .size(if (compact) 28.dp else 32.dp)
+                .size(if (compact) 32.dp else 36.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.linearGradient(
@@ -196,7 +196,7 @@ private fun MonolithBrandEmblem(
             Image(
                 painter = painterResource(id = R.drawable.arc_launcher_foreground),
                 contentDescription = "AioStream",
-                modifier = Modifier.size(if (compact) 22.dp else 25.dp),
+                modifier = Modifier.size(if (compact) 25.dp else 28.dp),
                 contentScale = ContentScale.Fit
             )
         }
@@ -204,7 +204,7 @@ private fun MonolithBrandEmblem(
             Text(
                 text = "AIOSTREAM",
                 color = MonolithChromePalette.SilverBright,
-                fontSize = if (compact) 12.sp else 13.sp,
+                fontSize = if (compact) 14.sp else 15.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = if (compact) 1.6.sp else 2.2.sp,
                 maxLines = 1
@@ -282,9 +282,18 @@ private fun MonolithTopLensNavigation(
     var returnToContent by remember { mutableStateOf(false) }
     val entryFocus = routeFocus[lastRoute] ?: routeFocus[selectedRoute] ?: routeFocus.values.firstOrNull()
     val clockText = rememberFormattedClock()
+    val inputMode = LocalInputInteractionMode.current
 
     BackHandler(enabled = visible) {
-        if (navFocused || entryFocus == null) onExit() else runCatching { entryFocus.requestFocus() }
+        if (inputMode == InputInteractionMode.TOUCH) {
+            if (currentRoute != Screen.Home.route) {
+                onNavigate(Screen.Home.route)
+            } else {
+                onExit()
+            }
+        } else {
+            if (navFocused || entryFocus == null) onExit() else runCatching { entryFocus.requestFocus() }
+        }
     }
     LaunchedEffect(returnToContent, currentRoute) {
         if (returnToContent) {
@@ -525,13 +534,21 @@ private fun MonolithBottomDockNavigation(
             .ifEmpty { items }
     }
 
+    BackHandler(enabled = visible) {
+        if (currentRoute != Screen.Home.route) {
+            onNavigate(Screen.Home.route)
+        } else {
+            onExit()
+        }
+    }
+
     val topPadding by animateDpAsState(
-        targetValue = if (visible && currentRoute != Screen.Home.route) 58.dp else 0.dp,
+        targetValue = if (visible && currentRoute != Screen.Home.route) 64.dp else 0.dp,
         animationSpec = tween(180),
         label = "mobile_top_inset"
     )
     val bottomPadding by animateDpAsState(
-        targetValue = if (visible && currentRoute != Screen.Home.route) 78.dp else 0.dp,
+        targetValue = if (visible && currentRoute != Screen.Home.route) 86.dp else 0.dp,
         animationSpec = tween(180),
         label = "mobile_bottom_inset"
     )
@@ -547,8 +564,8 @@ private fun MonolithBottomDockNavigation(
                 LocalContentFocusRequester provides contentFocus,
                 LocalSidebarExpanded provides false,
                 LocalV2TopChrome provides visible,
-                LocalMonolithTopInset provides if (visible) 58.dp else 0.dp,
-                LocalMonolithBottomInset provides if (visible) 84.dp else 0.dp
+                LocalMonolithTopInset provides if (visible) 64.dp else 0.dp,
+                LocalMonolithBottomInset provides if (visible) 92.dp else 0.dp
             ) {
                 navigationContent(false)
             }
@@ -591,7 +608,7 @@ private fun MonolithBottomDockNavigation(
                                 MonolithNavItemIcon(
                                     item = searchItem,
                                     tint = if (selectedRoute == Screen.Search.route) MonolithChromePalette.SilverBright else MonolithChromePalette.SilverMuted,
-                                    size = 18.dp
+                                    size = 21.dp
                                 )
                             }
                         }
@@ -603,7 +620,7 @@ private fun MonolithBottomDockNavigation(
                                 MonolithNavItemIcon(
                                     item = settingsItem,
                                     tint = if (selectedRoute == Screen.Settings.route) MonolithChromePalette.SilverBright else MonolithChromePalette.SilverMuted,
-                                    size = 18.dp
+                                    size = 21.dp
                                 )
                             }
                         }
@@ -613,7 +630,7 @@ private fun MonolithBottomDockNavigation(
                                     .clip(CircleShape)
                                     .clickable(onClick = onSwitchProfile)
                             ) {
-                                NuvioAvatar(avatar = profile, size = 32.dp)
+                                NuvioAvatar(avatar = profile, size = 36.dp)
                             }
                         }
                     }
@@ -699,11 +716,11 @@ private fun MonolithBottomDockNavigation(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(3.dp)
                                 ) {
-                                    MonolithNavItemIcon(item = item, tint = tint, size = 19.dp)
+                                    MonolithNavItemIcon(item = item, tint = tint, size = 22.dp)
                                     Text(
                                         text = item.label,
                                         color = tint,
-                                        fontSize = 10.sp,
+                                        fontSize = 11.5.sp,
                                         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                         maxLines = 1,
                                         softWrap = false,
@@ -727,7 +744,7 @@ private fun MonolithCircleActionButton(
 ) {
     Box(
         modifier = Modifier
-            .size(34.dp)
+            .size(38.dp)
             .clip(CircleShape)
             .background(
                 if (selected) MonolithChromePalette.SlateElevated
@@ -765,13 +782,17 @@ private fun MonolithMicroRailNavigation(
     var railFocused by remember { mutableStateOf(false) }
 
     val startPadding by animateDpAsState(
-        targetValue = if (visible) 84.dp else 0.dp,
+        targetValue = if (visible) 90.dp else 0.dp,
         animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "tablet_rail_inset"
     )
 
     BackHandler(enabled = visible) {
-        onExit()
+        if (currentRoute != Screen.Home.route) {
+            onNavigate(Screen.Home.route)
+        } else {
+            onExit()
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -800,7 +821,7 @@ private fun MonolithMicroRailNavigation(
                     .align(Alignment.CenterStart)
                     .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical + WindowInsetsSides.Start))
                     .padding(start = 12.dp, top = 16.dp, bottom = 16.dp)
-                    .width(64.dp)
+                    .width(72.dp)
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(26.dp))
                     .background(
@@ -862,11 +883,11 @@ private fun MonolithMicroRailNavigation(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
-                                MonolithNavItemIcon(item = item, tint = tint, size = 19.dp)
+                                MonolithNavItemIcon(item = item, tint = tint, size = 22.dp)
                                 Text(
                                     text = item.label,
                                     color = tint,
-                                    fontSize = 9.sp,
+                                    fontSize = 10.5.sp,
                                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -884,7 +905,7 @@ private fun MonolithMicroRailNavigation(
                                 .clickable(onClick = onSwitchProfile)
                                 .focusable()
                         ) {
-                            NuvioAvatar(avatar = profile, size = 34.dp, focused = profileFocused)
+                            NuvioAvatar(avatar = profile, size = 36.dp, focused = profileFocused)
                         }
                     }
                 }

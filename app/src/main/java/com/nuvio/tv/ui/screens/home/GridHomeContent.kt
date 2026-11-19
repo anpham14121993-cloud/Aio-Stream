@@ -1,6 +1,8 @@
 package com.nuvio.tv.ui.screens.home
 
 import com.nuvio.tv.data.mediaserver.ServerCatalog
+import com.nuvio.tv.ui.monolith.InputInteractionMode
+import com.nuvio.tv.ui.monolith.LocalInputInteractionMode
 import com.nuvio.tv.ui.v2.components.sidebarPageContent
 
 import com.nuvio.tv.ui.theme.NuvioTheme
@@ -154,7 +156,8 @@ fun GridHomeContent(
     val cwPendingScrollToStart = remember { mutableIntStateOf(0) }
     val upcomingPendingScrollToStart = remember { mutableIntStateOf(0) }
     val comingUpPendingScrollToStart = remember { mutableIntStateOf(0) }
-    BackHandler(enabled = contentHasFocus.value && run {
+    val isTouchMode = LocalInputInteractionMode.current == InputInteractionMode.TOUCH
+    BackHandler(enabled = !isTouchMode && contentHasFocus.value && run {
         val key = activeCwRowKey.value ?: return@run false
         val idx = when (key) {
             "continue_watching" -> lastFocusedCwIndex.intValue

@@ -18,6 +18,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.nuvio.tv.domain.model.DeviceUiPreferences
 import com.nuvio.tv.domain.model.InterfaceExperience
 import com.nuvio.tv.domain.model.V2AppearancePreferences
+import com.nuvio.tv.ui.monolith.DeviceFormFactor
 import com.nuvio.tv.ui.v2.diagnostics.UiCanvasSnapshot
 import com.nuvio.tv.ui.v2.diagnostics.readUiCanvasSnapshot
 import com.nuvio.tv.ui.v2.scale.UiScaleDecision
@@ -62,20 +63,21 @@ fun rememberStableUiScale(
     canvas: UiCanvasSnapshot,
     preferences: DeviceUiPreferences,
     originalScale: Int,
-    playbackActive: Boolean
+    playbackActive: Boolean,
+    formFactor: DeviceFormFactor = DeviceFormFactor.TV
 ): UiScaleDecision {
     val resolver = remember { UiScaleResolver() }
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     fun resolve() = if (preferences.interfaceExperience == InterfaceExperience.ORIGINAL_NUVIO) {
         UiScaleDecision(originalScale, "Original Nuvio")
-    } else resolver.resolve(canvas, preferences)
+    } else resolver.resolve(canvas, preferences, formFactor)
     var decision by remember { mutableStateOf(resolve()) }
     // Output mode/refresh rate and visual quality deliberately are not geometry inputs.
     LaunchedEffect(
         canvas.windowWidthPx, canvas.windowHeightPx, canvas.baseDensity,
         preferences.interfaceExperience, preferences.uiScaleMode,
         preferences.manualUiScalePercent, preferences.autoScaleFineTunePercent,
-        originalScale, playbackActive, lifecycleState
+        originalScale, playbackActive, formFactor, lifecycleState
     ) {
         // External players pause this Activity; defer their display changes until return too.
         if (!playbackActive && lifecycleState.isAtLeast(Lifecycle.State.RESUMED)) decision = resolve()

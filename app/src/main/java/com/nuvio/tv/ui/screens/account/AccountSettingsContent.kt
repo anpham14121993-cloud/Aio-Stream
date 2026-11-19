@@ -108,10 +108,17 @@ fun AccountSettingsContent(
                     SettingsActionButton(
                         icon = Icons.Default.VpnKey,
                         title = stringResource(
-                            if (viewModel.usesEmailPasswordLogin) R.string.account_signin_email_title else R.string.account_signin_qr_title
+                            when {
+                                uiState.supportsEmailPassword -> R.string.account_signin_email_title
+                                else -> R.string.account_signin_qr_title
+                            }
                         ),
                         subtitle = stringResource(
-                            if (viewModel.usesEmailPasswordLogin) R.string.account_signin_email_subtitle else R.string.account_signin_qr_subtitle
+                            when {
+                                uiState.supportsEmailPassword && uiState.supportsQrLogin -> R.string.account_signin_combined_subtitle
+                                uiState.supportsEmailPassword -> R.string.account_signin_email_subtitle
+                                else -> R.string.account_signin_qr_subtitle
+                            }
                         ),
                         onClick = onNavigateToAuthQrSignIn,
                         modifier = if (initialFocusRequester != null) {

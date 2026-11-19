@@ -727,7 +727,32 @@ open class MainActivity : ComponentActivity() {
             val profileEntry = remember { com.nuvio.tv.ui.v2.profile.ProfileEntryState() }
             var entryConsumedKey by remember { mutableStateOf<Int?>(null) }
             val canvas = rememberUiCanvasSnapshot()
-            val scaleDecision = rememberStableUiScale(canvas, device, originalScale, playbackUiActive)
+            val currentConfiguration = androidx.compose.ui.platform.LocalConfiguration.current
+            val appCtx = applicationContext
+            val isLowRam32Bit = remember(appCtx) {
+                com.nuvio.tv.ui.monolith.AdaptiveDeviceDetector.isLowRamDevice(appCtx)
+            }
+            val resolvedFormFactor = remember(
+                device.formFactorOverride,
+                currentConfiguration.uiMode,
+                currentConfiguration.smallestScreenWidthDp
+            ) {
+                com.nuvio.tv.ui.monolith.AdaptiveDeviceDetector.resolveFormFactor(
+                    appCtx,
+                    currentConfiguration,
+                    device.formFactorOverride
+                )
+            }
+            val resolvedInputMode = liveInputMode.value
+                ?: com.nuvio.tv.ui.monolith.AdaptiveDeviceDetector.defaultInputMode(resolvedFormFactor)
+            val adaptiveState = remember(resolvedFormFactor, resolvedInputMode, isLowRam32Bit) {
+                com.nuvio.tv.ui.monolith.AdaptiveDeviceState(
+                    formFactor = resolvedFormFactor,
+                    inputMode = resolvedInputMode,
+                    isLowRam32Bit = isLowRam32Bit
+                )
+            }
+            val scaleDecision = rememberStableUiScale(canvas, device, originalScale, playbackUiActive, resolvedFormFactor)
             val qualityDecision = com.nuvio.tv.ui.v2.quality.rememberDeviceVisualQuality(canvas, device, qualityGovernor)
             NuvioTheme(
                 appTheme = mainUiPrefs.theme,
@@ -755,31 +780,6 @@ open class MainActivity : ComponentActivity() {
                     Density(
                         density = systemDensity.density,
                         fontScale = systemDensity.fontScale.coerceAtMost(MAX_SUPPORTED_FONT_SCALE)
-                    )
-                }
-                val currentConfiguration = androidx.compose.ui.platform.LocalConfiguration.current
-                val appCtx = applicationContext
-                val isLowRam32Bit = remember(appCtx) {
-                    com.nuvio.tv.ui.monolith.AdaptiveDeviceDetector.isLowRamDevice(appCtx)
-                }
-                val resolvedFormFactor = remember(
-                    device.formFactorOverride,
-                    currentConfiguration.uiMode,
-                    currentConfiguration.smallestScreenWidthDp
-                ) {
-                    com.nuvio.tv.ui.monolith.AdaptiveDeviceDetector.resolveFormFactor(
-                        appCtx,
-                        currentConfiguration,
-                        device.formFactorOverride
-                    )
-                }
-                val resolvedInputMode = liveInputMode.value
-                    ?: com.nuvio.tv.ui.monolith.AdaptiveDeviceDetector.defaultInputMode(resolvedFormFactor)
-                val adaptiveState = remember(resolvedFormFactor, resolvedInputMode, isLowRam32Bit) {
-                    com.nuvio.tv.ui.monolith.AdaptiveDeviceState(
-                        formFactor = resolvedFormFactor,
-                        inputMode = resolvedInputMode,
-                        isLowRam32Bit = isLowRam32Bit
                     )
                 }
                 LaunchedEffect(resolvedFormFactor, playbackUiActive) {
@@ -1434,25 +1434,17 @@ open class MainActivity : ComponentActivity() {
                     val selectedDrawerItem = drawerItems.firstOrNull { it.route == selectedDrawerRoute } ?: drawerItems.first()
 
                     val confirmExitEnabled by profileManager.confirmExitEnabled.collectAsState()
-                    var backPressedOnce by remember { mutableStateOf(false) }
-                    LaunchedEffect(backPressedOnce) {
-                        if (backPressedOnce) {
-                            delay(2000L)
-                            backPressedOnce = false
+                    var showExitConfirmDialog by remember { mutableStateOf(false) }
+                    val performExitApp: () -> Unit = {
+                        finishAffinity()
+                        finishAndRemoveTask()
+                        if (confirmExitEnabled) {
+                            // Kill the process to free RAM on low-memory devices.
+                            android.os.Process.killProcess(android.os.Process.myPid())
                         }
                     }
                     val handleExitApp: () -> Unit = {
-                        if (!confirmExitEnabled || backPressedOnce) {
-                            finishAffinity()
-                            finishAndRemoveTask()
-                            if (confirmExitEnabled) {
-                                // Kill the process to free RAM on low-memory devices.
-                                android.os.Process.killProcess(android.os.Process.myPid())
-                            }
-                        } else {
-                            backPressedOnce = true
-                            Toast.makeText(this@MainActivity, getString(R.string.confirm_exit_toast), Toast.LENGTH_SHORT).show()
-                        }
+                        showExitConfirmDialog = true
                     }
 
                     val updateViewModel: UpdateViewModel = hiltViewModel(this@MainActivity)
@@ -1583,6 +1575,15 @@ open class MainActivity : ComponentActivity() {
                                     navigateToDrawerRoute(navController, currentRoute, Screen.Calendar.route)
                                 }
                             )
+                            if (showExitConfirmDialog) {
+                                com.nuvio.tv.ui.monolith.MonolithExitConfirmationDialog(
+                                    onConfirm = {
+                                        showExitConfirmDialog = false
+                                        performExitApp()
+                                    },
+                                    onDismiss = { showExitConfirmDialog = false }
+                                )
+                            }
                             LaunchedEffect(currentRoute, profileEntry.pending) {
                                 if (currentRoute != null && currentRoute != Screen.Home.route) profileEntry.finish()
                             }

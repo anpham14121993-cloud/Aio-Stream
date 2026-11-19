@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.home
 
+import com.nuvio.tv.ui.monolith.InputInteractionMode
+import com.nuvio.tv.ui.monolith.LocalInputInteractionMode
 import com.nuvio.tv.ui.v2.components.sidebarPageContent
 
 import com.nuvio.tv.ui.theme.NuvioTheme
@@ -250,7 +252,8 @@ fun ClassicHomeContent(
     val cwPendingScrollToStart = remember { mutableIntStateOf(0) }
     val upcomingPendingScrollToStart = remember { mutableIntStateOf(0) }
     val comingUpPendingScrollToStart = remember { mutableIntStateOf(0) }
-    BackHandler(enabled = contentHasFocus.value && run {
+    val isTouchMode = LocalInputInteractionMode.current == InputInteractionMode.TOUCH
+    BackHandler(enabled = !isTouchMode && contentHasFocus.value && run {
         val rowKey = activeRowKeyState.value ?: return@run false
         val isCwRow = rowKey == "continue_watching" || rowKey == "upcoming_section" || rowKey == MODERN_COMING_UP_ROW_KEY
         val itemIndex = if (isCwRow) cwFocusedIndex.intValue else (rowFocusedItemIndex[rowKey] ?: 0)

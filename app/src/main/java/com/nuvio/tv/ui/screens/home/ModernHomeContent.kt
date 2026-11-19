@@ -7,6 +7,8 @@
 package com.nuvio.tv.ui.screens.home
 
 import com.nuvio.tv.data.mediaserver.DrawnArtworkWidths
+import com.nuvio.tv.ui.monolith.InputInteractionMode
+import com.nuvio.tv.ui.monolith.LocalInputInteractionMode
 import com.nuvio.tv.ui.v2.components.sidebarPageContent
 import com.nuvio.tv.ui.v2.appearance.LocalUiScaleDecision
 import com.nuvio.tv.ui.v2.scale.posterSizeDp
@@ -342,10 +344,12 @@ fun ModernHomeContent(
     val contentHasFocus = remember { mutableStateOf(false) }
     val fullscreenTrailerPlaying = remember { mutableStateOf(false) }
     val fullscreenTrailerDismiss = remember { mutableStateOf<(() -> Unit)?>(null) }
+    val currentInputMode by rememberUpdatedState(LocalInputInteractionMode.current)
     val shouldInterceptBack = remember {
         derivedStateOf {
             if (!contentHasFocus.value) return@derivedStateOf false
             if (fullscreenTrailerPlaying.value) return@derivedStateOf true
+            if (currentInputMode == InputInteractionMode.TOUCH) return@derivedStateOf false
             val rowKey = activeRowKey.value ?: return@derivedStateOf false
             val itemIndex = focusedItemByRow[rowKey] ?: 0
             itemIndex > 0
