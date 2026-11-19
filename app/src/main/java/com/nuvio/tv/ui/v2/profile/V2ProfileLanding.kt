@@ -196,7 +196,7 @@ fun V2ProfileLanding(
         color = NuvioTheme.colors.TextTertiary,
         fontSize = if (isCompactPhone) 12.5.sp else 14.sp,
         textAlign = TextAlign.Center,
-        modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, bottom = 20.dp)
+        modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp).padding(bottom = 20.dp)
     )
 }
 

@@ -2552,8 +2552,8 @@ internal fun ProfilePinOverlay(
                 Text(
                     text = headingText,
                     color = NuvioTheme.colors.TextPrimary,
-                    fontSize = (if (isCompactPhone) 22 else headerFontSize).sp,
-                    lineHeight = (if (isCompactPhone) 28 else headerLineHeight).sp,
+                    fontSize = if (isCompactPhone) 22.sp else headerFontSize.sp,
+                    lineHeight = if (isCompactPhone) 28.sp else headerLineHeight.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 )
@@ -2580,7 +2580,7 @@ internal fun ProfilePinOverlay(
                         .widthIn(max = ProfileSelectionSpacing.PinSupportMaxWidth)
                         .semantics { liveRegion = LiveRegionMode.Polite },
                     color = supportTextColor,
-                    fontSize = (if (isCompactPhone) 14 else supportFontSize).sp,
+                    fontSize = if (isCompactPhone) 14.sp else supportFontSize.sp,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                     lineHeight = 20.sp

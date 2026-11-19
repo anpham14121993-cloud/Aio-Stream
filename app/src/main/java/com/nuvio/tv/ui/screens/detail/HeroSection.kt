@@ -1012,8 +1012,7 @@ private fun ActionIconButton(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun MetaInfoRow(
     meta: Meta,

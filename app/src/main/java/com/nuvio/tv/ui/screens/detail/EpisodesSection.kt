@@ -1332,7 +1332,7 @@ private fun rememberEpisodeCardMetrics(posterCardCornerRadiusDp: Int = 12): Epis
             )
 
             else -> {
-                val compactEp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
+                val compactEp = screenWidthDp < 600
                 EpisodeCardMetrics(
                 rowHorizontalPadding = if (compactEp) 16.dp else NuvioTheme.spacing.xxl,
                 rowVerticalPadding = 14.dp,
