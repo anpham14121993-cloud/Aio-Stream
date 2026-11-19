@@ -182,6 +182,7 @@ import coil3.compose.rememberAsyncImagePainter
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import androidx.compose.ui.res.stringResource
+import com.nuvio.tv.ui.monolith.PlayerTouchGesturesOverlay
 import com.nuvio.tv.R
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.player.PlayerWindowBackdrop
@@ -2273,7 +2274,7 @@ fun PlayerScreen(
                 !uiState.showSubtitleOverlay && !uiState.showSpeedDialog &&
                 !uiState.showMoreDialog && !postPlayRecommendationState.isVisible &&
                 uiState.postPlayMode !is PostPlayMode.StillWatching
-            com.nuvio.tv.ui.monolith.PlayerTouchGesturesOverlay(
+            PlayerTouchGesturesOverlay(
                 touchModeActive = touchGesturesActive,
                 gesturesAllowed = touchGesturesAllowed,
                 controlsVisible = playerControlsVisible,
