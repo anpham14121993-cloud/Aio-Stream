@@ -217,16 +217,16 @@ internal fun PlayerCustomControls(
         PlayerControlChrome(v2, Modifier.align(Alignment.BottomCenter).verticalScroll(rememberScrollState()),
             gap = gap,
             title = {
-            if (state.activeSkipInterval == null) Column(Modifier.hideUnderSeekThumbnails(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (state.activeSkipInterval == null) {
                 val title = state.contentName ?: state.title
-                var failed by remember(state.logo) { mutableStateOf(false) }
-                if (!state.logo.isNullOrBlank() && !failed) AsyncImage(state.logo, title,
-                    Modifier.sizeIn(maxWidth = 300.dp, maxHeight = 64.dp), contentScale = ContentScale.Fit,
-                    alignment = Alignment.CenterStart, onError = { failed = true })
-                else Text(title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleLarge)
-                PlayerSecondaryMetadata(state, chapter = rememberCurrentChapter(viewModel, state.chapters))
-                if (playerBadges.isNotEmpty()) PlayerBadges(playerBadges)
+                Text(
+                    text = title,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.hideUnderSeekThumbnails()
+                )
             }
             }, timeline = {
             if (hasSeekTimeline) Box(Modifier.fillMaxWidth().onGloballyPositioned { coordinates ->

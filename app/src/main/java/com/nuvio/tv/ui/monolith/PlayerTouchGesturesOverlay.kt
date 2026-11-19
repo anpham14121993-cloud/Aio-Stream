@@ -207,7 +207,7 @@ fun BoxScope.PlayerTouchGesturesOverlay(
         maxOf(touchSlop * 8f, with(density) { 120.dp.toPx() })
     }
     val doubleTapWindowMs = maxOf(viewConfiguration.doubleTapTimeoutMillis, 320L)
-    val seekStreakWindowMs = 550L
+    val seekStreakWindowMs = 850L
 
     var screenLocked by remember { mutableStateOf(false) }
     var unlockButtonVisible by remember { mutableStateOf(false) }
@@ -229,13 +229,19 @@ fun BoxScope.PlayerTouchGesturesOverlay(
     var lastTapY by remember { mutableFloatStateOf(0f) }
     var lastSeekUpMs by remember { mutableLongStateOf(0L) }
     var lastSeekSide by remember { mutableIntStateOf(0) }
+    var accumulatedSeekMs by remember { mutableLongStateOf(0L) }
+    var accumulatedSeekSide by remember { mutableIntStateOf(0) }
 
     fun performDirectionalSeek(side: Int) {
-        val deltaMs = if (side < 0) -10_000L else 10_000L
-        latestOnSeekBy(deltaMs)
+        val stepMs = if (side < 0) -10_000L else 10_000L
+        val nextTotalMs = if (accumulatedSeekSide == side) accumulatedSeekMs + stepMs else stepMs
+        accumulatedSeekSide = side
+        accumulatedSeekMs = nextTotalMs
+        latestOnSeekBy(stepMs)
+        val totalSeconds = abs(nextTotalMs / 1000L)
         feedback = TouchHudFeedback.DoubleTapAction(
             icon = if (side < 0) Icons.Rounded.FastRewind else Icons.Rounded.FastForward,
-            label = if (side < 0) "-10 giây" else "+10 giây"
+            label = if (side < 0) "-${totalSeconds} giây" else "+${totalSeconds} giây"
         )
         feedbackSeq++
     }
@@ -248,6 +254,8 @@ fun BoxScope.PlayerTouchGesturesOverlay(
         if (feedbackSeq > 0L && feedback != null) {
             delay(950L)
             feedback = null
+            accumulatedSeekMs = 0L
+            accumulatedSeekSide = 0
         }
     }
 

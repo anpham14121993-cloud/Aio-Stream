@@ -3710,7 +3710,7 @@ private fun PlayerControlsOverlay(
             playerBadges,
             reportSkipAnchor, V2PlayerActions(
                 playPause = onPlayPause, playNext = onPlayNextEpisode, seekToStart = {
-                    onSeekTo(0L)
+                    viewModel.onEvent(PlayerEvent.OnSeekTo(0L, exact = true))
                     if (!customIsV2 && !uiState.isPlaying) onPlayPause()
                 }, episodes = onShowEpisodesPanel, chapters = onShowChaptersPanel, sources = onShowSourcesPanel,
                 audio = onShowAudioDialog, subtitles = onShowSubtitleDialog, speed = onShowSpeedDialog,
@@ -3725,7 +3725,9 @@ private fun PlayerControlsOverlay(
             uiState, viewModel, v2Focus, playPauseFocusRequester, progressBarFocusRequester,
             streamInfoFocusRequester, progressBarUpFocusRequester, reportSkipAnchor,
             V2PlayerActions(
-                playPause = onPlayPause, playNext = onPlayNextEpisode, seekToStart = { onSeekTo(0L) },
+                playPause = onPlayPause, playNext = onPlayNextEpisode, seekToStart = {
+                    viewModel.onEvent(PlayerEvent.OnSeekTo(0L, exact = true))
+                },
                 episodes = onShowEpisodesPanel, chapters = onShowChaptersPanel, sources = onShowSourcesPanel,
                 audio = onShowAudioDialog, subtitles = onShowSubtitleDialog, speed = onShowSpeedDialog,
                 aspect = onToggleAspectRatio, engine = requestEngineSwitch, report = onReportPlaybackIssue,
@@ -3835,6 +3837,8 @@ private fun PlayerControlsOverlay(
                 )
         )
 
+        val controlsBottomPadding = if (handheldTouchChrome) 28.dp else 40.dp
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3846,7 +3850,7 @@ private fun PlayerControlsOverlay(
                         controlsClearancePx = (rootHeight - top - clearanceOffsetPx).coerceAtLeast(0f)
                     }
                 }
-                .padding(start = NuvioTheme.spacing.xxl, end = NuvioTheme.spacing.xxl, top = NuvioTheme.spacing.xl, bottom = 48.dp)
+                .padding(start = NuvioTheme.spacing.xxl, end = NuvioTheme.spacing.xxl, top = NuvioTheme.spacing.xl, bottom = controlsBottomPadding)
         ) {
             val skipIntroVisible = uiState.activeSkipInterval != null
             val hasEpisodeContext = uiState.currentSeason != null && uiState.currentEpisode != null
@@ -3862,61 +3866,28 @@ private fun PlayerControlsOverlay(
                 verticalAlignment = Alignment.Bottom
             ) {
                 Box(modifier = Modifier.weight(1f)) {
-            androidx.compose.animation.AnimatedVisibility(
-                visible = !skipIntroVisible,
-                enter = fadeIn(animationSpec = tween(NuvioMotion.tokens.durations.fast)),
-                exit = fadeOut(animationSpec = tween(NuvioMotion.tokens.durations.fast))
-            ) {
-                Column(modifier = Modifier.fillMaxWidth().hideUnderSeekThumbnails()) {
-                    val displayName = if (uiState.currentSeason != null && uiState.currentEpisode != null) {
-                        uiState.contentName ?: uiState.title
-                    } else {
-                        uiState.title
-                    }
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = !skipIntroVisible,
+                        enter = fadeIn(animationSpec = tween(NuvioMotion.tokens.durations.fast)),
+                        exit = fadeOut(animationSpec = tween(NuvioMotion.tokens.durations.fast))
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().hideUnderSeekThumbnails()) {
+                            val displayName = if (uiState.currentSeason != null && uiState.currentEpisode != null) {
+                                uiState.contentName ?: uiState.title
+                            } else {
+                                uiState.title
+                            }
 
-                    val titleLogo = uiState.logo
-                    var titleLogoFailed by remember(titleLogo) { mutableStateOf(false) }
-                    if (!titleLogo.isNullOrBlank() && !titleLogoFailed) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(titleLogo)
-                                .memoryCacheKey(titleLogo)
-                                .build(),
-                            contentDescription = displayName,
-                            contentScale = ContentScale.Fit,
-                            alignment = Alignment.BottomStart,
-                            modifier = Modifier
-                                .sizeIn(maxWidth = 340.dp, maxHeight = 72.dp)
-                                .reportRightEdge("name", titleRights),
-                            onError = { titleLogoFailed = true }
-                        )
-                    } else {
-                        Text(
-                            text = displayName,
-                            modifier = Modifier.reportRightEdge("name", titleRights),
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                            Text(
+                                text = displayName,
+                                modifier = Modifier.reportRightEdge("name", titleRights),
+                                style = MaterialTheme.typography.titleLarge,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
-
-                    PlayerSecondaryMetadata(
-                        uiState,
-                        modifier = Modifier.reportRightEdge("episode", titleRights),
-                        chapter = rememberCurrentChapter(viewModel, uiState.chapters)
-                    )
-
-                    if (playerBadges.isNotEmpty()) {
-                        PlayerBadges(
-                            badges = playerBadges,
-                            modifier = Modifier
-                                .padding(vertical = NuvioTheme.spacing.xs)
-                                .reportRightEdge("badges", titleRights)
-                        )
-                    }
-                }
-            }
                 }
 
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
@@ -4036,7 +4007,7 @@ private fun PlayerControlsOverlay(
                 }
             }
 
-            Spacer(modifier = Modifier.height(NuvioTheme.spacing.xs))
+            Spacer(modifier = Modifier.height(2.dp))
 
             // Progress bar — always LTR regardless of locale
             DisposableEffect(Unit) {
@@ -4067,19 +4038,19 @@ private fun PlayerControlsOverlay(
             }
 
             val edgeGap = if (bandDp != null && letterboxActive && belowBarHeightPx > 0) {
-                (bandDp - with(density) { belowBarHeightPx.toDp() } - 48.dp).coerceAtLeast(NuvioTheme.spacing.xs)
+                (bandDp - with(density) { belowBarHeightPx.toDp() } - controlsBottomPadding).coerceAtLeast(NuvioTheme.spacing.xs)
             } else {
-                NuvioTheme.spacing.xs
+                2.dp
             }
 
             // Report where the Skip button's bottom should sit so it clears the scrubber
             // and aligns with the title-block bottom (title hides while skipping). Stack
-            // from the screen bottom: 48dp column pad + below-bar block + edgeGap + the
-            // 20dp scrubber + the xs spacer above it. Only report once measured, so the
+            // from the screen bottom: controlsBottomPadding + below-bar block + edgeGap + the
+            // 20dp scrubber + the 2dp spacer above it. Only report once measured, so the
             // first frame keeps PlayerScreen's safe default instead of a too-low value.
             if (belowBarHeightPx > 0) {
-                val skipAnchor = 48.dp + with(density) { belowBarHeightPx.toDp() } +
-                    edgeGap + 20.dp + NuvioTheme.spacing.xs
+                val skipAnchor = controlsBottomPadding + with(density) { belowBarHeightPx.toDp() } +
+                    edgeGap + 20.dp + 2.dp
                 LaunchedEffect(skipAnchor) { onSkipAnchorChanged(skipAnchor) }
             }
             Spacer(modifier = Modifier.height(edgeGap))
@@ -4087,7 +4058,7 @@ private fun PlayerControlsOverlay(
             Column(modifier = Modifier.onSizeChanged { belowBarHeightPx = it.height }) {
             PlayerControlsTimeTextHost(viewModel = viewModel)
 
-            Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
+            Spacer(modifier = Modifier.height(4.dp))
 
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Row(
@@ -4107,7 +4078,7 @@ private fun PlayerControlsOverlay(
                     PillControlButton(
                         icon = Icons.Default.RestartAlt,
                         label = stringResource(R.string.player_pill_restart),
-                        onClick = { onSeekTo(0L); if (!uiState.isPlaying) onPlayPause() },
+                        onClick = { viewModel.onEvent(PlayerEvent.OnSeekTo(0L, exact = true)); if (!uiState.isPlaying) onPlayPause() },
                         upFocusRequester = progressBarFocusRequester,
                         onDownKey = onHideControls,
                         onFocused = onResetHideTimer
@@ -4543,7 +4514,7 @@ private fun ProgressBar(
                                         .coerceIn(0L, activeDur)
                                     if (!active.pressed) {
                                         active.consume()
-                                        ScrubGlide.positionMs = targetMs
+                                        ScrubGlide.stop()
                                         latestOnTouchInteraction?.invoke()
                                         seekCb(targetMs)
                                         break
@@ -4560,6 +4531,9 @@ private fun ProgressBar(
                                 ScrubGlide.stop()
                                 throw cancelled
                             } finally {
+                                if (touchScrubbing) {
+                                    ScrubGlide.stop()
+                                }
                                 touchScrubbing = false
                             }
                         }

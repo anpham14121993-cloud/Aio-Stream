@@ -146,19 +146,19 @@ internal fun PlayerControlDeck(
 
 @Composable
 internal fun PlayerControlChrome(v2: Boolean, modifier: Modifier = Modifier, rightInset: Dp = 0.dp,
-    gap: Dp = 8.dp, title: @Composable () -> Unit, timeline: @Composable () -> Unit,
+    gap: Dp = 4.dp, title: @Composable () -> Unit, timeline: @Composable () -> Unit,
     time: @Composable () -> Unit, deck: @Composable () -> Unit) {
     Column(modifier.fillMaxWidth().padding(start = if (v2) 32.dp else 48.dp,
-        end = (if (v2) 32.dp else 48.dp) + rightInset, bottom = if (v2) 24.dp else 48.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Column(if (v2) Modifier.padding(horizontal = 12.dp) else Modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) { title() }
+        end = (if (v2) 32.dp else 48.dp) + rightInset, bottom = if (v2) 14.dp else 28.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(if (v2) Modifier.padding(horizontal = 12.dp) else Modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) { title() }
         val appearance = LocalV2Appearance.current
         val panel = playerControlChromePolicy(v2, appearance?.playerChromeStyle == PlayerChromeStyle.CONTROL_DECK,
             appearance?.visualStyle == com.nuvio.tv.domain.model.VisualStyle.CINEMATIC_GLASS).showDeckPanel
         Column(Modifier.fillMaxWidth()
             .then(if (panel) Modifier.nuvioGlass(GlassRole.CONTROL, shape = RoundedCornerShape(12.dp)) else Modifier)
-            .then(if (v2) Modifier.padding(horizontal = 12.dp, vertical = if (panel) 14.dp else 8.dp) else Modifier),
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            .then(if (v2) Modifier.padding(horizontal = 12.dp, vertical = if (panel) 8.dp else 4.dp) else Modifier),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) { timeline(); time() }
             Spacer(Modifier.height(gap)); deck()
         }

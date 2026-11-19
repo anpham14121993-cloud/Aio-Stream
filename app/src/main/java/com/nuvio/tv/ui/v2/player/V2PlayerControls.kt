@@ -119,22 +119,23 @@ fun V2PlayerControls(
             .background(Brush.verticalGradient(listOf(Color.Transparent,
                 Color.Black.copy(alpha = if (cinematicGlass) .20f else if (deck) .55f else .78f)))))
         Column(Modifier.align(Alignment.BottomCenter)
-            .padding(start = 32.dp, end = 32.dp, bottom = 24.dp)
-            .fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (uiState.activeSkipInterval == null) Column(Modifier.hideUnderSeekThumbnails(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val title = uiState.contentName ?: uiState.title
-                var logoFailed by remember(uiState.logo) { mutableStateOf(false) }
-                if (!uiState.logo.isNullOrBlank() && !logoFailed) {
-                    AsyncImage(uiState.logo, title, Modifier.padding(start = 12.dp).sizeIn(maxWidth = 240.dp, maxHeight = 54.dp),
-                        contentScale = ContentScale.Fit, alignment = Alignment.CenterStart, onError = { logoFailed = true })
-                } else Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp))
-                PlayerSecondaryMetadata(uiState, Modifier.padding(start = 12.dp), rememberCurrentChapter(viewModel, uiState.chapters))
-                if (playerBadges.isNotEmpty()) PlayerBadges(playerBadges, Modifier.padding(start = 12.dp))
+            .padding(start = 32.dp, end = 32.dp, bottom = 14.dp)
+            .fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (uiState.activeSkipInterval == null) {
+                Text(
+                    text = uiState.contentName ?: uiState.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .padding(start = 12.dp, end = 12.dp)
+                        .hideUnderSeekThumbnails()
+                )
             }
             Column(Modifier.fillMaxWidth()
                 .then(if (deck) Modifier.nuvioGlass(GlassRole.CONTROL, shape = RoundedCornerShape(12.dp)) else Modifier)
-                .padding(horizontal = 12.dp, vertical = if (deck) 14.dp else 8.dp),
+                .padding(horizontal = 12.dp, vertical = if (deck) 8.dp else 4.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Box(Modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
                     onSkipAnchorChanged(with(density) { (view.height - coordinates.positionInRoot().y).toDp() } + 12.dp)
@@ -144,7 +145,7 @@ fun V2PlayerControls(
                         downFocusRequester = playFocus, onFocused = actions.interaction, onClick = actions.playPause)
                 }
                 PlayerControlsTimeTextHost(viewModel)
-                Spacer(Modifier.height(if (deck) 8.dp else 16.dp))
+                Spacer(Modifier.height(if (deck) 4.dp else 8.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     V2TransportButton(if (uiState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,

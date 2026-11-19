@@ -10,9 +10,8 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 
 import android.graphics.ColorSpace
 import android.os.Build
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +25,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,6 +83,7 @@ import com.nuvio.tv.ui.util.localizedContentType
 import com.nuvio.tv.ui.util.localizedGenreLabel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.snapshotFlow
 
 private const val AUTO_ADVANCE_INTERVAL_MS = 10000L
@@ -108,11 +111,22 @@ fun HeroCarousel(
     val currentOnItemClick by rememberUpdatedState(onItemClick)
     val currentOnItemFocus by rememberUpdatedState(onItemFocus)
     val currentOnActiveItemChanged by rememberUpdatedState(onActiveItemChanged)
-    var activeIndex by remember { mutableIntStateOf(initialActiveIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0))) }
+    val pagerState = rememberPagerState(
+        initialPage = initialActiveIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0)),
+        pageCount = { items.size }
+    )
+    val pagerScope = rememberCoroutineScope()
+    val activeIndex = pagerState.currentPage.coerceIn(0, (items.size - 1).coerceAtLeast(0))
     var isFocused by remember { mutableStateOf(false) }
     // Slide whose description is still on its first scroll pass, or -1.
     var descriptionScrollHoldIndex by remember { mutableIntStateOf(-1) }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+
+    LaunchedEffect(items.size) {
+        if (items.isNotEmpty() && pagerState.currentPage >= items.size) {
+            pagerState.scrollToPage(items.size - 1)
+        }
+    }
 
     LaunchedEffect(activeIndex, isFocused) {
         if (!isFocused) return@LaunchedEffect
@@ -123,16 +137,19 @@ fun HeroCarousel(
         items.getOrNull(activeIndex)?.let { currentOnActiveItemChanged(it) }
     }
 
-    // Auto-advance when not focused — delay first advance to 20s so initial GPU load settles
-    LaunchedEffect(isFocused, items.size) {
+    // Auto-advance when not focused or actively swiped — delay first advance to 20s so initial GPU load settles
+    LaunchedEffect(isFocused, items.size, pagerState) {
         if (items.size <= 1) return@LaunchedEffect
         delay(AUTO_ADVANCE_INTERVAL_MS * 2) // 20s before first advance
         while (true) {
             delay(AUTO_ADVANCE_INTERVAL_MS)
-            // Let a long description finish scrolling before the slide is replaced.
-            snapshotFlow { descriptionScrollHoldIndex == activeIndex }.first { !it }
-            if (!isFocused) {
-                activeIndex = (activeIndex + 1) % items.size
+            // Let a long description finish scrolling or touch swipe finish before replacing the slide.
+            snapshotFlow {
+                descriptionScrollHoldIndex == pagerState.currentPage || pagerState.isScrollInProgress
+            }.first { !it }
+            if (!isFocused && items.isNotEmpty()) {
+                val nextPage = (pagerState.currentPage + 1) % items.size
+                pagerState.animateScrollToPage(nextPage)
             }
         }
     }
@@ -171,18 +188,28 @@ fun HeroCarousel(
                 if (event.type == KeyEventType.KeyDown) {
                     when (event.key) {
                         Key.DirectionLeft -> {
-                            if (isRtl) {
-                                if (activeIndex < items.size - 1) { activeIndex++; true } else false
+                            val current = pagerState.currentPage
+                            val target = if (isRtl) {
+                                if (current < items.size - 1) current + 1 else null
                             } else {
-                                if (activeIndex > 0) { activeIndex--; true } else false
+                                if (current > 0) current - 1 else null
                             }
+                            if (target != null) {
+                                pagerScope.launch { pagerState.animateScrollToPage(target) }
+                                true
+                            } else false
                         }
                         Key.DirectionRight -> {
-                            if (isRtl) {
-                                if (activeIndex > 0) { activeIndex--; true } else false
+                            val current = pagerState.currentPage
+                            val target = if (isRtl) {
+                                if (current > 0) current - 1 else null
                             } else {
-                                if (activeIndex < items.size - 1) { activeIndex++; true } else false
+                                if (current < items.size - 1) current + 1 else null
                             }
+                            if (target != null) {
+                                pagerScope.launch { pagerState.animateScrollToPage(target) }
+                                true
+                            } else false
                         }
                         else -> false
                     }
@@ -196,13 +223,12 @@ fun HeroCarousel(
                 }
             }
     ) {
-        // Crossfade between slides
-        Crossfade(
-            targetState = activeIndex,
-            animationSpec = tween(300),
-            label = "heroSlide"
+        HorizontalPager(
+            state = pagerState,
+            userScrollEnabled = items.size > 1,
+            modifier = Modifier.fillMaxSize()
         ) { index ->
-            val item = items.getOrNull(index) ?: return@Crossfade
+            val item = items.getOrNull(index) ?: return@HorizontalPager
             HeroCarouselSlide(
                 item = item,
                 showImdbRatings = showImdbRatings,
@@ -212,7 +238,7 @@ fun HeroCarousel(
                 descriptionAutoScrollEnabled = descriptionAutoScrollEnabled,
                 onDescriptionScrollHoldChanged = { hold ->
                     // A slide can only clear its own hold, so the outgoing slide in the
-                    // crossfade can't release the new one, and a slide without a
+                    // pager can't release the new one, and a slide without a
                     // description never blocks the advance.
                     when {
                         hold -> descriptionScrollHoldIndex = index
@@ -244,11 +270,14 @@ fun HeroCarousel(
                     else -> NuvioTheme.spacing.md
                 }
                 val dotHeight = if (isActive) 6.dp else NuvioTheme.spacing.xs
-                
+
                 Box(
                     modifier = Modifier
                         .size(width = dotWidth, height = dotHeight)
                         .clip(dotShape)
+                        .clickable {
+                            pagerScope.launch { pagerState.animateScrollToPage(index) }
+                        }
                         .then(
                             if (useGradient) Modifier.background(focusRingBrush)
                             else Modifier.background(dotColor!!)

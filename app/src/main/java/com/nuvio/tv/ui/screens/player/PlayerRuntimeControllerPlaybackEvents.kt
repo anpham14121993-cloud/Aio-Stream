@@ -3139,11 +3139,11 @@ private fun PlayerRuntimeController.publishScrubGlide(positionMs: Long) {
 
 /** Ends a glide; the pending position stays for the commit (or the expiry). */
 internal fun PlayerRuntimeController.stopScrubGlide() {
-    val job = scrubGlideJob ?: return
+    val job = scrubGlideJob
     scrubGlideJob = null
     scrubStepChase = null
-    job.cancel()
-    if (ScrubGlide.active) pendingPreviewSeekPosition = ScrubGlide.positionMs
+    job?.cancel()
+    if (job != null && ScrubGlide.active) pendingPreviewSeekPosition = ScrubGlide.positionMs
     ScrubGlide.stop()
 }
 

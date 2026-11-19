@@ -1204,11 +1204,16 @@ fun ModernHomeContent(
                     titleModifier = heroMetadataModifier
                 )
             }
+            val mobileHeroItems = remember(uiState.heroItems, uiState.catalogRows) {
+                uiState.heroItems.ifEmpty {
+                    uiState.catalogRows.firstOrNull { it.items.isNotEmpty() }?.items?.take(10).orEmpty()
+                }
+            }
             val mobileHeroContentLambda: (@Composable () -> Unit)? = if (useMobileScrollableHero && uiState.heroSectionEnabled) {
                 {
-                    if (uiState.heroItems.isNotEmpty()) {
+                    if (mobileHeroItems.isNotEmpty()) {
                         com.nuvio.tv.ui.components.HeroCarousel(
-                            items = uiState.heroItems.asStable(),
+                            items = mobileHeroItems.asStable(),
                             showImdbRatings = uiState.homeImdbRatingsVisibility.showRatings,
                             mdbListShowOnHero = uiState.mdbListShowOnHero,
                             mdbListRatingOrder = uiState.mdbListRatingOrder,
