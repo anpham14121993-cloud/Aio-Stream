@@ -54,8 +54,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
@@ -4462,6 +4462,19 @@ private fun ProgressBar(
         label = "bufferedProgress"
     )
     var isFocused by remember { mutableStateOf(false) }
+    var touchScrubbing by remember { mutableStateOf(false) }
+    val latestDuration by rememberUpdatedState(duration)
+    val latestOnTouchSeekTo by rememberUpdatedState(onTouchSeekTo)
+    val latestOnTouchInteraction by rememberUpdatedState(onTouchInteraction)
+    DisposableEffect(Unit) {
+        onDispose {
+            if (touchScrubbing) {
+                ScrubGlide.stop()
+                touchScrubbing = false
+            }
+        }
+    }
+    val displayedPlayedFraction = if (touchScrubbing && geometry.hasDuration) previewFraction else animatedProgress
 
     BoxWithConstraints(
         modifier = Modifier
@@ -4469,34 +4482,59 @@ private fun ProgressBar(
             .height(32.dp)
             .onGloballyPositioned { if (!warming) SeekBarAnchor.bounds = it.boundsInRoot() }
             .then(
-                if (!warming && duration > 0L && onTouchSeekTo != null) {
-                    Modifier
-                        .pointerInput(duration, onTouchSeekTo) {
-                            detectTapGestures { offset ->
-                                onTouchInteraction?.invoke()
-                                val frac = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
-                                onTouchSeekTo((duration * frac).toLong())
+                if (!warming) {
+                    Modifier.pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val dur = latestDuration
+                            val seekCb = latestOnTouchSeekTo
+                            if (dur <= 0L || seekCb == null) return@awaitEachGesture
+                            val width = size.width.coerceAtLeast(1).toFloat()
+                            fun targetForX(x: Float): Long =
+                                (dur * (x / width).coerceIn(0f, 1f)).toLong().coerceIn(0L, dur)
+
+                            var targetMs = targetForX(down.position.x)
+                            touchScrubbing = true
+                            ScrubGlide.positionMs = targetMs
+                            ScrubGlide.active = true
+                            var lastInteractionTick = android.os.SystemClock.uptimeMillis()
+                            latestOnTouchInteraction?.invoke()
+
+                            try {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val active = event.changes.firstOrNull { it.id == down.id }
+                                    if (active == null) {
+                                        ScrubGlide.stop()
+                                        break
+                                    }
+                                    val activeDur = latestDuration.coerceAtLeast(1L)
+                                    targetMs = (activeDur * (active.position.x / width).coerceIn(0f, 1f))
+                                        .toLong()
+                                        .coerceIn(0L, activeDur)
+                                    if (!active.pressed) {
+                                        active.consume()
+                                        ScrubGlide.positionMs = targetMs
+                                        latestOnTouchInteraction?.invoke()
+                                        seekCb(targetMs)
+                                        break
+                                    }
+                                    active.consume()
+                                    ScrubGlide.positionMs = targetMs
+                                    val nowTick = android.os.SystemClock.uptimeMillis()
+                                    if (nowTick - lastInteractionTick >= 250L) {
+                                        lastInteractionTick = nowTick
+                                        latestOnTouchInteraction?.invoke()
+                                    }
+                                }
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                ScrubGlide.stop()
+                                throw cancelled
+                            } finally {
+                                touchScrubbing = false
                             }
                         }
-                        .pointerInput(duration, onTouchSeekTo) {
-                            var dragTargetMs = 0L
-                            detectHorizontalDragGestures(
-                                onDragStart = { offset ->
-                                    onTouchInteraction?.invoke()
-                                    val frac = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
-                                    dragTargetMs = (duration * frac).toLong()
-                                },
-                                onHorizontalDrag = { change, _ ->
-                                    change.consume()
-                                    onTouchInteraction?.invoke()
-                                    val frac = (change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
-                                    dragTargetMs = (duration * frac).toLong()
-                                },
-                                onDragEnd = {
-                                    onTouchSeekTo(dragTargetMs)
-                                }
-                            )
-                        }
+                    }
                 } else {
                     Modifier
                 }
@@ -4600,7 +4638,7 @@ private fun ProgressBar(
     ) {
         val trackWidth = maxWidth
         val trackHeight by animateDpAsState(
-            targetValue = if (isFocused) 8.dp else 4.dp,
+            targetValue = if (isFocused || touchScrubbing) 8.dp else 4.dp,
             animationSpec = tween(160),
             label = "trackHeight"
         )
@@ -4610,10 +4648,10 @@ private fun ProgressBar(
                 .fillMaxWidth()
                 .height(trackHeight)
                 .clip(RoundedCornerShape(50))
-                .background(Color.White.copy(alpha = if (isFocused) 0.24f else 0.18f))
+                .background(Color.White.copy(alpha = if (isFocused || touchScrubbing) 0.24f else 0.18f))
                 // Neutral buffer tint remains distinct from both the dim track and themed played fill.
                 .playerProgressFill(
-                    progress = { animatedProgress },
+                    progress = { displayedPlayedFraction },
                     bufferedProgress = { animatedBufferedProgress },
                     bufferedColor = Color.White,
                     playedBrush = v2ProgressBrush
@@ -4621,7 +4659,7 @@ private fun ProgressBar(
                 .chapterGaps(chapterFractions)
         ) {
         // A lighter fill between playback and the seek cursor shows how far the seek goes.
-        if (geometry.isPreviewing) {
+        if (geometry.isPreviewing && !touchScrubbing) {
             val rewinding = previewFraction < animatedProgress
             Box(
                 modifier = Modifier
@@ -4636,20 +4674,24 @@ private fun ProgressBar(
         }
         }
         if (geometry.hasDuration) {
-            val markerSize = if (isFocused && !geometry.isPreviewing) 12.dp else 8.dp
+            val markerSize = when {
+                touchScrubbing -> 14.dp
+                isFocused && !geometry.isPreviewing -> 12.dp
+                else -> 8.dp
+            }
             Box(
                 modifier = Modifier.align(Alignment.CenterStart)
                     .offset {
                         val track = trackWidth.toPx()
                         val marker = markerSize.toPx()
                         IntOffset(
-                            (track * animatedProgress - marker / 2).coerceIn(0f, (track - marker).coerceAtLeast(0f)).roundToInt(),
+                            (track * displayedPlayedFraction - marker / 2).coerceIn(0f, (track - marker).coerceAtLeast(0f)).roundToInt(),
                             0
                         )
                     }
                     .size(markerSize).clip(CircleShape).background(Color.White)
             )
-            if (geometry.isPreviewing) {
+            if (geometry.isPreviewing && !touchScrubbing) {
                 // A hollow seek cursor leaves the solid marker at actual playback.
                 Box(
                     modifier = Modifier.align(Alignment.CenterStart)
