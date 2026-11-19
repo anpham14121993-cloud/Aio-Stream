@@ -595,28 +595,35 @@ fun TrailerSeekOverlay(
                                     isScrubbing = true
                                     latestOnScrubbingChanged(true)
                                     var dragged = false
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val active = event.changes.firstOrNull { it.id == down.id }
-                                        if (active == null || !active.pressed) {
-                                            if (active != null && active.changedToUpIgnoreConsumed()) {
+                                    try {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val active = event.changes.firstOrNull { it.id == down.id }
+                                            if (active == null || !active.pressed) {
+                                                if (active != null) {
+                                                    fraction = (active.position.x / width).coerceIn(0f, 1f)
+                                                    scrubFraction = fraction
+                                                    active.consume()
+                                                }
+                                                val targetMs = (fraction * latestDuration).toLong().coerceIn(0L, latestDuration)
+                                                isScrubbing = false
+                                                latestOnScrubbingChanged(false)
+                                                seekCb(targetMs)
+                                                break
+                                            }
+                                            val delta = active.positionChange()
+                                            if (!dragged && kotlin.math.abs(active.position.x - startX) > touchSlop * 0.5f) {
+                                                dragged = true
+                                            }
+                                            if (delta.x != 0f || dragged) {
+                                                fraction = (active.position.x / width).coerceIn(0f, 1f)
+                                                scrubFraction = fraction
                                                 active.consume()
                                             }
-                                            val targetMs = (fraction * latestDuration).toLong().coerceIn(0L, latestDuration)
-                                            isScrubbing = false
-                                            latestOnScrubbingChanged(false)
-                                            seekCb(targetMs)
-                                            break
                                         }
-                                        val delta = active.positionChange()
-                                        if (!dragged && kotlin.math.abs(active.position.x - startX) > touchSlop * 0.5f) {
-                                            dragged = true
-                                        }
-                                        if (delta.x != 0f || dragged) {
-                                            fraction = (active.position.x / width).coerceIn(0f, 1f)
-                                            scrubFraction = fraction
-                                            active.consume()
-                                        }
+                                    } finally {
+                                        isScrubbing = false
+                                        latestOnScrubbingChanged(false)
                                     }
                                 }
                             }
