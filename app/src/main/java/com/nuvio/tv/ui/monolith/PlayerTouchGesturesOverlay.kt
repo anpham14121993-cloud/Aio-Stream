@@ -47,6 +47,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +63,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -125,6 +127,51 @@ private fun formatAbsoluteTime(ms: Long): String {
 }
 
 /**
+ * Detects an unconsumed single tap on empty areas of an overlay without intercepting
+ * child button/slider touches or full-screen swipe gestures beneath it.
+ */
+@Composable
+fun Modifier.playerEmptySpaceTapToHide(
+    enabled: Boolean,
+    onHideControls: () -> Unit
+): Modifier {
+    val latestOnHideControls by rememberUpdatedState(onHideControls)
+    val touchSlop = LocalViewConfiguration.current.touchSlop
+    val tapAllowPx = maxOf(touchSlop * 2.5f, with(LocalDensity.current) { 28.dp.toPx() })
+    return if (enabled) {
+        pointerInput(tapAllowPx) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                var anyConsumed = down.isConsumed
+                var totalDx = 0f
+                var totalDy = 0f
+                var maxTravel = 0f
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val activeChange = event.changes.firstOrNull { it.id == down.id }
+                    if (activeChange == null || !activeChange.pressed) {
+                        if (!anyConsumed && activeChange?.isConsumed != true && maxTravel <= tapAllowPx) {
+                            activeChange?.consume()
+                            latestOnHideControls()
+                        }
+                        break
+                    }
+                    if (activeChange.isConsumed) {
+                        anyConsumed = true
+                    }
+                    val delta = activeChange.positionChange()
+                    totalDx += delta.x
+                    totalDy += delta.y
+                    maxTravel = maxOf(maxTravel, hypot(totalDx, totalDy))
+                }
+            }
+        }
+    } else {
+        this
+    }
+}
+
+/**
  * Full touch-first gesture layer + screen-lock overlay for handhelds, tablets, and air-mice
  * inside the player while preserving TV D-Pad key navigation untouched.
  */
@@ -147,7 +194,20 @@ fun BoxScope.PlayerTouchGesturesOverlay(
     val audioManager = remember(context) {
         context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
-    val touchSlop = LocalViewConfiguration.current.touchSlop
+    val viewConfiguration = LocalViewConfiguration.current
+    val density = LocalDensity.current
+    val touchSlop = viewConfiguration.touchSlop
+    val dragSlopPx = remember(touchSlop, density) {
+        maxOf(touchSlop * 1.5f, with(density) { 16.dp.toPx() })
+    }
+    val tapAllowPx = remember(touchSlop, dragSlopPx, density) {
+        maxOf(touchSlop * 2.5f, dragSlopPx * 1.6f, with(density) { 28.dp.toPx() })
+    }
+    val doubleTapSlopPx = remember(touchSlop, density) {
+        maxOf(touchSlop * 8f, with(density) { 120.dp.toPx() })
+    }
+    val doubleTapWindowMs = maxOf(viewConfiguration.doubleTapTimeoutMillis, 320L)
+    val seekStreakWindowMs = 550L
 
     var screenLocked by remember { mutableStateOf(false) }
     var unlockButtonVisible by remember { mutableStateOf(false) }
@@ -164,7 +224,21 @@ fun BoxScope.PlayerTouchGesturesOverlay(
     val latestOnBack by rememberUpdatedState(onBack)
     val gestureScope = rememberCoroutineScope()
     var pendingSingleTapJob by remember { mutableStateOf<Job?>(null) }
-    var lastTapTimestampMs by remember { mutableLongStateOf(0L) }
+    var lastTapUpMs by remember { mutableLongStateOf(0L) }
+    var lastTapX by remember { mutableFloatStateOf(0f) }
+    var lastTapY by remember { mutableFloatStateOf(0f) }
+    var lastSeekUpMs by remember { mutableLongStateOf(0L) }
+    var lastSeekSide by remember { mutableIntStateOf(0) }
+
+    fun performDirectionalSeek(side: Int) {
+        val deltaMs = if (side < 0) -10_000L else 10_000L
+        latestOnSeekBy(deltaMs)
+        feedback = TouchHudFeedback.DoubleTapAction(
+            icon = if (side < 0) Icons.Rounded.FastRewind else Icons.Rounded.FastForward,
+            label = if (side < 0) "-10 giây" else "+10 giây"
+        )
+        feedbackSeq++
+    }
 
     DisposableEffect(Unit) {
         onDispose { pendingSingleTapJob?.cancel() }
@@ -211,17 +285,36 @@ fun BoxScope.PlayerTouchGesturesOverlay(
                 .fillMaxSize()
                 .zIndex(if (screenLocked) 3.8f else 0.2f)
                 .pointerInput(Unit) {
-                    val tapSlopPx = touchSlop * 1.8f
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        // Cancel pending single-tap immediately so a 2nd tap or drag never flashes controls.
+                        pendingSingleTapJob?.cancel()
+                        pendingSingleTapJob = null
+
+                        val downTimeMs = down.uptimeMillis
                         val startX = down.position.x
                         val startY = down.position.y
                         val totalWidth = size.width.coerceAtLeast(1).toFloat()
                         val totalHeight = size.height.coerceAtLeast(1).toFloat()
+                        val side = when {
+                            startX / totalWidth < 0.40f -> -1
+                            startX / totalWidth > 0.60f -> 1
+                            else -> 0
+                        }
+                        val isDoubleTapPair = !latestScreenLocked && !latestControlsVisible &&
+                            lastTapUpMs > 0L &&
+                            (downTimeMs - lastTapUpMs) in 0L..doubleTapWindowMs &&
+                            hypot(startX - lastTapX, startY - lastTapY) <= doubleTapSlopPx
+                        val isSeekStreak = !latestScreenLocked && !latestControlsVisible &&
+                            side != 0 &&
+                            lastSeekSide == side &&
+                            lastSeekUpMs > 0L &&
+                            (downTimeMs - lastSeekUpMs) in 0L..seekStreakWindowMs
+
+                        var anyConsumed = down.isConsumed
                         var totalDx = 0f
                         var totalDy = 0f
                         var maxTravel = 0f
-                        var multiTouch = false
                         var axis = ActiveDragAxis.UNDECIDED
 
                         var brightnessValue by mutableFloatStateOf(readInitialBrightness())
@@ -241,57 +334,61 @@ fun BoxScope.PlayerTouchGesturesOverlay(
                                 }
                                 if (axis != ActiveDragAxis.UNDECIDED) {
                                     feedbackSeq++
-                                } else if (!multiTouch && maxTravel <= tapSlopPx) {
-                                    activeChange?.consume()
+                                    lastTapUpMs = 0L
+                                    lastSeekUpMs = 0L
+                                    lastSeekSide = 0
+                                } else if (maxTravel <= tapAllowPx) {
+                                    val upConsumed = anyConsumed || (activeChange?.isConsumed == true)
+                                    val upTimeMs = activeChange?.uptimeMillis ?: android.os.SystemClock.uptimeMillis()
                                     if (latestScreenLocked) {
+                                        activeChange?.consume()
                                         unlockButtonVisible = !unlockButtonVisible
-                                    } else if (latestControlsVisible) {
-                                        pendingSingleTapJob?.cancel()
-                                        pendingSingleTapJob = null
-                                        lastTapTimestampMs = 0L
-                                        latestOnToggleControls()
-                                    } else {
-                                        val nowMs = android.os.SystemClock.uptimeMillis()
-                                        if (lastTapTimestampMs > 0L && nowMs - lastTapTimestampMs <= 240L) {
-                                            pendingSingleTapJob?.cancel()
-                                            pendingSingleTapJob = null
-                                            lastTapTimestampMs = 0L
-                                            val ratio = startX / totalWidth
+                                    } else if (!upConsumed) {
+                                        activeChange?.consume()
+                                        if (latestControlsVisible) {
+                                            lastTapUpMs = 0L
+                                            lastSeekUpMs = 0L
+                                            lastSeekSide = 0
+                                            latestOnHideControls()
+                                        } else {
                                             val currentTimeline = latestTimelineProvider()
                                             when {
-                                                ratio < 0.38f && !currentTimeline.isLive -> {
-                                                    latestOnSeekBy(-10_000L)
-                                                    feedback = TouchHudFeedback.DoubleTapAction(
-                                                        Icons.Rounded.FastRewind,
-                                                        "-10 giây"
-                                                    )
-                                                    feedbackSeq++
+                                                isSeekStreak && !currentTimeline.isLive -> {
+                                                    performDirectionalSeek(side)
+                                                    lastTapUpMs = 0L
+                                                    lastSeekSide = side
+                                                    lastSeekUpMs = upTimeMs
                                                 }
-                                                ratio > 0.62f && !currentTimeline.isLive -> {
-                                                    latestOnSeekBy(10_000L)
-                                                    feedback = TouchHudFeedback.DoubleTapAction(
-                                                        Icons.Rounded.FastForward,
-                                                        "+10 giây"
-                                                    )
-                                                    feedbackSeq++
+                                                isDoubleTapPair && side != 0 && !currentTimeline.isLive -> {
+                                                    performDirectionalSeek(side)
+                                                    lastTapUpMs = 0L
+                                                    lastSeekSide = side
+                                                    lastSeekUpMs = upTimeMs
                                                 }
-                                                else -> {
+                                                isDoubleTapPair -> {
                                                     latestOnPlayPause()
                                                     feedback = TouchHudFeedback.DoubleTapAction(
                                                         Icons.Rounded.Pause,
                                                         "Phát / Tạm dừng"
                                                     )
                                                     feedbackSeq++
+                                                    lastTapUpMs = 0L
+                                                    lastSeekUpMs = 0L
+                                                    lastSeekSide = 0
                                                 }
-                                            }
-                                        } else {
-                                            lastTapTimestampMs = nowMs
-                                            pendingSingleTapJob?.cancel()
-                                            pendingSingleTapJob = gestureScope.launch {
-                                                delay(240L)
-                                                lastTapTimestampMs = 0L
-                                                if (!latestScreenLocked && !latestControlsVisible) {
-                                                    latestOnToggleControls()
+                                                else -> {
+                                                    lastSeekUpMs = 0L
+                                                    lastSeekSide = 0
+                                                    lastTapUpMs = upTimeMs
+                                                    lastTapX = startX
+                                                    lastTapY = startY
+                                                    pendingSingleTapJob = gestureScope.launch {
+                                                        delay(doubleTapWindowMs)
+                                                        lastTapUpMs = 0L
+                                                        if (!latestScreenLocked && !latestControlsVisible) {
+                                                            latestOnToggleControls()
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -300,9 +397,8 @@ fun BoxScope.PlayerTouchGesturesOverlay(
                                 break
                             }
 
-                            if (event.changes.count { it.pressed } > 1) {
-                                multiTouch = true
-                                break
+                            if (activeChange.isConsumed) {
+                                anyConsumed = true
                             }
 
                             val delta = activeChange.positionChange()
@@ -310,14 +406,14 @@ fun BoxScope.PlayerTouchGesturesOverlay(
                             totalDy += delta.y
                             maxTravel = maxOf(maxTravel, hypot(totalDx, totalDy))
 
-                            if (!latestScreenLocked) {
+                            if (!latestScreenLocked && !anyConsumed) {
                                 if (axis == ActiveDragAxis.UNDECIDED) {
-                                    if (abs(totalDx) > tapSlopPx && abs(totalDx) > abs(totalDy) * 1.25f) {
+                                    if (abs(totalDx) > dragSlopPx && abs(totalDx) > abs(totalDy) * 1.25f) {
                                         if (!timeline.isLive && timeline.duration > 0L) {
                                             axis = ActiveDragAxis.HORIZONTAL_SEEK
                                             activeChange.consume()
                                         }
-                                    } else if (abs(totalDy) > tapSlopPx && abs(totalDy) > abs(totalDx) * 1.25f) {
+                                    } else if (abs(totalDy) > dragSlopPx && abs(totalDy) > abs(totalDx) * 1.25f) {
                                         axis = if (startX < totalWidth * 0.5f) {
                                             ActiveDragAxis.LEFT_BRIGHTNESS
                                         } else {

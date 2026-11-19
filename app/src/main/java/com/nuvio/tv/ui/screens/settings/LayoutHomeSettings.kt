@@ -5,37 +5,17 @@ package com.nuvio.tv.ui.screens.settings
 import com.nuvio.tv.ui.theme.NuvioTheme
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.Border
-import com.nuvio.tv.ui.tvhybrid.Card
-import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
@@ -90,25 +70,16 @@ internal fun LayoutHomeLayoutSection(
             style = MaterialTheme.typography.bodySmall,
             color = NuvioTheme.colors.TextTertiary
         )
-        val firstHeroCatalogFocusRequester = remember { FocusRequester() }
-        LazyRow(
-            modifier = Modifier.settingsOptionRow(firstHeroCatalogFocusRequester),
-            contentPadding = PaddingValues(end = NuvioTheme.spacing.sm),
-            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs)
         ) {
-            itemsIndexed(
-                items = uiState.availableCatalogs,
-                key = { _, catalog -> catalog.key }
-            ) { catalogIndex, catalog ->
-                CatalogChip(
-                    catalogInfo = catalog,
-                    isSelected = catalog.key in uiState.heroCatalogKeys,
-                    onClick = { onEvent(LayoutSettingsEvent.ToggleHeroCatalog(catalog.key)) },
-                    modifier = if (catalogIndex == 0) {
-                        Modifier.focusRequester(firstHeroCatalogFocusRequester)
-                    } else {
-                        Modifier
-                    }
+            uiState.availableCatalogs.forEach { catalog ->
+                SettingsToggleRow(
+                    title = catalog.name,
+                    subtitle = catalog.addonName.takeIf { it.isNotBlank() },
+                    checked = catalog.key in uiState.heroCatalogKeys,
+                    onToggle = { onEvent(LayoutSettingsEvent.ToggleHeroCatalog(catalog.key)) }
                 )
             }
         }
@@ -284,22 +255,6 @@ private fun WatchedTitlesRow(
             maxHeight = 400.dp
         )
     }
-}
-
-@Composable
-private fun CatalogChip(
-    catalogInfo: CatalogInfo,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    SettingsChoiceChip(
-        modifier = modifier,
-        label = catalogInfo.name,
-        selected = isSelected,
-        onClick = onClick,
-        multiSelect = true
-    )
 }
 
 @Composable

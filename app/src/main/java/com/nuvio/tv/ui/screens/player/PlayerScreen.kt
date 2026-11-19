@@ -183,6 +183,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.ui.monolith.PlayerTouchGesturesOverlay
+import com.nuvio.tv.ui.monolith.playerEmptySpaceTapToHide
 import com.nuvio.tv.R
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.player.PlayerWindowBackdrop
@@ -743,6 +744,7 @@ fun PlayerScreen(
     var seenPauseFocus by remember { mutableStateOf(uiState.pauseFocusRequest) }
     val keyPresses = remember { intArrayOf(0) }
     val focusOnControl = remember { booleanArrayOf(false) }
+    val tvFocusModeForControls = com.nuvio.tv.ui.monolith.isTvFocusMode()
     // Request focus for key events when controls visibility or panel state changes
     LaunchedEffect(
         uiState.showControls,
@@ -761,6 +763,7 @@ fun PlayerScreen(
         shouldConfirmNextEpisodeOnEnd,
         postPlayRecommendationState.isVisible,
         uiState.pauseFocusRequest,
+        tvFocusModeForControls,
     ) {
         val pauseRequest = uiState.pauseFocusRequest
         val pauseSeen = seenPauseFocus
@@ -783,24 +786,26 @@ fun PlayerScreen(
             if (returning == V2PlayerControl.SPEED) {
                 viewModel.onEvent(PlayerEvent.OnShowMoreDialog)
             }
-            delay(250)
-            val returningLayout = uiState.controlLayout
-            val settle = PauseOnTimeline.afterSettle(
-                pauseRequest = pauseRequest,
-                seenRequest = pauseSeen,
-                hasTimeline = customHasTimeline,
-                thumbnailsOn = seekThumbsEnabled.value,
-                pressedSincePause = keyPresses[0] != pressesAtStart,
-                onControl = focusOnControl[0],
-            )
-            when {
-                settle == PauseOnTimeline.Settle.STAY -> Unit
-                settle == PauseOnTimeline.Settle.TIMELINE -> runCatching { progressBarFocusRequester.requestFocus() }
-                returningLayout != null -> customFocus.restore(returningLayout, customAvailable)
-                // The utility row may have scrolled or been rebuilt while the
-                // panel was open. Let it attach the item before requesting focus.
-                returning != null -> v2Focus.requestedControl = returning
-                else -> runCatching { playPauseFocusRequester.requestFocus() }
+            if (tvFocusModeForControls) {
+                delay(250)
+                val returningLayout = uiState.controlLayout
+                val settle = PauseOnTimeline.afterSettle(
+                    pauseRequest = pauseRequest,
+                    seenRequest = pauseSeen,
+                    hasTimeline = customHasTimeline,
+                    thumbnailsOn = seekThumbsEnabled.value,
+                    pressedSincePause = keyPresses[0] != pressesAtStart,
+                    onControl = focusOnControl[0],
+                )
+                when {
+                    settle == PauseOnTimeline.Settle.STAY -> Unit
+                    settle == PauseOnTimeline.Settle.TIMELINE -> runCatching { progressBarFocusRequester.requestFocus() }
+                    returningLayout != null -> customFocus.restore(returningLayout, customAvailable)
+                    // The utility row may have scrolled or been rebuilt while the
+                    // panel was open. Let it attach the item before requesting focus.
+                    returning != null -> v2Focus.requestedControl = returning
+                    else -> runCatching { playPauseFocusRequester.requestFocus() }
+                }
             }
             v2Focus.pendingReturn = null
         } else if (!uiState.showControls) {
@@ -2421,74 +2426,83 @@ fun PlayerScreen(
                     .zIndex(1.5f)
             ) {
                 val context = LocalContext.current
-                PlayerControlsOverlay(
-                    uiState = uiState,
-                    playerBadges = playerBadges,
-                    viewModel = viewModel,
-                    v2Focus = v2Focus,
-                    customFocus = customFocus,
-                    customAvailable = customAvailable,
-                    customHasTimeline = customHasTimeline,
-                    containerFocusRequester = containerFocusRequester,
-                    playPauseFocusRequester = playPauseFocusRequester,
-                    progressBarFocusRequester = progressBarFocusRequester,
-                    streamInfoFocusRequester = streamInfoFocusRequester,
-                    reportCodeVisible = reportCodeVisible,
-                    progressBarUpFocusRequester = when {
-                        skipButtonActuallyVisible -> skipIntroFocusRequester
-                        uiState.postPlayMode is PostPlayMode.AutoPlay -> nextEpisodeFocusRequester
-                        recordingStatus.active -> reportMarkFocusRequester
-                        else -> null
-                    },
-                    onSkipAnchorChanged = { controlsSkipAnchor = it },
-                    subtitleReportingActive = playerControlsVisible,
-                    onSubtitleClearanceChanged = {
-                        if (latestPlayerControlsVisible) subtitleControlsClearancePx = it
-                    },
-                    onSubtitleTitleBoundsChanged = { progressBarClearance, titleRight ->
-                        if (latestPlayerControlsVisible) {
-                            progressBarSubtitleClearancePx = progressBarClearance
-                            controlsTitleRightPx = titleRight
-                        }
-                    },
-                    onPlayPause = { viewModel.onEvent(PlayerEvent.OnPlayPause) },
-                    onPlayNextEpisode = { viewModel.onEvent(PlayerEvent.OnPlayNextEpisode) },
-                    onSeekForward = { viewModel.onEvent(PlayerEvent.OnSeekForward) },
-                    onSeekBackward = { viewModel.onEvent(PlayerEvent.OnSeekBackward) },
-                    onSeekTo = { viewModel.onEvent(PlayerEvent.OnSeekTo(it)) },
-                    onShowEpisodesPanel = { viewModel.onEvent(PlayerEvent.OnShowEpisodesPanel) },
-                    onShowChaptersPanel = { viewModel.onEvent(PlayerEvent.OnShowChaptersPanel) },
-                    onShowSourcesPanel = { viewModel.onEvent(PlayerEvent.OnShowSourcesPanel) },
-                    onShowAudioDialog = { viewModel.onEvent(PlayerEvent.OnShowAudioOverlay) },
-                    onShowSubtitleDialog = { viewModel.onEvent(PlayerEvent.OnShowSubtitleOverlay) },
-                    onShowSpeedDialog = { viewModel.onEvent(PlayerEvent.OnShowSpeedDialog) },
-                    onToggleAspectRatio = {
-                        Log.d("PlayerScreen", "onToggleAspectRatio called - dispatching event")
-                        viewModel.onEvent(PlayerEvent.OnToggleAspectRatio)
-                    },
-                    onSwitchPlayerEngine = { viewModel.onEvent(PlayerEvent.OnSwitchInternalPlayerEngine) },
-                    onReportPlaybackIssue = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
-                    onToggleMoreActions = {
-                        if (uiState.showMoreDialog) {
-                            viewModel.onEvent(PlayerEvent.OnDismissMoreDialog)
-                        } else {
-                            viewModel.onEvent(PlayerEvent.OnShowMoreDialog)
-                        }
-                    },
-                    onOpenInExternalPlayer = openInExternalPlayer,
-                    onShowStreamInfo = {
-                        restoreStreamInfoFocus = !isV2 && uiState.controlLayout == null
-                        viewModel.onEvent(PlayerEvent.OnShowStreamInfo)
-                    },
-                    onTogglePlaybackStats = { viewModel.onEvent(PlayerEvent.OnTogglePlaybackStats) },
-                    onResetHideTimer = {
-                        viewModel.scheduleHideControls()
-                        viewModel.onUserInteraction()
-                    },
-                    onHideControls = { viewModel.hideControls() },
-                    onBack = { exitPlayer() },
-                    skipButtonVisible = skipButtonActuallyVisible
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .playerEmptySpaceTapToHide(
+                            enabled = touchGesturesActive,
+                            onHideControls = { viewModel.hideControls() }
+                        )
+                ) {
+                    PlayerControlsOverlay(
+                        uiState = uiState,
+                        playerBadges = playerBadges,
+                        viewModel = viewModel,
+                        v2Focus = v2Focus,
+                        customFocus = customFocus,
+                        customAvailable = customAvailable,
+                        customHasTimeline = customHasTimeline,
+                        containerFocusRequester = containerFocusRequester,
+                        playPauseFocusRequester = playPauseFocusRequester,
+                        progressBarFocusRequester = progressBarFocusRequester,
+                        streamInfoFocusRequester = streamInfoFocusRequester,
+                        reportCodeVisible = reportCodeVisible,
+                        progressBarUpFocusRequester = when {
+                            skipButtonActuallyVisible -> skipIntroFocusRequester
+                            uiState.postPlayMode is PostPlayMode.AutoPlay -> nextEpisodeFocusRequester
+                            recordingStatus.active -> reportMarkFocusRequester
+                            else -> null
+                        },
+                        onSkipAnchorChanged = { controlsSkipAnchor = it },
+                        subtitleReportingActive = playerControlsVisible,
+                        onSubtitleClearanceChanged = {
+                            if (latestPlayerControlsVisible) subtitleControlsClearancePx = it
+                        },
+                        onSubtitleTitleBoundsChanged = { progressBarClearance, titleRight ->
+                            if (latestPlayerControlsVisible) {
+                                progressBarSubtitleClearancePx = progressBarClearance
+                                controlsTitleRightPx = titleRight
+                            }
+                        },
+                        onPlayPause = { viewModel.onEvent(PlayerEvent.OnPlayPause) },
+                        onPlayNextEpisode = { viewModel.onEvent(PlayerEvent.OnPlayNextEpisode) },
+                        onSeekForward = { viewModel.onEvent(PlayerEvent.OnSeekForward) },
+                        onSeekBackward = { viewModel.onEvent(PlayerEvent.OnSeekBackward) },
+                        onSeekTo = { viewModel.onEvent(PlayerEvent.OnSeekTo(it)) },
+                        onShowEpisodesPanel = { viewModel.onEvent(PlayerEvent.OnShowEpisodesPanel) },
+                        onShowChaptersPanel = { viewModel.onEvent(PlayerEvent.OnShowChaptersPanel) },
+                        onShowSourcesPanel = { viewModel.onEvent(PlayerEvent.OnShowSourcesPanel) },
+                        onShowAudioDialog = { viewModel.onEvent(PlayerEvent.OnShowAudioOverlay) },
+                        onShowSubtitleDialog = { viewModel.onEvent(PlayerEvent.OnShowSubtitleOverlay) },
+                        onShowSpeedDialog = { viewModel.onEvent(PlayerEvent.OnShowSpeedDialog) },
+                        onToggleAspectRatio = {
+                            Log.d("PlayerScreen", "onToggleAspectRatio called - dispatching event")
+                            viewModel.onEvent(PlayerEvent.OnToggleAspectRatio)
+                        },
+                        onSwitchPlayerEngine = { viewModel.onEvent(PlayerEvent.OnSwitchInternalPlayerEngine) },
+                        onReportPlaybackIssue = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
+                        onToggleMoreActions = {
+                            if (uiState.showMoreDialog) {
+                                viewModel.onEvent(PlayerEvent.OnDismissMoreDialog)
+                            } else {
+                                viewModel.onEvent(PlayerEvent.OnShowMoreDialog)
+                            }
+                        },
+                        onOpenInExternalPlayer = openInExternalPlayer,
+                        onShowStreamInfo = {
+                            restoreStreamInfoFocus = !isV2 && uiState.controlLayout == null
+                            viewModel.onEvent(PlayerEvent.OnShowStreamInfo)
+                        },
+                        onTogglePlaybackStats = { viewModel.onEvent(PlayerEvent.OnTogglePlaybackStats) },
+                        onResetHideTimer = {
+                            viewModel.scheduleHideControls()
+                            viewModel.onUserInteraction()
+                        },
+                        onHideControls = { viewModel.hideControls() },
+                        onBack = { exitPlayer() },
+                        skipButtonVisible = skipButtonActuallyVisible
+                    )
+                }
             }
             if (controlsWarming && !playerControlsVisible) {
                 PlayerControlsWarmUp(uiState, viewModel, customAvailable, playerBadges, reportCodeVisible)
