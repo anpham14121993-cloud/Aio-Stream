@@ -534,11 +534,13 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
 
             _exoPlayer?.let { player ->
                 val pos = player.currentPosition.coerceAtLeast(0L)
+                val playerPlaying = player.isPlaying
                 updateTtsPlaybackClock(
                     mediaMs = pos,
-                    isPlaying = player.isPlaying,
+                    isPlaying = playerPlaying,
                     speed = player.playbackParameters.speed
                 )
+                ttsCoordinator.onPlaybackStateChanged(playerPlaying)
                 val playerDuration = player.duration
                 if (playerDuration > lastKnownDuration) {
                     lastKnownDuration = playerDuration
@@ -2869,17 +2871,23 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         is PlayerEvent.OnSetTtsEnabled -> {
+            val playingNow = if (isUsingMpvEngine()) {
+                mpvView?.isPlayingNow() == true
+            } else {
+                _exoPlayer?.isPlaying == true
+            }
+            val posMs = currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: currentTtsPlaybackPositionMs()
             if (event.enabled) {
-                currentPlaybackPositionMs()?.let { pos ->
-                    val playingNow = if (isUsingMpvEngine()) {
-                        mpvView?.isPlayingNow() == true
-                    } else {
-                        _exoPlayer?.isPlaying == true
-                    }
-                    updateTtsPlaybackClock(mediaMs = pos, isPlaying = playingNow)
-                }
+                updateTtsPlaybackClock(mediaMs = posMs, isPlaying = playingNow)
             }
             ttsPreferences.setEnabled(event.enabled)
+            ttsCoordinator.onPlaybackStateChanged(playingNow)
+            if (event.enabled) {
+                val activeCueText = subtitleCueTracker.state.value.text
+                if (activeCueText.isNotBlank()) {
+                    ttsCoordinator.onLiveCueText(activeCueText, posMs, force = true)
+                }
+            }
             lastSidecarCueSignature = null
             renderSidecarCuesAtCurrentPosition()
         }

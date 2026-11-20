@@ -54,6 +54,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.core.tts.SpeakerGender
 import com.nuvio.tv.core.tts.TtsBackendType
+import com.nuvio.tv.core.tts.TtsDiagnosticsState
 import com.nuvio.tv.core.tts.TtsDownloadState
 import com.nuvio.tv.core.tts.TtsModelManager
 import com.nuvio.tv.core.tts.TtsSettingsState
@@ -161,6 +162,7 @@ internal fun TtsSettingsPanel(
     val installedIds by TtsModelManager.installedIds.collectAsState()
     val downloadStates by TtsModelManager.downloadStates.collectAsState()
     val previewState by TtsVoicePreviewPlayer.state.collectAsState()
+    val runtimeStatus by TtsDiagnosticsState.statusMessage.collectAsState()
     var activePicker by remember { mutableStateOf<VoicePickerTarget?>(null) }
 
     LaunchedEffect(Unit) {
@@ -307,7 +309,11 @@ internal fun TtsSettingsPanel(
         item(key = "tts_toggle_enable") {
             PlayerPanelRow(
                 title = "Bật thuyết minh phụ đề",
-                subtitle = if (ttsSettings.enabled) "Đang đọc tự động theo phụ đề" else "Đang tắt",
+                subtitle = when {
+                    !ttsSettings.enabled -> "Đang tắt"
+                    !runtimeStatus.isNullOrBlank() -> runtimeStatus
+                    else -> "Đang bật • Chờ phụ đề..."
+                },
                 titleEnd = if (ttsSettings.enabled) "Bật" else "Tắt",
                 selected = ttsSettings.enabled,
                 onClick = { onEvent(PlayerEvent.OnSetTtsEnabled(!ttsSettings.enabled)) },

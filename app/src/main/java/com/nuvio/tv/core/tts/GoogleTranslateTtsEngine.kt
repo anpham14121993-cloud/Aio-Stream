@@ -60,8 +60,17 @@ class GoogleTranslateTtsEngine(private val context: Context) {
                     if (!response.isSuccessful) {
                         return@withContext null
                     }
+                    val contentType = response.header("Content-Type")?.lowercase().orEmpty()
+                    if (contentType.startsWith("text/")) {
+                        return@withContext null
+                    }
                     val bytes = response.body?.bytes() ?: return@withContext null
                     if (bytes.isEmpty()) return@withContext null
+                    // Guard against accidental HTML consent/error page instead of MP3/MPEG stream
+                    val sniffHead = bytes.take(16).toByteArray().decodeToString().trimStart().lowercase()
+                    if (sniffHead.startsWith("<html") || sniffHead.startsWith("<!doctype")) {
+                        return@withContext null
+                    }
                     mergedAudio.write(bytes)
                 }
             }
@@ -134,6 +143,7 @@ class GoogleTranslateTtsEngine(private val context: Context) {
 
     companion object {
         private const val MAX_CHUNK_CHARS = 190
-        private const val USER_AGENT = "Mozilla/5.0"
+        private const val USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
     }
 }

@@ -594,10 +594,12 @@ class PlayerRuntimeController(
                     .joinToString("\n")
                 if (text.isEmpty()) return@mapNotNull null
                 val startMs = (entry.startTimeUs / 1000L).coerceAtLeast(0L)
-                val endMs = if (entry.durationUs != C.TIME_UNSET && entry.durationUs > 0L) {
-                    ((entry.startTimeUs + entry.durationUs) / 1000L).coerceAtLeast(startMs + 250L)
-                } else {
-                    startMs + 2500L
+                val endMs = when {
+                    entry.endTimeUs != C.TIME_UNSET && entry.endTimeUs > entry.startTimeUs ->
+                        (entry.endTimeUs / 1000L).coerceAtLeast(startMs + 250L)
+                    entry.durationUs != C.TIME_UNSET && entry.durationUs > 0L ->
+                        ((entry.startTimeUs + entry.durationUs) / 1000L).coerceAtLeast(startMs + 250L)
+                    else -> startMs + 2500L
                 }
                 SubtitleSyncCue(startTimeMs = startMs, endTimeMs = endMs, text = text)
             }.sortedBy { it.startTimeMs }
@@ -925,7 +927,8 @@ class PlayerRuntimeController(
             } else {
                 ttsMainHandler.post(applyDuck)
             }
-        }
+        },
+        subtitleOffsetMsProvider = { (audioDelayUs.get() - subtitleDelayUs.get()) / 1000L }
     )
     internal var loudnessEnhancer: LoudnessEnhancer? = null
     internal var trackSelector: DefaultTrackSelector? = null

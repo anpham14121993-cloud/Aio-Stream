@@ -374,6 +374,7 @@ internal fun subtitleLanguagesAfterPlayerChoice(style: SubtitleStyleSettings, ch
 
 internal fun PlayerRuntimeController.disableSubtitles() {
     resetSubtitleAutoSyncState()
+    ttsCoordinator.clearStreamingTimelineCues()
     logSwitchTrace(
         stage = "disable-subtitles",
         message = "usingMpv=${isUsingMpvEngine()} selectedSubtitleIndex=${_uiState.value.selectedSubtitleTrackIndex}"

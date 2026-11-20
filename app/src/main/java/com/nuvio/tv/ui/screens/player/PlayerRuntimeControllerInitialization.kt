@@ -1752,6 +1752,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 return@launch
             }
             nativeVideoSelection.activate(nativeSelectionOwner)
+            ttsCoordinator.clearStreamingTimelineCues()
             _exoPlayer = if (useLibass) {
                 com.nuvio.tv.libass.media.AssHandler.setRenderScale(playerSettings.libassRenderScale.scale)
                 val playerDataSourceFactory = LoggingDataSourceFactory(PlayerPlaybackNetworking.createDataSourceFactory(context, headers), "BUILDER_LIBASS")
@@ -1770,6 +1771,12 @@ internal fun PlayerRuntimeController.initializePlayer(
                         renderersFactory = renderersFactory,
                         autoSyncSourceKey = url.takeIf {
                             com.nuvio.tv.ui.screens.player.autosync.AutoSyncPreferences.isEnabled(context)
+                        },
+                        onAssDialogueExtracted = { cue ->
+                            ttsCoordinator.appendStreamingTimelineCue(cue)
+                        },
+                        onAssScriptParsed = { cues ->
+                            ttsCoordinator.updateTimelineCues(cues)
                         }
                     )
             } else {

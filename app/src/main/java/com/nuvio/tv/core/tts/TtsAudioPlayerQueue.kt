@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -172,11 +173,6 @@ class TtsAudioPlayerQueue(
                 mp.setDataSource(next.audioFile.absolutePath)
                 mp.prepare()
                 applyVolumeOnPlayerThread(mp, ttsVolumePercent)
-                runCatching {
-                    val params = mp.playbackParams ?: PlaybackParams()
-                    params.speed = effectiveSpeed
-                    mp.playbackParams = params
-                }
                 mp.setOnCompletionListener { finished ->
                     postOnPlayerThread {
                         if (activePlayer === finished) {
@@ -200,11 +196,21 @@ class TtsAudioPlayerQueue(
                 }
                 activePlayer = mp
                 mp.start()
+                // Only apply PlaybackParams AFTER start() and only when speed actually differs from 1.0x:
+                // some Android TV OEM MediaPlayers return pitch=0f/speed=0f when queried in Prepared
+                // state or mute short clips if PlaybackParams is set before start().
+                if (abs(effectiveSpeed - 1.0f) > 0.02f) {
+                    runCatching {
+                        mp.playbackParams = PlaybackParams()
+                            .setSpeed(effectiveSpeed)
+                            .setPitch(1.0f)
+                    }
+                }
                 notifySpeaking(true)
                 return
             } catch (_: Throwable) {
                 runCatching { mp.release() }
-                activePlayer = null
+                if (activePlayer === mp) activePlayer = null
             }
         }
     }

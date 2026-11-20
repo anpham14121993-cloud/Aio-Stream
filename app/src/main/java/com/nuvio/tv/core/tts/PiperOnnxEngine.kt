@@ -104,8 +104,15 @@ class PiperOnnxEngine(private val context: Context) {
                 loaded.session.run(inputs)
             }
 
+            val outputTensor = result[0] as? OnnxTensor
             val outputValue = result[0].value
-            val pcm = extractAudioFloatArray(outputValue) ?: return@withContext null
+            val pcm = extractAudioFloatArray(outputValue)
+                ?: outputTensor?.floatBuffer?.let { fb ->
+                    val arr = FloatArray(fb.remaining())
+                    fb.get(arr)
+                    arr
+                }
+                ?: return@withContext null
             if (pcm.isEmpty()) return@withContext null
             SynthesizedPcm(samples = pcm, sampleRate = loaded.sampleRate)
         } catch (_: Throwable) {

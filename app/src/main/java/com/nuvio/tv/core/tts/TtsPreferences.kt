@@ -31,6 +31,15 @@ class TtsPreferencesStore(context: Context) {
     private val _state = MutableStateFlow(readState())
     val state: StateFlow<TtsSettingsState> = _state.asStateFlow()
 
+    // Keep strong reference so Android SharedPreferences does not GC the listener
+    private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        _state.value = readState()
+    }
+
+    init {
+        prefs.registerOnSharedPreferenceChangeListener(prefListener)
+    }
+
     val current: TtsSettingsState
         get() = _state.value
 

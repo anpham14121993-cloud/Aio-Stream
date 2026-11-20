@@ -50,17 +50,20 @@ internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
     extractorsFactory: ExtractorsFactory = DefaultExtractorsFactory(),
     renderersFactory: RenderersFactory = DefaultRenderersFactory(context),
     autoSyncSourceKey: String? = null,
-    subtitleTimeShiftUs: () -> Long = { 0L }
+    subtitleTimeShiftUs: () -> Long = { 0L },
+    onAssDialogueExtracted: ((SubtitleSyncCue) -> Unit)? = null,
+    onAssScriptParsed: ((List<SubtitleSyncCue>) -> Unit)? = null
 ): ExoPlayer {
     val assHandler = AssHandler(assCacheConfig(smallBox = BufferSizing.isSmallBox(totalRamBytes(context))))
-    val assSubtitleParserFactory = CompatAssSubtitleParserFactory(assHandler)
+    val assSubtitleParserFactory = CompatAssSubtitleParserFactory(assHandler, onAssScriptParsed)
     // AutoSync and the tap wrap after the Matroska swap, which matches extractors by class.
     val swappedExtractorsFactory = extractorsFactory.withAssMkvSupportCompat(
         subtitleParserFactory = RenderTimeSubtitles.extractionParsers(
             assSubtitleParserFactory,
             autoSyncObservesText = autoSyncSourceKey != null
         ),
-        assHandler = assHandler
+        assHandler = assHandler,
+        onAssDialogueExtracted = onAssDialogueExtracted
     )
     val assExtractorsFactory = com.nuvio.tv.core.player.thumbnail.PlaybackTap.wrap(
         autoSyncSourceKey?.let {
@@ -123,7 +126,8 @@ internal fun ExoPlayer.releaseAssHandlerCompat() {
 
 @OptIn(UnstableApi::class)
 private class CompatAssSubtitleParserFactory(
-    private val assHandler: AssHandler
+    private val assHandler: AssHandler,
+    private val onAssScriptParsed: ((List<SubtitleSyncCue>) -> Unit)? = null
 ) : SubtitleParser.Factory {
     private val delegate = AssSubtitleParserFactory(assHandler)
 
@@ -137,7 +141,26 @@ private class CompatAssSubtitleParserFactory(
 
     override fun create(format: Format): SubtitleParser {
         val normalized = normalizeSsaFormat(format)
-        return AutoSyncLibassSubtitles.wrapParser(assHandler, normalized, delegate.create(normalized)) // AutoSync hook
+        val wrapped = AutoSyncLibassSubtitles.wrapParser(assHandler, normalized, delegate.create(normalized)) // AutoSync hook
+        val listener = onAssScriptParsed ?: return wrapped
+        return object : SubtitleParser by wrapped {
+            override fun parse(
+                data: ByteArray,
+                offset: Int,
+                length: Int,
+                outputOptions: SubtitleParser.OutputOptions,
+                output: androidx.media3.common.util.Consumer<androidx.media3.extractor.text.CuesWithTiming>
+            ) {
+                runCatching {
+                    val scriptText = data.decodeToString(offset, (offset + length).coerceAtMost(data.size))
+                    val parsed = com.nuvio.tv.core.tts.AssDialogueParser.parseAssScript(scriptText)
+                    if (parsed.isNotEmpty()) {
+                        listener(parsed)
+                    }
+                }
+                wrapped.parse(data, offset, length, outputOptions, output)
+            }
+        }
     }
 
     private fun normalizeSsaFormat(format: Format): Format {
@@ -155,7 +178,8 @@ private class CompatAssSubtitleParserFactory(
 @OptIn(UnstableApi::class)
 internal fun ExtractorsFactory.withAssMkvSupportCompat(
     subtitleParserFactory: SubtitleParser.Factory,
-    assHandler: AssHandler
+    assHandler: AssHandler,
+    onAssDialogueExtracted: ((SubtitleSyncCue) -> Unit)? = null
 ): ExtractorsFactory {
     val delegate = this
     fun replace(extractor: Extractor): Extractor = when (extractor) {
@@ -164,9 +188,14 @@ internal fun ExtractorsFactory.withAssMkvSupportCompat(
         is DvMatroskaExtractor -> NuvioAssMatroskaExtractor(
             subtitleParserFactory = subtitleParserFactory,
             assHandler = assHandler,
-            dolbyVisionSampleTransformer = extractor.dolbyVisionSampleTransformer
+            dolbyVisionSampleTransformer = extractor.dolbyVisionSampleTransformer,
+            onAssDialogueExtracted = onAssDialogueExtracted
         )
-        is StockMatroskaExtractor -> NuvioAssMatroskaExtractor(subtitleParserFactory, assHandler)
+        is StockMatroskaExtractor -> NuvioAssMatroskaExtractor(
+            subtitleParserFactory = subtitleParserFactory,
+            assHandler = assHandler,
+            onAssDialogueExtracted = onAssDialogueExtracted
+        )
         else -> extractor
     }
     // Keeps the HDR wrapper, the vendored extractor's DV transformer and DTS detection, and any

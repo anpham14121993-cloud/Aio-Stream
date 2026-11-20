@@ -2,20 +2,27 @@ package com.nuvio.tv.core.tts
 
 import android.content.Context
 import com.nuvio.tv.ui.screens.player.SubtitleSyncCue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.max
 import kotlin.math.min
 
@@ -24,12 +31,14 @@ import kotlin.math.min
  * - Timeline mode (55 ms tick, 5000 ms lookahead prefetch, F0 gender-flip re-prefetch, WSOLA window fit)
  * - Live-cue fallback (for embedded ExoPlayer / MPV tracks without advance cue lists)
  * - Asymmetric movie audio ducking (180 ms duck down, 900 ms smooth restore)
+ * - Shared single-flight synthesis (`inFlightPrefetches`) + multi-backend fallback (`Piper -> Google -> System`).
  */
 class TtsSubtitleCoordinator(
     context: Context,
     val preferences: TtsPreferencesStore,
     private val positionProviderMs: () -> Long,
-    private val onDuckVolumeChanged: (Float) -> Unit
+    private val onDuckVolumeChanged: (Float) -> Unit,
+    private val subtitleOffsetMsProvider: () -> Long = { 0L }
 ) {
     private val appContext = context.applicationContext
     private val ttsErrorHandler = CoroutineExceptionHandler { _, _ ->
@@ -48,6 +57,14 @@ class TtsSubtitleCoordinator(
         File(appContext.cacheDir, "tts_cache").apply { mkdirs() }
     }
 
+    private val _runtimeStatus = MutableStateFlow<String?>(null)
+    val runtimeStatus: StateFlow<String?> = _runtimeStatus.asStateFlow()
+
+    private fun publishRuntimeStatus(msg: String?) {
+        _runtimeStatus.value = msg
+        TtsDiagnosticsState.statusMessage.value = msg
+    }
+
     private data class PrefetchedClip(
         val key: String,
         val cueStartMs: Long,
@@ -59,7 +76,8 @@ class TtsSubtitleCoordinator(
     )
 
     private val prefetchedClips = ConcurrentHashMap<String, PrefetchedClip>()
-    private val inFlightJobs = ConcurrentHashMap<String, Job>()
+    private val inFlightPrefetches = ConcurrentHashMap<String, Deferred<File?>>()
+    private val streamingTimelineCues = CopyOnWriteArrayList<SubtitleSyncCue>()
 
     @Volatile
     private var timelineCues: List<SubtitleSyncCue> = emptyList()
@@ -101,6 +119,7 @@ class TtsSubtitleCoordinator(
             playerQueue.clearAndStop()
             cancelAllPrefetches()
             pitchAnalyzer.reset()
+            publishRuntimeStatus(null)
         } else {
             ensureLookaheadRunningIfNeeded()
         }
@@ -108,19 +127,58 @@ class TtsSubtitleCoordinator(
     }
 
     fun updateTimelineCues(cues: List<SubtitleSyncCue>) {
-        timelineCues = cues
+        streamingTimelineCues.clear()
+        timelineCues = AssDialogueParser.mergeSimultaneousCues(cues)
         lastTriggeredCueKey = null
         cancelAllPrefetches()
         ensureLookaheadRunningIfNeeded()
     }
 
+    /**
+     * Incrementally ingests ASS/SSA cues extracted on-the-fly from MKV containers when `useLibass = true`.
+     */
+    fun appendStreamingTimelineCue(cue: SubtitleSyncCue) {
+        val parsed = VietnameseTextNormalizer.parseAndCleanCue(cue.text)
+        if (parsed.speakableText.isBlank()) return
+        val last = streamingTimelineCues.lastOrNull()
+        if (last != null && kotlin.math.abs(last.startTimeMs - cue.startTimeMs) <= 120L) {
+            if (last.text == cue.text) return
+            val merged = last.copy(
+                endTimeMs = maxOf(last.endTimeMs, cue.endTimeMs),
+                text = "${last.text}\n${cue.text}"
+            )
+            streamingTimelineCues[streamingTimelineCues.lastIndex] = merged
+        } else {
+            streamingTimelineCues.add(cue)
+        }
+        timelineCues = if (streamingTimelineCues.size <= 1) {
+            streamingTimelineCues.toList()
+        } else {
+            streamingTimelineCues.sortedBy { it.startTimeMs }
+        }
+        ensureLookaheadRunningIfNeeded()
+    }
+
+    fun clearStreamingTimelineCues() {
+        streamingTimelineCues.clear()
+        if (timelineCues.isNotEmpty()) {
+            timelineCues = emptyList()
+            lastTriggeredCueKey = null
+            cancelAllPrefetches()
+            stopLookahead()
+        }
+    }
+
     fun onPlaybackStateChanged(isPlaying: Boolean) {
+        val changed = isPlayerPlaying != isPlaying
         isPlayerPlaying = isPlaying
         playerQueue.setMoviePaused(!isPlaying)
         if (!isPlaying) {
             isSpeaking = false
         }
-        scheduleDuckTransition()
+        if (changed) {
+            scheduleDuckTransition()
+        }
     }
 
     fun onSeek(newPosMs: Long) {
@@ -130,10 +188,10 @@ class TtsSubtitleCoordinator(
         cancelAllPrefetches()
         pitchAnalyzer.reset()
 
-        // Mark any cue that already started well before seek target as skipped
+        val effectivePosMs = (newPosMs + subtitleOffsetMsProvider()).coerceAtLeast(0L)
         val cues = timelineCues
         if (cues.isNotEmpty()) {
-            val idx = findActiveCueIndex(cues, newPosMs - 600L)
+            val idx = findActiveCueIndex(cues, effectivePosMs - 600L)
             if (idx >= 0) {
                 lastTriggeredCueKey = cueKey(cues[idx], idx)
             }
@@ -141,18 +199,19 @@ class TtsSubtitleCoordinator(
     }
 
     /**
-     * Live fallback entry point for embedded ExoPlayer / MPV subtitle text when sidecar cues are absent.
+     * Live cue entry point for embedded ExoPlayer / MPV subtitle text (or immediate trigger when toggling TTS ON).
      */
-    fun onLiveCueText(rawText: String, positionMs: Long) {
+    fun onLiveCueText(rawText: String, positionMs: Long, force: Boolean = false) {
         val settings = preferences.current
-        if (!settings.enabled || !isPlayerPlaying) return
-        if (timelineCues.isNotEmpty()) return // Timeline lookahead handles sidecar cues directly
+        if (!settings.enabled) return
+        if (!isPlayerPlaying && !force) return
+        if (timelineCues.isNotEmpty() && !force) return
 
         val parsed = VietnameseTextNormalizer.parseAndCleanCue(rawText)
         if (parsed.speakableText.isBlank()) return
 
         val now = System.currentTimeMillis()
-        if (parsed.speakableText == lastLiveCueText && (now - lastLiveTriggerAtMs) < LIVE_DEDUP_MS) {
+        if (!force && parsed.speakableText == lastLiveCueText && (now - lastLiveTriggerAtMs) < LIVE_DEDUP_MS) {
             return
         }
         lastLiveCueText = parsed.speakableText
@@ -163,7 +222,7 @@ class TtsSubtitleCoordinator(
         val voiceId = resolveVoiceId(settings, targetGender)
 
         scope.launch {
-            val file = synthesizeClip(
+            val file = synthesizeClipWithFallback(
                 cueKey = cueKey,
                 text = parsed.speakableText,
                 voiceId = voiceId,
@@ -173,7 +232,7 @@ class TtsSubtitleCoordinator(
                 targetWindowMs = null
             ) ?: return@launch
 
-            if (preferences.current.enabled && isPlayerPlaying) {
+            if (preferences.current.enabled && (isPlayerPlaying || force)) {
                 playerQueue.enqueue(
                     TtsPlaybackItem(
                         cueKey = cueKey,
@@ -196,7 +255,7 @@ class TtsSubtitleCoordinator(
         lookaheadJob = scope.launch {
             while (isActive && preferences.current.enabled && timelineCues.isNotEmpty()) {
                 if (isPlayerPlaying) {
-                    val posMs = positionProviderMs()
+                    val posMs = (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
                     processTimelineTick(posMs, preferences.current)
                 }
                 delay(LOOKAHEAD_TICK_MS)
@@ -244,7 +303,6 @@ class TtsSubtitleCoordinator(
 
             val existing = prefetchedClips[key]
             if (existing != null) {
-                // If dual-voice pitch estimate flipped between prefetch and playback, re-synthesize!
                 if (settings.dualVoiceEnabled &&
                     parsed.tagGender == SpeakerGender.UNSPECIFIED &&
                     desiredGender != SpeakerGender.UNSPECIFIED &&
@@ -252,13 +310,14 @@ class TtsSubtitleCoordinator(
                     posMs < cue.startTimeMs - 150L
                 ) {
                     prefetchedClips.remove(key)
-                    launchPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, settings)
+                    getOrStartPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, settings)
                 }
                 continue
             }
 
-            if (!inFlightJobs.containsKey(key)) {
-                launchPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, settings)
+            // Skip starting duplicate prefetch if triggerTimelineCue is already synthesizing or done for currentIdx
+            if (!inFlightPrefetches.containsKey(key) && key != lastTriggeredCueKey) {
+                getOrStartPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, settings)
             }
         }
     }
@@ -285,21 +344,16 @@ class TtsSubtitleCoordinator(
         val gender = resolveGenderForSpan(settings, parsed.tagGender, cue.startTimeMs, cue.endTimeMs)
         val voiceId = resolveVoiceId(settings, gender)
 
+        // Reuse any already-in-flight prefetch Deferred instead of launching a conflicting second writer
+        val deferred = getOrStartPrefetch(cue, key, parsed.speakableText, voiceId, gender, settings)
+
         scope.launch {
-            val windowMs = (cue.endTimeMs - cue.startTimeMs).takeIf { it > 350L }
-            val file = synthesizeClip(
-                cueKey = key,
-                text = parsed.speakableText,
-                voiceId = voiceId,
-                gender = gender,
-                speechSpeed = settings.speechSpeed,
-                ttsVolumePercent = settings.ttsVolumePercent,
-                targetWindowMs = windowMs
-            ) ?: return@launch
+            val file = deferred.await() ?: return@launch
+            prefetchedClips.remove(key)
 
             if (preferences.current.enabled && isPlayerPlaying) {
-                val nowPos = positionProviderMs()
-                if (nowPos <= cue.endTimeMs + 300L) {
+                val nowPos = (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
+                if (nowPos <= cue.endTimeMs + 1500L) {
                     playerQueue.enqueue(
                         TtsPlaybackItem(
                             cueKey = key,
@@ -312,18 +366,22 @@ class TtsSubtitleCoordinator(
         }
     }
 
-    private fun launchPrefetch(
+    private fun getOrStartPrefetch(
         cue: SubtitleSyncCue,
         key: String,
         text: String,
         voiceId: String,
         gender: SpeakerGender,
         settings: TtsSettingsState
-    ) {
-        val job = scope.launch(start = CoroutineStart.LAZY) {
+    ): Deferred<File?> {
+        inFlightPrefetches[key]?.let { existing ->
+            if (existing.isActive || existing.isCompleted) return existing
+        }
+
+        val deferred = scope.async(start = CoroutineStart.LAZY) {
             try {
                 val windowMs = (cue.endTimeMs - cue.startTimeMs).takeIf { it > 350L }
-                val file = synthesizeClip(
+                val file = synthesizeClipWithFallback(
                     cueKey = key,
                     text = text,
                     voiceId = voiceId,
@@ -343,20 +401,26 @@ class TtsSubtitleCoordinator(
                         usedPitchHint = settings.dualVoiceEnabled
                     )
                 }
+                file
             } finally {
-                val self = this.coroutineContext[Job]
+                val self = this.coroutineContext[Job] as? Deferred<*>
                 if (self != null) {
-                    inFlightJobs.remove(key, self)
+                    inFlightPrefetches.remove(key, self)
                 } else {
-                    inFlightJobs.remove(key)
+                    inFlightPrefetches.remove(key)
                 }
             }
         }
-        inFlightJobs[key] = job
-        job.start()
+        val raced = inFlightPrefetches.putIfAbsent(key, deferred)
+        if (raced != null) {
+            deferred.cancel()
+            return raced
+        }
+        deferred.start()
+        return deferred
     }
 
-    private suspend fun synthesizeClip(
+    private suspend fun synthesizeClipWithFallback(
         cueKey: String,
         text: String,
         voiceId: String,
@@ -366,17 +430,69 @@ class TtsSubtitleCoordinator(
         targetWindowMs: Long?
     ): File? {
         val voice = TtsVoiceCatalog.findVoice(voiceId)
-        val effectiveBackend = when {
+        val primaryBackend = when {
             voice.backend == TtsBackendType.PIPER_ONNX && TtsVoiceCatalog.isVoiceReady(appContext, voice.id) ->
                 TtsBackendType.PIPER_ONNX
             voice.backend == TtsBackendType.SYSTEM_TTS -> TtsBackendType.SYSTEM_TTS
             voice.backend == TtsBackendType.GOOGLE_TRANSLATE -> TtsBackendType.GOOGLE_TRANSLATE
-            // Selected Piper model not downloaded yet -> seamless fallback to System TTS / Google
             else -> TtsBackendType.GOOGLE_TRANSLATE
         }
 
-        val hash = sha256Short("${voice.id}|$effectiveBackend|$gender|$speechSpeed|$targetWindowMs|$text")
-        return when (effectiveBackend) {
+        val attempts: List<TtsBackendType> = when (primaryBackend) {
+            TtsBackendType.PIPER_ONNX -> listOf(
+                TtsBackendType.PIPER_ONNX,
+                TtsBackendType.GOOGLE_TRANSLATE,
+                TtsBackendType.SYSTEM_TTS
+            )
+            TtsBackendType.GOOGLE_TRANSLATE -> listOf(
+                TtsBackendType.GOOGLE_TRANSLATE,
+                TtsBackendType.SYSTEM_TTS
+            )
+            TtsBackendType.SYSTEM_TTS -> listOf(
+                TtsBackendType.SYSTEM_TTS,
+                TtsBackendType.GOOGLE_TRANSLATE
+            )
+        }
+
+        for (backend in attempts) {
+            val result = synthesizeWithBackend(
+                backend = backend,
+                voice = voice,
+                text = text,
+                gender = gender,
+                speechSpeed = speechSpeed,
+                ttsVolumePercent = ttsVolumePercent,
+                targetWindowMs = targetWindowMs
+            )
+            if (result != null && result.exists() && result.length() > 64L) {
+                publishRuntimeStatus(
+                    when {
+                        backend == TtsBackendType.PIPER_ONNX -> "Đang đọc offline • ${voice.displayName}"
+                        backend == TtsBackendType.GOOGLE_TRANSLATE && voice.backend == TtsBackendType.PIPER_ONNX ->
+                            "Đang đọc bằng Google Dịch (${voice.displayName} chưa tải)"
+                        backend == TtsBackendType.GOOGLE_TRANSLATE -> "Đang đọc • Google Dịch (Online)"
+                        else -> "Đang đọc • Giọng hệ thống (Android TTS)"
+                    }
+                )
+                return result
+            }
+        }
+
+        publishRuntimeStatus("Không tạo được giọng đọc (kiểm tra mạng hoặc cài giọng hệ thống tiếng Việt / tải model Piper)")
+        return null
+    }
+
+    private suspend fun synthesizeWithBackend(
+        backend: TtsBackendType,
+        voice: TtsVoiceOption,
+        text: String,
+        gender: SpeakerGender,
+        speechSpeed: Float,
+        ttsVolumePercent: Int,
+        targetWindowMs: Long?
+    ): File? {
+        val hash = sha256Short("${voice.id}|$backend|$gender|$speechSpeed|$ttsVolumePercent|$targetWindowMs|$text")
+        return when (backend) {
             TtsBackendType.PIPER_ONNX -> {
                 val outWav = File(wavCacheDir, "piper_$hash.wav")
                 if (outWav.exists() && outWav.length() > 256L) return outWav
@@ -406,10 +522,10 @@ class TtsSubtitleCoordinator(
                 if (written) outWav else null
             }
             TtsBackendType.GOOGLE_TRANSLATE -> {
-                googleEngine.synthesizeToMp3(text, hash)
+                googleEngine.synthesizeToMp3(text, "g_$hash")
             }
             TtsBackendType.SYSTEM_TTS -> {
-                systemEngine.synthesizeToWav(text, gender, speechSpeed, hash)
+                systemEngine.synthesizeToWav(text, gender, speechSpeed, "s_$hash")
             }
         }
     }
@@ -489,8 +605,8 @@ class TtsSubtitleCoordinator(
         "${index}_${cue.startTimeMs}_${cue.endTimeMs}_${cue.text.hashCode()}"
 
     private fun cancelAllPrefetches() {
-        inFlightJobs.values.forEach { it.cancel() }
-        inFlightJobs.clear()
+        inFlightPrefetches.values.forEach { it.cancel() }
+        inFlightPrefetches.clear()
         prefetchedClips.clear()
     }
 
@@ -506,6 +622,7 @@ class TtsSubtitleCoordinator(
         playerQueue.release()
         piperEngine.release()
         systemEngine.release()
+        publishRuntimeStatus(null)
         runCatching { onDuckVolumeChanged(1.0f) }
         scope.cancel()
     }
@@ -513,9 +630,13 @@ class TtsSubtitleCoordinator(
     companion object {
         private const val LOOKAHEAD_TICK_MS = 55L
         private const val PREFETCH_LOOKAHEAD_MS = 5000L
-        private const val MAX_LATE_TRIGGER_MS = 900L
+        private const val MAX_LATE_TRIGGER_MS = 2200L
         private const val LIVE_DEDUP_MS = 350L
         private const val DUCK_DOWN_MS = 180L
         private const val DUCK_RESTORE_MS = 900L
     }
+}
+
+object TtsDiagnosticsState {
+    val statusMessage = MutableStateFlow<String?>(null)
 }
