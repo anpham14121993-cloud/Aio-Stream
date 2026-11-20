@@ -5,8 +5,14 @@ import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.PlaybackParams
 import android.media.audiofx.LoudnessEnhancer
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Process
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -19,14 +25,23 @@ data class TtsPlaybackItem(
 /**
  * FIFO [MediaPlayer] queue (`Lk26` + `Li26` parity) with backlog catch-up speed scaling,
  * [LoudnessEnhancer] gain boost above 100%, and speaking-state callbacks for movie ducking.
+ *
+ * All [MediaPlayer] work executes on a dedicated [HandlerThread] with an active [android.os.Looper]
+ * so Android completion/error callbacks fire reliably without blocking Main or coroutine pools.
  */
 class TtsAudioPlayerQueue(
     context: Context,
     private val onSpeakingStateChanged: (Boolean) -> Unit
 ) {
     private val queue = ConcurrentLinkedQueue<TtsPlaybackItem>()
-    private val playerLock = Any()
+    private val released = AtomicBoolean(false)
 
+    private val handlerThread = HandlerThread("TtsAudioPlayer", Process.THREAD_PRIORITY_AUDIO).apply {
+        start()
+    }
+    private val playerHandler = Handler(handlerThread.looper)
+
+    // Accessed strictly from handlerThread (or after quit on release)
     private var activePlayer: MediaPlayer? = null
     private var activeEnhancer: LoudnessEnhancer? = null
     private var pausedByMovie = false
@@ -43,25 +58,26 @@ class TtsAudioPlayerQueue(
         .build()
 
     fun enqueue(item: TtsPlaybackItem) {
-        if (!item.audioFile.exists() || item.audioFile.length() <= 64L) return
-        synchronized(playerLock) {
-            queue.add(item)
-            if (activePlayer == null && !pausedByMovie) {
-                playNextLocked()
+        if (released.get() || !item.audioFile.exists() || item.audioFile.length() <= 64L) return
+        queue.add(item)
+        postOnPlayerThread {
+            if (!released.get() && activePlayer == null && !pausedByMovie) {
+                playNextOnPlayerThread()
             }
         }
     }
 
     fun updateVolumePercent(percent: Int) {
         ttsVolumePercent = percent.coerceIn(0, 150)
-        synchronized(playerLock) {
-            val mp = activePlayer ?: return
-            applyVolumeToPlayerLocked(mp, ttsVolumePercent)
+        postOnPlayerThread {
+            val mp = activePlayer ?: return@postOnPlayerThread
+            applyVolumeOnPlayerThread(mp, ttsVolumePercent)
         }
     }
 
     fun setMoviePaused(paused: Boolean) {
-        synchronized(playerLock) {
+        postOnPlayerThread {
+            if (released.get()) return@postOnPlayerThread
             pausedByMovie = paused
             val mp = activePlayer
             if (paused) {
@@ -70,41 +86,73 @@ class TtsAudioPlayerQueue(
                         if (mp.isPlaying) mp.pause()
                     }
                 }
-                notifySpeakingLocked(false)
+                notifySpeaking(false)
             } else {
                 if (mp != null) {
                     runCatching {
                         mp.start()
-                        notifySpeakingLocked(true)
+                        notifySpeaking(true)
                     }.onFailure {
-                        releaseActiveLocked()
-                        playNextLocked()
+                        releaseActiveOnPlayerThread()
+                        playNextOnPlayerThread()
                     }
                 } else {
-                    playNextLocked()
+                    playNextOnPlayerThread()
                 }
             }
         }
     }
 
     fun clearAndStop() {
-        synchronized(playerLock) {
-            queue.clear()
-            releaseActiveLocked()
-            notifySpeakingLocked(false)
+        queue.clear()
+        postOnPlayerThread {
+            releaseActiveOnPlayerThread()
+            notifySpeaking(false)
         }
     }
 
     fun release() {
-        clearAndStop()
+        if (!released.compareAndSet(false, true)) return
+        queue.clear()
+        val latch = CountDownLatch(1)
+        val posted = runCatching {
+            playerHandler.post {
+                try {
+                    releaseActiveOnPlayerThread()
+                    notifySpeaking(false)
+                } finally {
+                    latch.countDown()
+                }
+            }
+        }.getOrDefault(false)
+        if (posted) {
+            runCatching { latch.await(250, TimeUnit.MILLISECONDS) }
+        } else {
+            runCatching {
+                releaseActiveOnPlayerThread()
+                notifySpeaking(false)
+            }
+        }
+        runCatching { handlerThread.quitSafely() }
     }
 
-    private fun playNextLocked() {
-        if (pausedByMovie) return
-        while (true) {
+    private fun postOnPlayerThread(block: () -> Unit) {
+        if (released.get()) return
+        runCatching {
+            if (Thread.currentThread() === handlerThread) {
+                block()
+            } else {
+                playerHandler.post(block)
+            }
+        }
+    }
+
+    private fun playNextOnPlayerThread() {
+        if (pausedByMovie || released.get()) return
+        while (!released.get()) {
             val next = queue.poll()
             if (next == null) {
-                notifySpeakingLocked(false)
+                notifySpeaking(false)
                 return
             }
             if (!next.audioFile.exists() || next.audioFile.length() <= 64L) {
@@ -123,27 +171,27 @@ class TtsAudioPlayerQueue(
                 mp.setAudioAttributes(speechAttributes)
                 mp.setDataSource(next.audioFile.absolutePath)
                 mp.prepare()
-                applyVolumeToPlayerLocked(mp, ttsVolumePercent)
+                applyVolumeOnPlayerThread(mp, ttsVolumePercent)
                 runCatching {
                     val params = mp.playbackParams ?: PlaybackParams()
                     params.speed = effectiveSpeed
                     mp.playbackParams = params
                 }
                 mp.setOnCompletionListener { finished ->
-                    synchronized(playerLock) {
+                    postOnPlayerThread {
                         if (activePlayer === finished) {
-                            releaseActiveLocked()
-                            playNextLocked()
+                            releaseActiveOnPlayerThread()
+                            playNextOnPlayerThread()
                         } else {
                             runCatching { finished.release() }
                         }
                     }
                 }
                 mp.setOnErrorListener { errored, _, _ ->
-                    synchronized(playerLock) {
+                    postOnPlayerThread {
                         if (activePlayer === errored) {
-                            releaseActiveLocked()
-                            playNextLocked()
+                            releaseActiveOnPlayerThread()
+                            playNextOnPlayerThread()
                         } else {
                             runCatching { errored.release() }
                         }
@@ -152,7 +200,7 @@ class TtsAudioPlayerQueue(
                 }
                 activePlayer = mp
                 mp.start()
-                notifySpeakingLocked(true)
+                notifySpeaking(true)
                 return
             } catch (_: Throwable) {
                 runCatching { mp.release() }
@@ -161,7 +209,7 @@ class TtsAudioPlayerQueue(
         }
     }
 
-    private fun applyVolumeToPlayerLocked(mp: MediaPlayer, percent: Int) {
+    private fun applyVolumeOnPlayerThread(mp: MediaPlayer, percent: Int) {
         val ratio = (percent / 100.0f).coerceIn(0.0f, 1.5f)
         val mediaVolume = ratio.coerceAtMost(1.0f)
         runCatching { mp.setVolume(mediaVolume, mediaVolume) }
@@ -182,7 +230,7 @@ class TtsAudioPlayerQueue(
         }
     }
 
-    private fun releaseActiveLocked() {
+    private fun releaseActiveOnPlayerThread() {
         runCatching { activeEnhancer?.release() }
         activeEnhancer = null
         activePlayer?.let { mp ->
@@ -194,10 +242,10 @@ class TtsAudioPlayerQueue(
         activePlayer = null
     }
 
-    private fun notifySpeakingLocked(speaking: Boolean) {
+    private fun notifySpeaking(speaking: Boolean) {
         if (isSpeaking != speaking) {
             isSpeaking = speaking
-            onSpeakingStateChanged(speaking)
+            runCatching { onSpeakingStateChanged(speaking) }
         }
     }
 }

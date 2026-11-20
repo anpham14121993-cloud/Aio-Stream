@@ -3,13 +3,24 @@
 package com.nuvio.tv.ui.screens.settings
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -17,15 +28,25 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.ButtonDefaults
+import androidx.tv.material3.Icon
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
 import com.nuvio.tv.core.tts.SpeakerGender
 import com.nuvio.tv.core.tts.TtsBackendType
 import com.nuvio.tv.core.tts.TtsModelManager
 import com.nuvio.tv.core.tts.TtsPreferencesStore
 import com.nuvio.tv.core.tts.TtsVoiceCatalog
+import com.nuvio.tv.core.tts.TtsVoicePreviewPlayer
+import com.nuvio.tv.core.tts.TtsVoicePreviewState
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.tvhybrid.Button
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -44,11 +65,20 @@ internal fun PlaybackTtsSection() {
     val ttsSettings by prefs.state.collectAsState()
     val installedIds by TtsModelManager.installedIds.collectAsState()
     val downloadStates by TtsModelManager.downloadStates.collectAsState()
+    val previewState by TtsVoicePreviewPlayer.state.collectAsState()
     val scope = rememberCoroutineScope()
     var activeDialogTarget by remember { mutableStateOf<PlaybackTtsVoiceTarget?>(null) }
 
     LaunchedEffect(Unit) {
         TtsModelManager.refreshInstalled(context)
+    }
+
+    DisposableEffect(activeDialogTarget) {
+        onDispose { TtsVoicePreviewPlayer.stop() }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { TtsVoicePreviewPlayer.stop() }
     }
 
     SettingsSectionLabel(text = "Cài đặt thuyết minh")
@@ -70,27 +100,84 @@ internal fun PlaybackTtsSection() {
     if (!ttsSettings.dualVoiceEnabled) {
         val primary = TtsVoiceCatalog.findVoice(ttsSettings.primaryVoiceId)
         val ready = primary.backend != TtsBackendType.PIPER_ONNX || primary.id in installedIds
-        SettingsActionRow(
-            title = "Giọng đọc chính",
-            subtitle = if (ready) primary.regionLabel else "${primary.regionLabel} • Chưa tải (chọn để tải)",
-            value = primary.displayName,
-            onClick = { activeDialogTarget = PlaybackTtsVoiceTarget.PRIMARY }
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                SettingsActionRow(
+                    title = "Giọng đọc chính",
+                    subtitle = if (ready) primary.regionLabel else "${primary.regionLabel} • Chưa tải (chọn để tải)",
+                    value = primary.displayName,
+                    onClick = { activeDialogTarget = PlaybackTtsVoiceTarget.PRIMARY }
+                )
+            }
+            SettingsTtsPreviewButton(
+                voiceId = primary.id,
+                previewState = previewState,
+                onClick = {
+                    TtsVoicePreviewPlayer.togglePreview(
+                        context = context,
+                        voiceId = primary.id,
+                        speechSpeed = ttsSettings.speechSpeed
+                    )
+                }
+            )
+        }
     } else {
         val male = TtsVoiceCatalog.findVoice(ttsSettings.maleVoiceId)
         val female = TtsVoiceCatalog.findVoice(ttsSettings.femaleVoiceId)
-        SettingsActionRow(
-            title = "Giọng Nam",
-            subtitle = male.regionLabel,
-            value = male.displayName,
-            onClick = { activeDialogTarget = PlaybackTtsVoiceTarget.MALE }
-        )
-        SettingsActionRow(
-            title = "Giọng Nữ",
-            subtitle = female.regionLabel,
-            value = female.displayName,
-            onClick = { activeDialogTarget = PlaybackTtsVoiceTarget.FEMALE }
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                SettingsActionRow(
+                    title = "Giọng Nam",
+                    subtitle = male.regionLabel,
+                    value = male.displayName,
+                    onClick = { activeDialogTarget = PlaybackTtsVoiceTarget.MALE }
+                )
+            }
+            SettingsTtsPreviewButton(
+                voiceId = male.id,
+                previewState = previewState,
+                onClick = {
+                    TtsVoicePreviewPlayer.togglePreview(
+                        context = context,
+                        voiceId = male.id,
+                        speechSpeed = ttsSettings.speechSpeed
+                    )
+                }
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                SettingsActionRow(
+                    title = "Giọng Nữ",
+                    subtitle = female.regionLabel,
+                    value = female.displayName,
+                    onClick = { activeDialogTarget = PlaybackTtsVoiceTarget.FEMALE }
+                )
+            }
+            SettingsTtsPreviewButton(
+                voiceId = female.id,
+                previewState = previewState,
+                onClick = {
+                    TtsVoicePreviewPlayer.togglePreview(
+                        context = context,
+                        voiceId = female.id,
+                        speechSpeed = ttsSettings.speechSpeed
+                    )
+                }
+            )
+        }
     }
 
     SliderSettingsItem(
@@ -147,7 +234,7 @@ internal fun PlaybackTtsSection() {
 
     SettingsActionRow(
         title = "Quản lý giọng đọc Offline (Piper ONNX)",
-        subtitle = "Tải hoặc xóa các gói giọng đọc AI tiếng Việt (~63.5 MB / giọng)",
+        subtitle = "Nghe thử, tải hoặc xóa các gói giọng đọc AI tiếng Việt (~63.5 MB / giọng)",
         value = "Đã tải ${installedIds.size}/${TtsVoiceCatalog.piperVoices.size}",
         onClick = { activeDialogTarget = PlaybackTtsVoiceTarget.MANAGE_ONLY }
     )
@@ -181,10 +268,13 @@ internal fun PlaybackTtsSection() {
         NuvioDialog(
             onDismiss = { activeDialogTarget = null },
             title = dialogTitle,
-            subtitle = "Chạm giọng chưa tải để tải model; chọn giọng đã tải để áp dụng",
-            width = 620.dp
+            subtitle = "Bấm 'Nghe thử' để nghe giọng mẫu trước khi tải • Chạm vào dòng giọng để tải hoặc chọn",
+            width = 680.dp
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
+                previewState.errorMessage?.let { errMsg ->
+                    SettingsNote(text = errMsg, tone = SettingsNoteTone.Warning)
+                }
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 4.dp),
@@ -209,46 +299,108 @@ internal fun PlaybackTtsSection() {
                             !isDownloaded -> "Tải về"
                             else -> "Chọn"
                         }
-                        SettingsActionRow(
-                            title = voice.displayName,
-                            subtitle = subtitleText,
-                            value = valueBadge,
-                            onClick = {
-                                if (target == PlaybackTtsVoiceTarget.MANAGE_ONLY) {
-                                    if (isDownloaded) {
-                                        TtsModelManager.deleteVoice(context, voice.id)
-                                    } else if (dl?.isDownloading != true) {
-                                        scope.launch { TtsModelManager.downloadVoice(context, voice.id) }
-                                    }
-                                    return@SettingsActionRow
-                                }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                SettingsActionRow(
+                                    title = voice.displayName,
+                                    subtitle = subtitleText,
+                                    value = valueBadge,
+                                    jumpAnchor = false,
+                                    onClick = {
+                                        if (target == PlaybackTtsVoiceTarget.MANAGE_ONLY) {
+                                            if (isDownloaded) {
+                                                TtsModelManager.deleteVoice(context, voice.id)
+                                            } else if (dl?.isDownloading != true) {
+                                                scope.launch { TtsModelManager.downloadVoice(context, voice.id) }
+                                            }
+                                            return@SettingsActionRow
+                                        }
 
-                                if (isDownloaded) {
-                                    when (target) {
-                                        PlaybackTtsVoiceTarget.PRIMARY -> prefs.setPrimaryVoiceId(voice.id)
-                                        PlaybackTtsVoiceTarget.MALE -> prefs.setMaleVoiceId(voice.id)
-                                        PlaybackTtsVoiceTarget.FEMALE -> prefs.setFemaleVoiceId(voice.id)
-                                        PlaybackTtsVoiceTarget.MANAGE_ONLY -> Unit
-                                    }
-                                    activeDialogTarget = null
-                                } else if (dl?.isDownloading != true) {
-                                    scope.launch {
-                                        val ok = TtsModelManager.downloadVoice(context, voice.id)
-                                        if (ok) {
+                                        if (isDownloaded) {
                                             when (target) {
                                                 PlaybackTtsVoiceTarget.PRIMARY -> prefs.setPrimaryVoiceId(voice.id)
                                                 PlaybackTtsVoiceTarget.MALE -> prefs.setMaleVoiceId(voice.id)
                                                 PlaybackTtsVoiceTarget.FEMALE -> prefs.setFemaleVoiceId(voice.id)
                                                 PlaybackTtsVoiceTarget.MANAGE_ONLY -> Unit
                                             }
+                                            activeDialogTarget = null
+                                        } else if (dl?.isDownloading != true) {
+                                            scope.launch {
+                                                val ok = TtsModelManager.downloadVoice(context, voice.id)
+                                                if (ok) {
+                                                    when (target) {
+                                                        PlaybackTtsVoiceTarget.PRIMARY -> prefs.setPrimaryVoiceId(voice.id)
+                                                        PlaybackTtsVoiceTarget.MALE -> prefs.setMaleVoiceId(voice.id)
+                                                        PlaybackTtsVoiceTarget.FEMALE -> prefs.setFemaleVoiceId(voice.id)
+                                                        PlaybackTtsVoiceTarget.MANAGE_ONLY -> Unit
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
-                                }
+                                )
                             }
-                        )
+                            SettingsTtsPreviewButton(
+                                voiceId = voice.id,
+                                previewState = previewState,
+                                onClick = {
+                                    TtsVoicePreviewPlayer.togglePreview(
+                                        context = context,
+                                        voiceId = voice.id,
+                                        speechSpeed = ttsSettings.speechSpeed
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsTtsPreviewButton(
+    voiceId: String,
+    previewState: TtsVoicePreviewState,
+    onClick: () -> Unit
+) {
+    val isActive = previewState.activeVoiceId == voiceId
+    val isLoading = isActive && previewState.isLoading
+    val isPlaying = isActive && previewState.isPlaying
+    val label = when {
+        isLoading -> "Đang tải"
+        isPlaying -> "Dừng"
+        else -> "Nghe thử"
+    }
+    val shape = RoundedCornerShape(10.dp)
+    Button(
+        onClick = onClick,
+        shape = ButtonDefaults.shape(shape = shape),
+        colors = ButtonDefaults.colors(
+            containerColor = if (isPlaying) NuvioTheme.colors.Secondary.copy(alpha = 0.28f) else NuvioTheme.colors.BackgroundCard,
+            contentColor = NuvioTheme.colors.TextPrimary,
+            focusedContainerColor = settingsFocusFillColor(),
+            focusedContentColor = NuvioTheme.colors.Primary
+        ),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+        modifier = Modifier.defaultMinSize(minWidth = 86.dp, minHeight = 42.dp)
+    ) {
+        Icon(
+            imageVector = if (isPlaying) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
+            contentDescription = label,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

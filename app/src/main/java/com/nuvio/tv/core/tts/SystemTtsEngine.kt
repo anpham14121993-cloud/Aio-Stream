@@ -107,8 +107,12 @@ class SystemTtsEngine(private val context: Context) {
             val initDeferred = CompletableDeferred<Boolean>()
             var created: TextToSpeech? = null
             withContext(Dispatchers.Main) {
-                created = TextToSpeech(appContext) { status ->
-                    initDeferred.complete(status == TextToSpeech.SUCCESS)
+                runCatching {
+                    created = TextToSpeech(appContext) { status ->
+                        initDeferred.complete(status == TextToSpeech.SUCCESS)
+                    }
+                }.onFailure {
+                    initDeferred.complete(false)
                 }
             }
 
@@ -119,29 +123,34 @@ class SystemTtsEngine(private val context: Context) {
                 return@withLock null
             }
 
-            configureLocale(instance)
-            instance.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {}
+            runCatching { configureLocale(instance) }
+            runCatching {
+                instance.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
 
-                override fun onDone(utteranceId: String?) {
-                    if (utteranceId != null) {
-                        pendingUtterances.remove(utteranceId)?.complete(true)
+                    override fun onDone(utteranceId: String?) {
+                        if (utteranceId != null) {
+                            pendingUtterances.remove(utteranceId)?.complete(true)
+                        }
                     }
-                }
 
-                @Deprecated("Deprecated in Java")
-                override fun onError(utteranceId: String?) {
-                    if (utteranceId != null) {
-                        pendingUtterances.remove(utteranceId)?.complete(false)
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) {
+                        if (utteranceId != null) {
+                            pendingUtterances.remove(utteranceId)?.complete(false)
+                        }
                     }
-                }
 
-                override fun onError(utteranceId: String?, errorCode: Int) {
-                    if (utteranceId != null) {
-                        pendingUtterances.remove(utteranceId)?.complete(false)
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        if (utteranceId != null) {
+                            pendingUtterances.remove(utteranceId)?.complete(false)
+                        }
                     }
-                }
-            })
+                })
+            }.onFailure {
+                runCatching { instance.shutdown() }
+                return@withLock null
+            }
 
             engine = instance
             ready = true

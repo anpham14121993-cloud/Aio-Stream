@@ -873,14 +873,56 @@ class PlayerRuntimeController(
         }
     }
     internal val ttsPreferences = TtsPreferencesStore(context)
+
+    @Volatile
+    private var ttsClockAnchorMediaMs: Long = 0L
+
+    @Volatile
+    private var ttsClockAnchorUptimeMs: Long = 0L
+
+    @Volatile
+    private var ttsClockPlaying: Boolean = false
+
+    @Volatile
+    private var ttsClockSpeed: Float = 1.0f
+
+    internal fun updateTtsPlaybackClock(
+        mediaMs: Long,
+        isPlaying: Boolean = ttsClockPlaying,
+        speed: Float = ttsClockSpeed
+    ) {
+        ttsClockAnchorMediaMs = mediaMs.coerceAtLeast(0L)
+        ttsClockAnchorUptimeMs = android.os.SystemClock.elapsedRealtime()
+        ttsClockPlaying = isPlaying
+        ttsClockSpeed = speed.coerceIn(0.25f, 4.0f)
+    }
+
+    internal fun currentTtsPlaybackPositionMs(): Long {
+        val anchor = ttsClockAnchorMediaMs
+        if (!ttsClockPlaying) return anchor
+        val uptimeAnchor = ttsClockAnchorUptimeMs
+        if (uptimeAnchor <= 0L) return anchor
+        val delta = (android.os.SystemClock.elapsedRealtime() - uptimeAnchor).coerceIn(0L, 10_000L)
+        return anchor + (delta * ttsClockSpeed).toLong()
+    }
+
     internal val ttsCoordinator = TtsSubtitleCoordinator(
         context = context,
         preferences = ttsPreferences,
-        positionProviderMs = { currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: 0L },
+        positionProviderMs = { currentTtsPlaybackPositionMs() },
         onDuckVolumeChanged = { factor ->
             val clamped = factor.coerceIn(0.0f, 1.0f)
-            _exoPlayer?.volume = clamped
-            mpvView?.setTtsDuckVolume(clamped)
+            val applyDuck = Runnable {
+                if (!isReleasingPlayer) {
+                    _exoPlayer?.volume = clamped
+                    mpvView?.setTtsDuckVolume(clamped)
+                }
+            }
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                applyDuck.run()
+            } else {
+                mainHandler.post(applyDuck)
+            }
         }
     )
     internal var loudnessEnhancer: LoudnessEnhancer? = null
@@ -1217,17 +1259,23 @@ class PlayerRuntimeController(
             ttsPreferences.state.collect { settings ->
                 _uiState.update { it.copy(ttsSettings = settings) }
                 ttsCoordinator.onSettingsUpdated(settings)
-                mpvView?.setHideSubtitlesVisually(settings.enabled && settings.hideSubtitlesOnTts)
-                applyTtsForcePcm(settings.enabled && !settings.preserveTvPassthrough)
+                if (!isReleasingPlayer) {
+                    mpvView?.setHideSubtitlesVisually(settings.enabled && settings.hideSubtitlesOnTts)
+                    applyTtsForcePcm(settings.enabled && !settings.preserveTvPassthrough)
+                }
             }
         }
     }
 
     internal fun applyTtsForcePcm(forcePcm: Boolean) {
-        if (playbackSpeedAwareAudioSink?.setTtsForcePcm(forcePcm) == true) {
-            playbackSpeedAwareAudioSink?.notifyAudioProcessingRequirementChanged()
-            _exoPlayer?.let { player ->
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().build()
+        if (isReleasingPlayer || isUsingMpvEngine()) return
+        val sink = playbackSpeedAwareAudioSink ?: return
+        if (sink.setTtsForcePcm(forcePcm)) {
+            runCatching {
+                sink.notifyAudioProcessingRequirementChanged()
+                _exoPlayer?.let { player ->
+                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().build()
+                }
             }
         }
     }

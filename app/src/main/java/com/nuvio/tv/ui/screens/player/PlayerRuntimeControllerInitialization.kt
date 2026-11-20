@@ -1551,7 +1551,13 @@ internal fun PlayerRuntimeController.initializePlayer(
                         .mapNotNull { it.text?.toString()?.trim()?.takeIf(String::isNotEmpty) }
                         .joinToString("\n")
                     if (cueText.isNotEmpty()) {
-                        val posMs = currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: 0L
+                        val posMs = if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                            (currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: currentTtsPlaybackPositionMs()).also {
+                                updateTtsPlaybackClock(mediaMs = it)
+                            }
+                        } else {
+                            currentTtsPlaybackPositionMs()
+                        }
                         ttsCoordinator.onLiveCueText(cueText, posMs)
                     }
                 }
@@ -1963,6 +1969,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         // Holding the seek button emits a discontinuity per step, and reading the
                         // span set on each one is real work on a cache holding thousands of spans.
                         val seekedToMs = newPosition.positionMs
+                        updateTtsPlaybackClock(mediaMs = seekedToMs)
                         ttsCoordinator.onSeek(seekedToMs)
                         seekSourceLogJob?.cancel()
                         seekSourceLogJob = scope.launch {
@@ -2262,6 +2269,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                                 "userPaused=$userPausedManually"
                         )
                         _uiState.update { it.copy(isPlaying = isPlaying) }
+                        updateTtsPlaybackClock(
+                            mediaMs = currentPosition.coerceAtLeast(0L),
+                            isPlaying = isPlaying,
+                            speed = playbackParameters.speed
+                        )
                         ttsCoordinator.onPlaybackStateChanged(isPlaying)
                         if (isPlaying) {
                             userPausedManually = false
@@ -2991,6 +3003,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                         eventTime: AnalyticsListener.EventTime,
                         playbackParameters: PlaybackParameters
                     ) {
+                        updateTtsPlaybackClock(
+                            mediaMs = _exoPlayer?.currentPosition?.coerceAtLeast(0L) ?: currentTtsPlaybackPositionMs(),
+                            speed = playbackParameters.speed
+                        )
                         playbackAnalyticsDiagnostics.onPlaybackParametersChanged(eventTime, playbackParameters)
                     }
 

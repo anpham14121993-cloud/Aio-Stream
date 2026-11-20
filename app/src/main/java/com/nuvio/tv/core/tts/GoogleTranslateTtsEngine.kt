@@ -46,23 +46,27 @@ class GoogleTranslateTtsEngine(private val context: Context) {
         if (chunks.isEmpty()) return@withContext null
 
         val mergedAudio = ByteArrayOutputStream(chunks.size * 8192)
-        for (chunk in chunks) {
-            val encoded = URLEncoder.encode(chunk, "UTF-8")
-            val url = "https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=$encoded"
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", USER_AGENT)
-                .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
-                .build()
+        try {
+            for (chunk in chunks) {
+                val encoded = URLEncoder.encode(chunk, "UTF-8")
+                val url = "https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=$encoded"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
+                    .build()
 
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext null
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext null
+                    }
+                    val bytes = response.body?.bytes() ?: return@withContext null
+                    if (bytes.isEmpty()) return@withContext null
+                    mergedAudio.write(bytes)
                 }
-                val bytes = response.body?.bytes() ?: return@withContext null
-                if (bytes.isEmpty()) return@withContext null
-                mergedAudio.write(bytes)
             }
+        } catch (_: Throwable) {
+            return@withContext null
         }
 
         val payload = mergedAudio.toByteArray()

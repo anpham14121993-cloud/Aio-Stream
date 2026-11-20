@@ -418,6 +418,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         durationMs = playerDuration
                     )
                     val playingNow = view.isPlayingNow()
+                    updateTtsPlaybackClock(mediaMs = pos, isPlaying = playingNow, speed = _uiState.value.playbackSpeed)
                     ttsCoordinator.onPlaybackStateChanged(playingNow)
                     val mpvSubText = view.currentSubtitleText()
                     subtitleCueTracker.updateText(mpvSubText)
@@ -533,6 +534,11 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
 
             _exoPlayer?.let { player ->
                 val pos = player.currentPosition.coerceAtLeast(0L)
+                updateTtsPlaybackClock(
+                    mediaMs = pos,
+                    isPlaying = player.isPlaying,
+                    speed = player.playbackParameters.speed
+                )
                 val playerDuration = player.duration
                 if (playerDuration > lastKnownDuration) {
                     lastKnownDuration = playerDuration
@@ -2863,6 +2869,16 @@ fun PlayerRuntimeController.onEvent(
             }
         }
         is PlayerEvent.OnSetTtsEnabled -> {
+            if (event.enabled) {
+                currentPlaybackPositionMs()?.let { pos ->
+                    val playingNow = if (isUsingMpvEngine()) {
+                        mpvView?.isPlayingNow() == true
+                    } else {
+                        _exoPlayer?.isPlaying == true
+                    }
+                    updateTtsPlaybackClock(mediaMs = pos, isPlaying = playingNow)
+                }
+            }
             ttsPreferences.setEnabled(event.enabled)
             lastSidecarCueSignature = null
             renderSidecarCuesAtCurrentPosition()

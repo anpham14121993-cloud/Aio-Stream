@@ -2,7 +2,9 @@ package com.nuvio.tv.core.tts
 
 import android.content.Context
 import com.nuvio.tv.ui.screens.player.SubtitleSyncCue
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -30,7 +32,10 @@ class TtsSubtitleCoordinator(
     private val onDuckVolumeChanged: (Float) -> Unit
 ) {
     private val appContext = context.applicationContext
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val ttsErrorHandler = CoroutineExceptionHandler { _, _ ->
+        // Non-fatal TTS synthesis/network errors must never tear down video playback.
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + ttsErrorHandler)
 
     val pitchAnalyzer = VoicePitchAnalyzer()
     val audioTapProcessor = TtsAudioTapProcessor(pitchAnalyzer, positionProviderMs)
@@ -315,8 +320,7 @@ class TtsSubtitleCoordinator(
         gender: SpeakerGender,
         settings: TtsSettingsState
     ) {
-        lateinit var job: Job
-        job = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val windowMs = (cue.endTimeMs - cue.startTimeMs).takeIf { it > 350L }
                 val file = synthesizeClip(
@@ -340,10 +344,16 @@ class TtsSubtitleCoordinator(
                     )
                 }
             } finally {
-                inFlightJobs.remove(key, job)
+                val self = this.coroutineContext[Job]
+                if (self != null) {
+                    inFlightJobs.remove(key, self)
+                } else {
+                    inFlightJobs.remove(key)
+                }
             }
         }
         inFlightJobs[key] = job
+        job.start()
     }
 
     private suspend fun synthesizeClip(

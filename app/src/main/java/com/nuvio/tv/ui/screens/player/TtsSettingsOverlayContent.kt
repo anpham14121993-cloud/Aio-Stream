@@ -5,10 +5,12 @@ package com.nuvio.tv.ui.screens.player
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -18,10 +20,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,7 +43,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.IconButtonDefaults
@@ -50,10 +58,13 @@ import com.nuvio.tv.core.tts.TtsDownloadState
 import com.nuvio.tv.core.tts.TtsModelManager
 import com.nuvio.tv.core.tts.TtsSettingsState
 import com.nuvio.tv.core.tts.TtsVoiceCatalog
+import com.nuvio.tv.core.tts.TtsVoicePreviewPlayer
+import com.nuvio.tv.core.tts.TtsVoicePreviewState
 import com.nuvio.tv.ui.components.PanelEyebrow
 import com.nuvio.tv.ui.components.PlayerPanelRow
 import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.tvhybrid.Button
 import com.nuvio.tv.ui.tvhybrid.IconButton
 import com.nuvio.tv.ui.v2.appearance.LocalV2Appearance
 import com.nuvio.tv.ui.v2.player.v2PlayerPanel
@@ -83,9 +94,16 @@ internal fun TtsPlayerOverlay(
     val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     val panelFocusRequester = remember { FocusRequester() }
     LaunchedEffect(visible, tvFocusMode) {
-        if (!visible || !tvFocusMode) return@LaunchedEffect
+        if (!visible) {
+            TtsVoicePreviewPlayer.stop()
+            return@LaunchedEffect
+        }
+        if (!tvFocusMode) return@LaunchedEffect
         delay(100)
         runCatching { panelFocusRequester.requestFocus() }
+    }
+    DisposableEffect(Unit) {
+        onDispose { TtsVoicePreviewPlayer.stop() }
     }
 
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -142,10 +160,15 @@ internal fun TtsSettingsPanel(
     val scope = rememberCoroutineScope()
     val installedIds by TtsModelManager.installedIds.collectAsState()
     val downloadStates by TtsModelManager.downloadStates.collectAsState()
+    val previewState by TtsVoicePreviewPlayer.state.collectAsState()
     var activePicker by remember { mutableStateOf<VoicePickerTarget?>(null) }
 
     LaunchedEffect(Unit) {
         TtsModelManager.refreshInstalled(context)
+    }
+
+    DisposableEffect(activePicker) {
+        onDispose { TtsVoicePreviewPlayer.stop() }
     }
 
     if (activePicker != null) {
@@ -183,10 +206,21 @@ internal fun TtsSettingsPanel(
             item(key = "tts_picker_back") {
                 PlayerPanelRow(
                     title = title,
+                    subtitle = "Bấm 'Nghe thử' trước khi tải về máy",
                     selected = false,
                     onClick = { activePicker = null },
                     focusRequester = initialFocusRequester
                 )
+            }
+            previewState.errorMessage?.let { errMsg ->
+                item(key = "tts_preview_error") {
+                    Text(
+                        text = errMsg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NuvioColors.Secondary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
             }
             items(items = sortedVoices, key = { "voice_${it.id}" }) { voice ->
                 val isDownloaded = voice.backend != TtsBackendType.PIPER_ONNX || voice.id in installedIds
@@ -198,33 +232,52 @@ internal fun TtsSettingsPanel(
                     else -> "${voice.regionLabel} • ${voice.sizeMb} MB"
                 }
                 val isSelected = selectedVoiceId == voice.id
-                PlayerPanelRow(
-                    title = voice.displayName,
-                    subtitle = dlState?.errorMessage ?: statusLabel,
-                    titleEnd = if (isSelected) "Đang chọn" else if (!isDownloaded) "Tải về" else null,
-                    selected = isSelected,
-                    onClick = {
-                        if (isDownloaded) {
-                            when (target) {
-                                VoicePickerTarget.PRIMARY -> onEvent(PlayerEvent.OnSelectTtsPrimaryVoice(voice.id))
-                                VoicePickerTarget.MALE -> onEvent(PlayerEvent.OnSelectTtsMaleVoice(voice.id))
-                                VoicePickerTarget.FEMALE -> onEvent(PlayerEvent.OnSelectTtsFemaleVoice(voice.id))
-                            }
-                            activePicker = null
-                        } else if (dlState?.isDownloading != true) {
-                            scope.launch {
-                                val ok = TtsModelManager.downloadVoice(context, voice.id)
-                                if (ok) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        PlayerPanelRow(
+                            title = voice.displayName,
+                            subtitle = dlState?.errorMessage ?: statusLabel,
+                            titleEnd = if (isSelected) "Đang chọn" else if (!isDownloaded) "Tải về" else null,
+                            selected = isSelected,
+                            onClick = {
+                                if (isDownloaded) {
                                     when (target) {
                                         VoicePickerTarget.PRIMARY -> onEvent(PlayerEvent.OnSelectTtsPrimaryVoice(voice.id))
                                         VoicePickerTarget.MALE -> onEvent(PlayerEvent.OnSelectTtsMaleVoice(voice.id))
                                         VoicePickerTarget.FEMALE -> onEvent(PlayerEvent.OnSelectTtsFemaleVoice(voice.id))
                                     }
+                                    activePicker = null
+                                } else if (dlState?.isDownloading != true) {
+                                    scope.launch {
+                                        val ok = TtsModelManager.downloadVoice(context, voice.id)
+                                        if (ok) {
+                                            when (target) {
+                                                VoicePickerTarget.PRIMARY -> onEvent(PlayerEvent.OnSelectTtsPrimaryVoice(voice.id))
+                                                VoicePickerTarget.MALE -> onEvent(PlayerEvent.OnSelectTtsMaleVoice(voice.id))
+                                                VoicePickerTarget.FEMALE -> onEvent(PlayerEvent.OnSelectTtsFemaleVoice(voice.id))
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                        }
+                        )
                     }
-                )
+                    TtsOverlayPreviewButton(
+                        voiceId = voice.id,
+                        previewState = previewState,
+                        onClick = {
+                            TtsVoicePreviewPlayer.togglePreview(
+                                context = context,
+                                voiceId = voice.id,
+                                speechSpeed = ttsSettings.speechSpeed
+                            )
+                        }
+                    )
+                }
             }
             // Allow deleting downloaded Piper model when selected voice is an installed Piper voice
             val removableVoice = TtsVoiceCatalog.findVoice(selectedVoiceId)
@@ -277,13 +330,32 @@ internal fun TtsSettingsPanel(
                 val primary = TtsVoiceCatalog.findVoice(ttsSettings.primaryVoiceId)
                 val ready = primary.backend != TtsBackendType.PIPER_ONNX || primary.id in installedIds
                 item(key = "tts_primary_voice") {
-                    PlayerPanelRow(
-                        title = "Giọng đọc chính",
-                        subtitle = if (ready) primary.displayName else "${primary.displayName} (Chưa tải - chạm để tải)",
-                        titleEnd = "Chọn ›",
-                        selected = false,
-                        onClick = { activePicker = VoicePickerTarget.PRIMARY }
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            PlayerPanelRow(
+                                title = "Giọng đọc chính",
+                                subtitle = if (ready) primary.displayName else "${primary.displayName} (Chưa tải - chạm để tải)",
+                                titleEnd = "Chọn ›",
+                                selected = false,
+                                onClick = { activePicker = VoicePickerTarget.PRIMARY }
+                            )
+                        }
+                        TtsOverlayPreviewButton(
+                            voiceId = primary.id,
+                            previewState = previewState,
+                            onClick = {
+                                TtsVoicePreviewPlayer.togglePreview(
+                                    context = context,
+                                    voiceId = primary.id,
+                                    speechSpeed = ttsSettings.speechSpeed
+                                )
+                            }
+                        )
+                    }
                 }
             } else {
                 val male = TtsVoiceCatalog.findVoice(ttsSettings.maleVoiceId)
@@ -291,22 +363,60 @@ internal fun TtsSettingsPanel(
                 val maleReady = male.backend != TtsBackendType.PIPER_ONNX || male.id in installedIds
                 val femaleReady = female.backend != TtsBackendType.PIPER_ONNX || female.id in installedIds
                 item(key = "tts_male_voice") {
-                    PlayerPanelRow(
-                        title = "Giọng Nam",
-                        subtitle = if (maleReady) male.displayName else "${male.displayName} (Chưa tải)",
-                        titleEnd = "Chọn ›",
-                        selected = false,
-                        onClick = { activePicker = VoicePickerTarget.MALE }
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            PlayerPanelRow(
+                                title = "Giọng Nam",
+                                subtitle = if (maleReady) male.displayName else "${male.displayName} (Chưa tải)",
+                                titleEnd = "Chọn ›",
+                                selected = false,
+                                onClick = { activePicker = VoicePickerTarget.MALE }
+                            )
+                        }
+                        TtsOverlayPreviewButton(
+                            voiceId = male.id,
+                            previewState = previewState,
+                            onClick = {
+                                TtsVoicePreviewPlayer.togglePreview(
+                                    context = context,
+                                    voiceId = male.id,
+                                    speechSpeed = ttsSettings.speechSpeed
+                                )
+                            }
+                        )
+                    }
                 }
                 item(key = "tts_female_voice") {
-                    PlayerPanelRow(
-                        title = "Giọng Nữ",
-                        subtitle = if (femaleReady) female.displayName else "${female.displayName} (Chưa tải)",
-                        titleEnd = "Chọn ›",
-                        selected = false,
-                        onClick = { activePicker = VoicePickerTarget.FEMALE }
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            PlayerPanelRow(
+                                title = "Giọng Nữ",
+                                subtitle = if (femaleReady) female.displayName else "${female.displayName} (Chưa tải)",
+                                titleEnd = "Chọn ›",
+                                selected = false,
+                                onClick = { activePicker = VoicePickerTarget.FEMALE }
+                            )
+                        }
+                        TtsOverlayPreviewButton(
+                            voiceId = female.id,
+                            previewState = previewState,
+                            onClick = {
+                                TtsVoicePreviewPlayer.togglePreview(
+                                    context = context,
+                                    voiceId = female.id,
+                                    speechSpeed = ttsSettings.speechSpeed
+                                )
+                            }
+                        )
+                    }
                 }
             }
 
@@ -445,5 +555,46 @@ private fun TtsValueStepperRow(
                 Icon(Icons.Default.Add, contentDescription = "Tăng $label", modifier = Modifier.size(16.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun TtsOverlayPreviewButton(
+    voiceId: String,
+    previewState: TtsVoicePreviewState,
+    onClick: () -> Unit
+) {
+    val isActive = previewState.activeVoiceId == voiceId
+    val isLoading = isActive && previewState.isLoading
+    val isPlaying = isActive && previewState.isPlaying
+    val label = when {
+        isLoading -> "Đang tải"
+        isPlaying -> "Dừng"
+        else -> "Nghe thử"
+    }
+    Button(
+        onClick = onClick,
+        shape = ButtonDefaults.shape(shape = RoundedCornerShape(10.dp)),
+        colors = ButtonDefaults.colors(
+            containerColor = if (isPlaying) NuvioColors.Secondary.copy(alpha = 0.30f) else Color.White.copy(alpha = 0.14f),
+            contentColor = Color.White,
+            focusedContainerColor = NuvioColors.FocusBackground,
+            focusedContentColor = NuvioColors.Primary
+        ),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+        modifier = Modifier.defaultMinSize(minWidth = 74.dp, minHeight = 36.dp)
+    ) {
+        Icon(
+            imageVector = if (isPlaying) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
+            contentDescription = label,
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

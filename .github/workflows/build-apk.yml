@@ -181,6 +181,20 @@ jobs:
             } >> "${GITHUB_ENV}"
           fi
 
+      - name: Cache bundled TTS voice preview clips
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/tts_samples
+          key: tts-previews-${{ hashFiles('scripts/generate_tts_previews.py') }}
+
+      - name: Generate bundled TTS voice preview clips
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq espeak-ng ffmpeg
+          python3 -m pip install --quiet onnxruntime numpy
+          python3 scripts/generate_tts_previews.py
+
       - name: Run AioStream core & modified unit test suites
         timeout-minutes: 20
         run: |

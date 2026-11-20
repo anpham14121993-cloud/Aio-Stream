@@ -792,6 +792,7 @@ internal fun PlayerRuntimeController.seekPlaybackTo(
     seekParameters: SeekParameters = SeekParameters.CLOSEST_SYNC,
     exact: Boolean = false
 ) {
+    updateTtsPlaybackClock(mediaMs = positionMs)
     ttsCoordinator.onSeek(positionMs)
     if (isUsingMpvEngine()) {
         mpvView?.let { view ->
@@ -843,6 +844,9 @@ internal fun PlayerRuntimeController.setPlaybackSpeedInternal(speed: Float) {
 }
 
 internal fun PlayerRuntimeController.setPlaybackPaused(paused: Boolean) {
+    currentPlaybackPositionMs()?.let { pos ->
+        updateTtsPlaybackClock(mediaMs = pos, isPlaying = !paused)
+    } ?: updateTtsPlaybackClock(mediaMs = currentTtsPlaybackPositionMs(), isPlaying = !paused)
     ttsCoordinator.onPlaybackStateChanged(!paused)
     if (isUsingMpvEngine()) {
         mpvView?.setPaused(paused)

@@ -52,7 +52,19 @@ object TtsVoiceCatalog {
     const val DEFAULT_MALE_VOICE_ID = "minh_quang"
 
     private const val HF_BASE_URL = "https://huggingface.co/dinhphuongvn/ttsvn/resolve/main"
+    private const val SAMPLE_MIRROR_BASE_URL = "https://raw.githubusercontent.com/Darkrai9x/vbook-settings/main/tts/sample"
     private const val MIN_VALID_ONNX_BYTES = 10_485_760L // 10 MB sanity floor matching VAX
+
+    private val remoteSampleFilenames: Map<String, String> = mapOf(
+        "ngoc_huyen_new" to "ngochuyen_0.m4a",
+        "ban_mai" to "banmai_0.m4a",
+        "lac_phi" to "lacphi_0.m4a",
+        "mai_phuong" to "maiphuong_0.m4a",
+        "manh_dung" to "manhdung_0.m4a",
+        "minh_quang" to "minhquang_0.m4a",
+        "ngoc_ngan" to "ngocngan_0.m4a",
+        "phuong_trang" to "phuongtrang_0.m4a"
+    )
 
     val voices: List<TtsVoiceOption> = listOf(
         // Female voices (Miền Bắc)
@@ -130,6 +142,11 @@ object TtsVoiceCatalog {
     fun onnxDownloadUrl(voiceId: String): String = "$HF_BASE_URL/$voiceId.onnx"
 
     fun configDownloadUrl(voiceId: String): String = "$HF_BASE_URL/$voiceId.onnx.json"
+
+    fun samplePreviewAssetPath(voiceId: String): String = "tts_samples/$voiceId.m4a"
+
+    fun samplePreviewRemoteUrl(voiceId: String): String? =
+        remoteSampleFilenames[voiceId]?.let { "$SAMPLE_MIRROR_BASE_URL/$it" }
 }
 
 /**

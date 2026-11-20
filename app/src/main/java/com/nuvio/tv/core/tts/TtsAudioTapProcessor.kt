@@ -19,6 +19,8 @@ class TtsAudioTapProcessor(
     @Volatile
     var isTapActive: Boolean = false
 
+    override fun isActive(): Boolean = super.isActive() && isTapActive
+
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         val encoding = inputAudioFormat.encoding
         if (encoding != C.ENCODING_PCM_16BIT && encoding != C.ENCODING_PCM_FLOAT) {
@@ -32,14 +34,16 @@ class TtsAudioTapProcessor(
         if (remaining <= 0) return
 
         if (isTapActive) {
-            val tapSlice = inputBuffer.asReadOnlyBuffer()
-            pitchAnalyzer.ingestPcm(
-                buffer = tapSlice,
-                sampleRate = inputAudioFormat.sampleRate,
-                channels = inputAudioFormat.channelCount,
-                encoding = inputAudioFormat.encoding,
-                mediaPositionMs = currentPositionMsProvider()
-            )
+            runCatching {
+                val tapSlice = inputBuffer.asReadOnlyBuffer()
+                pitchAnalyzer.ingestPcm(
+                    buffer = tapSlice,
+                    sampleRate = inputAudioFormat.sampleRate,
+                    channels = inputAudioFormat.channelCount,
+                    encoding = inputAudioFormat.encoding,
+                    mediaPositionMs = currentPositionMsProvider()
+                )
+            }
         }
 
         val out = replaceOutputBuffer(remaining)
