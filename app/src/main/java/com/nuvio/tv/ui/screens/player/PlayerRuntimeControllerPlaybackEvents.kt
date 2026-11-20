@@ -2395,7 +2395,6 @@ fun PlayerRuntimeController.onEvent(
                     showTtsOverlay = true,
                     showAudioOverlay = false,
                     showSubtitleOverlay = false,
-                    showTtsOverlay = false,
                     showSubtitleStylePanel = false,
                     showMoreDialog = false,
                     showSubtitleTimingDialog = false,
@@ -2409,7 +2408,7 @@ fun PlayerRuntimeController.onEvent(
                     showControls = true
                 )
             }
-            cancelHideControls()
+            hideControlsJob?.cancel()
         }
         PlayerEvent.OnDismissTtsOverlay -> {
             _uiState.update { it.copy(showTtsOverlay = false) }

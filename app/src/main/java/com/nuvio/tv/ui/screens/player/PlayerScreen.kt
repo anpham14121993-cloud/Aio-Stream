@@ -25,6 +25,7 @@ import android.graphics.RectF
 import com.nuvio.tv.ui.theme.NuvioMotion
 import kotlinx.coroutines.delay
 
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import com.nuvio.tv.ui.components.NuvioNoticePill
 import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.theme.accentBrush
