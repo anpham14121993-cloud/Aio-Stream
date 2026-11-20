@@ -556,41 +556,47 @@ class TtsSubtitleCoordinator(
         targetWindowMs: Long?
     ): File? {
         val hash = sha256Short("${voice.id}|$backend|$gender|$speechSpeed|$ttsVolumePercent|$targetWindowMs|$text")
-        return when (backend) {
-            TtsBackendType.PIPER_ONNX -> {
-                val outWav = File(wavCacheDir, "piper_$hash.wav")
-                if (outWav.exists() && outWav.length() > 256L) return outWav
+        return try {
+            when (backend) {
+                TtsBackendType.PIPER_ONNX -> {
+                    val outWav = File(wavCacheDir, "piper_$hash.wav")
+                    if (outWav.exists() && outWav.length() > 256L) return outWav
 
-                val synth = piperEngine.synthesize(voice.id, text, speechSpeed) ?: return null
-                val trimmed = TtsAudioPostProcessor.trimSilence(synth.samples, synth.sampleRate)
+                    val synth = piperEngine.synthesize(voice.id, text, speechSpeed) ?: return null
+                    val trimmed = TtsAudioPostProcessor.trimSilence(synth.samples, synth.sampleRate)
 
-                val stretched = if (targetWindowMs != null && targetWindowMs >= 450L) {
-                    val audioDurationMs = (trimmed.size * 1000.0) / synth.sampleRate.toDouble()
-                    val availableMs = targetWindowMs.toDouble() + 180.0
-                    if (audioDurationMs > availableMs) {
-                        val fitRatio = (audioDurationMs / availableMs).toFloat().coerceIn(0.8f, 1.65f)
-                        WsolaTimeStretcher.timeStretch(trimmed, synth.sampleRate, fitRatio)
+                    val stretched = if (targetWindowMs != null && targetWindowMs >= 450L) {
+                        val audioDurationMs = (trimmed.size * 1000.0) / synth.sampleRate.toDouble()
+                        val availableMs = targetWindowMs.toDouble() + 180.0
+                        if (audioDurationMs > availableMs) {
+                            val fitRatio = (audioDurationMs / availableMs).toFloat().coerceIn(0.8f, 1.65f)
+                            WsolaTimeStretcher.timeStretch(trimmed, synth.sampleRate, fitRatio)
+                        } else {
+                            trimmed
+                        }
                     } else {
                         trimmed
                     }
-                } else {
-                    trimmed
-                }
 
-                val written = TtsAudioPostProcessor.writeNormalizedWav(
-                    samples = stretched,
-                    sampleRate = synth.sampleRate,
-                    ttsVolumePercent = ttsVolumePercent,
-                    outFile = outWav
-                )
-                if (written) outWav else null
+                    val written = TtsAudioPostProcessor.writeNormalizedWav(
+                        samples = stretched,
+                        sampleRate = synth.sampleRate,
+                        ttsVolumePercent = ttsVolumePercent,
+                        outFile = outWav
+                    )
+                    if (written) outWav else null
+                }
+                TtsBackendType.GOOGLE_TRANSLATE -> {
+                    googleEngine.synthesizeToMp3(text, "g_$hash")
+                }
+                TtsBackendType.SYSTEM_TTS -> {
+                    systemEngine.synthesizeToWav(text, gender, speechSpeed, "s_$hash")
+                }
             }
-            TtsBackendType.GOOGLE_TRANSLATE -> {
-                googleEngine.synthesizeToMp3(text, "g_$hash")
-            }
-            TtsBackendType.SYSTEM_TTS -> {
-                systemEngine.synthesizeToWav(text, gender, speechSpeed, "s_$hash")
-            }
+        } catch (ce: kotlin.coroutines.cancellation.CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            null
         }
     }
 

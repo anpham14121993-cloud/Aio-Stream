@@ -274,11 +274,11 @@ internal fun SubtitleSelectionOverlay(
         runCatching { listFocusRequester.requestFocus() }
     }
 
-    LaunchedEffect(visible, editorOpen, tvFocusMode) {
+    LaunchedEffect(visible, editorOpen, ttsOpen, tvFocusMode) {
         if (!visible || !tvFocusMode) return@LaunchedEffect
         kotlinx.coroutines.delay(120)
-        if (!editorOpen) {
-            runCatching { listFocusRequester.requestFocus() }
+        if (ttsOpen || !editorOpen) {
+            listFocusRequester.requestFocusAfterFrames()
         } else {
             runCatching { styleRequesters[StyleFocusKey.DelaySet]?.requestFocus() }
         }

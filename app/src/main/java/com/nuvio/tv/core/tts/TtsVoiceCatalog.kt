@@ -1,14 +1,18 @@
 package com.nuvio.tv.core.tts
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
@@ -129,8 +133,9 @@ object TtsVoiceCatalog {
     fun isVoiceReady(context: Context, voiceId: String): Boolean {
         val voice = findVoice(voiceId)
         if (voice.backend != TtsBackendType.PIPER_ONNX) return true
-        val onnx = onnxFile(context, voiceId)
-        return onnx.exists() && onnx.length() > MIN_VALID_ONNX_BYTES && resolveConfigFile(context, voiceId) != null
+        val onnx = onnxFile(context.applicationContext, voiceId)
+        return onnx.isFile && onnx.canRead() && onnx.length() > MIN_VALID_ONNX_BYTES &&
+            resolveConfigFile(context.applicationContext, voiceId) != null
     }
 
     fun installedPiperVoiceIds(context: Context): Set<String> =
@@ -161,6 +166,8 @@ object TtsModelManager {
             .build()
     }
 
+    private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val _installedIds = MutableStateFlow<Set<String>>(emptySet())
     val installedIds: StateFlow<Set<String>> = _installedIds.asStateFlow()
 
@@ -168,17 +175,39 @@ object TtsModelManager {
     val downloadStates: StateFlow<Map<String, TtsDownloadState>> = _downloadStates.asStateFlow()
 
     fun refreshInstalled(context: Context) {
-        _installedIds.value = TtsVoiceCatalog.installedPiperVoiceIds(context)
+        _installedIds.value = TtsVoiceCatalog.installedPiperVoiceIds(context.applicationContext)
     }
 
     fun deleteVoice(context: Context, voiceId: String): Boolean {
-        val dir = TtsVoiceCatalog.modelDir(context, voiceId)
+        val appContext = context.applicationContext
+        val dir = TtsVoiceCatalog.modelDir(appContext, voiceId)
         val deleted = if (dir.exists()) dir.deleteRecursively() else true
-        refreshInstalled(context)
+        refreshInstalled(appContext)
         return deleted
     }
 
+    /**
+     * Starts an application-scoped download so closing a dialog/panel mid-transfer
+     * does not abort a 63.5 MB Piper ONNX download or leave partial state behind.
+     */
+    fun startDownload(
+        context: Context,
+        voiceId: String,
+        onCompleted: ((Boolean) -> Unit)? = null
+    ) {
+        val appContext = context.applicationContext
+        downloadScope.launch {
+            val ok = downloadVoice(appContext, voiceId)
+            if (onCompleted != null) {
+                withContext(Dispatchers.Main) {
+                    onCompleted(ok)
+                }
+            }
+        }
+    }
+
     suspend fun downloadVoice(context: Context, voiceId: String): Boolean = withContext(Dispatchers.IO) {
+        val appContext = context.applicationContext
         val option = TtsVoiceCatalog.findVoice(voiceId)
         if (option.backend != TtsBackendType.PIPER_ONNX) return@withContext true
 
@@ -186,7 +215,7 @@ object TtsModelManager {
             return@withContext false
         }
 
-        val dir = TtsVoiceCatalog.modelDir(context, voiceId)
+        val dir = TtsVoiceCatalog.modelDir(appContext, voiceId)
         if (!dir.exists() && !dir.mkdirs()) {
             setDownloadState(voiceId, TtsDownloadState(errorMessage = "Không thể tạo thư mục lưu giọng đọc"))
             return@withContext false
@@ -194,25 +223,31 @@ object TtsModelManager {
 
         setDownloadState(voiceId, TtsDownloadState(isDownloading = true, progressPercent = 0))
 
-        val onnxTarget = TtsVoiceCatalog.onnxFile(context, voiceId)
+        val onnxTarget = TtsVoiceCatalog.onnxFile(appContext, voiceId)
         val configTarget = File(dir, "$voiceId.onnx.json")
 
         try {
             downloadFile(TtsVoiceCatalog.configDownloadUrl(voiceId), configTarget) { /* tiny JSON */ }
+            val cfgJson = runCatching { JSONObject(configTarget.readText(Charsets.UTF_8)) }.getOrNull()
+            if (cfgJson?.optJSONObject("phoneme_id_map") == null) {
+                configTarget.delete()
+                throw IllegalStateException("File cấu hình giọng đọc không hợp lệ")
+            }
+
             downloadFile(TtsVoiceCatalog.onnxDownloadUrl(voiceId), onnxTarget) { pct ->
                 setDownloadState(voiceId, TtsDownloadState(isDownloading = true, progressPercent = pct))
             }
 
-            if (!TtsVoiceCatalog.isVoiceReady(context, voiceId)) {
+            if (!TtsVoiceCatalog.isVoiceReady(appContext, voiceId)) {
                 throw IllegalStateException("File mô hình tải về không đầy đủ hoặc bị hỏng")
             }
 
-            refreshInstalled(context)
+            refreshInstalled(appContext)
             setDownloadState(voiceId, TtsDownloadState(isDownloading = false, progressPercent = 100))
             true
         } catch (t: Throwable) {
             dir.listFiles()?.filter { it.name.endsWith(".tmp") }?.forEach { it.delete() }
-            if (!TtsVoiceCatalog.isVoiceReady(context, voiceId)) {
+            if (!TtsVoiceCatalog.isVoiceReady(appContext, voiceId)) {
                 onnxTarget.delete()
             }
             setDownloadState(

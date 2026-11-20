@@ -117,4 +117,40 @@ class TtsVoiceCatalogAndProcessorTest {
         assertEquals(100L, normalizer.delayMs)
         assertEquals("Xin chào", normalizer.speakableText)
     }
+
+    @Test
+    fun piperChunkingAndHardwareBudgetProtectLowRam32BitTv() {
+        val (constrained32, maxSess32, threads32) = PiperOnnxEngine.runtimeBudgetFor(
+            is64Bit = false,
+            totalMemMb = 4096L,
+            isLowRamDevice = false
+        )
+        assertTrue(constrained32)
+        assertEquals(1, maxSess32)
+        assertEquals(1, threads32)
+
+        val (constrainedTv, maxSessTv, threadsTv) = PiperOnnxEngine.runtimeBudgetFor(
+            is64Bit = true,
+            totalMemMb = 2048L,
+            isLowRamDevice = false
+        )
+        assertTrue(constrainedTv)
+        assertEquals(1, maxSessTv)
+        assertEquals(1, threadsTv)
+
+        val (unconstrained, maxSess64, threads64) = PiperOnnxEngine.runtimeBudgetFor(
+            is64Bit = true,
+            totalMemMb = 6144L,
+            isLowRamDevice = false
+        )
+        assertFalse(unconstrained)
+        assertEquals(2, maxSess64)
+        assertEquals(2, threads64)
+
+        val longCue = "Đây là một đoạn phụ đề rất dài để kiểm tra việc chia nhỏ câu thoại trước khi chạy mô hình Piper ONNX. " +
+            "Khi chia câu tại dấu câu hoặc khoảng trắng thì thiết bị TV cấu hình thấp không bị tràn bộ nhớ."
+        val chunks = PiperOnnxEngine.splitIntoSpeakableChunks(longCue, maxChars = 90)
+        assertTrue(chunks.size >= 2)
+        assertTrue(chunks.all { it.isNotBlank() && it.length <= 90 })
+    }
 }

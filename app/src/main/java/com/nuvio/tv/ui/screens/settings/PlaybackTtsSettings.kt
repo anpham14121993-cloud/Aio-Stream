@@ -2,6 +2,7 @@
 
 package com.nuvio.tv.ui.screens.settings
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -26,13 +28,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.Border
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -45,9 +51,10 @@ import com.nuvio.tv.core.tts.TtsVoiceCatalog
 import com.nuvio.tv.core.tts.TtsVoicePreviewPlayer
 import com.nuvio.tv.core.tts.TtsVoicePreviewState
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.tvhybrid.Button
-import kotlinx.coroutines.launch
+import com.nuvio.tv.ui.v2.components.nuvioV2Focus
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -66,7 +73,6 @@ internal fun PlaybackTtsSection() {
     val installedIds by TtsModelManager.installedIds.collectAsState()
     val downloadStates by TtsModelManager.downloadStates.collectAsState()
     val previewState by TtsVoicePreviewPlayer.state.collectAsState()
-    val scope = rememberCoroutineScope()
     var activeDialogTarget by remember { mutableStateOf<PlaybackTtsVoiceTarget?>(null) }
 
     LaunchedEffect(Unit) {
@@ -264,6 +270,18 @@ internal fun PlaybackTtsSection() {
                 PlaybackTtsVoiceTarget.MANAGE_ONLY -> TtsVoiceCatalog.piperVoices
             }
         }
+        val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+        val selectedIndex = remember(voicesList, selectedVoiceId) {
+            voicesList.indexOfFirst { it.id == selectedVoiceId }.coerceAtLeast(0)
+        }
+        val dialogListState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
+        val dialogFocusRequester = remember(target) { FocusRequester() }
+
+        LaunchedEffect(target, tvFocusMode) {
+            if (!tvFocusMode) return@LaunchedEffect
+            dialogListState.scrollToItem(selectedIndex)
+            dialogFocusRequester.requestFocusAfterFrames()
+        }
 
         NuvioDialog(
             onDismiss = { activeDialogTarget = null },
@@ -276,6 +294,7 @@ internal fun PlaybackTtsSection() {
                     SettingsNote(text = errMsg, tone = SettingsNoteTone.Warning)
                 }
                 LazyColumn(
+                    state = dialogListState,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 4.dp),
                     modifier = Modifier
@@ -286,6 +305,7 @@ internal fun PlaybackTtsSection() {
                         val isPiper = voice.backend == TtsBackendType.PIPER_ONNX
                         val isDownloaded = !isPiper || voice.id in installedIds
                         val dl = downloadStates[voice.id]
+                        val isInitialFocus = voicesList.getOrNull(selectedIndex)?.id == voice.id
                         val subtitleText = dl?.errorMessage ?: when {
                             dl?.isDownloading == true -> "Đang tải về ${dl.progressPercent}%..."
                             !isPiper -> voice.regionLabel
@@ -299,6 +319,14 @@ internal fun PlaybackTtsSection() {
                             !isDownloaded -> "Tải về"
                             else -> "Chọn"
                         }
+                        val applyTargetVoice: () -> Unit = {
+                            when (target) {
+                                PlaybackTtsVoiceTarget.PRIMARY -> prefs.setPrimaryVoiceId(voice.id)
+                                PlaybackTtsVoiceTarget.MALE -> prefs.setMaleVoiceId(voice.id)
+                                PlaybackTtsVoiceTarget.FEMALE -> prefs.setFemaleVoiceId(voice.id)
+                                PlaybackTtsVoiceTarget.MANAGE_ONLY -> Unit
+                            }
+                        }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -310,35 +338,23 @@ internal fun PlaybackTtsSection() {
                                     subtitle = subtitleText,
                                     value = valueBadge,
                                     jumpAnchor = false,
+                                    modifier = if (isInitialFocus) Modifier.focusRequester(dialogFocusRequester) else Modifier,
                                     onClick = {
                                         if (target == PlaybackTtsVoiceTarget.MANAGE_ONLY) {
                                             if (isDownloaded) {
                                                 TtsModelManager.deleteVoice(context, voice.id)
                                             } else if (dl?.isDownloading != true) {
-                                                scope.launch { TtsModelManager.downloadVoice(context, voice.id) }
+                                                TtsModelManager.startDownload(context, voice.id)
                                             }
                                             return@SettingsActionRow
                                         }
 
                                         if (isDownloaded) {
-                                            when (target) {
-                                                PlaybackTtsVoiceTarget.PRIMARY -> prefs.setPrimaryVoiceId(voice.id)
-                                                PlaybackTtsVoiceTarget.MALE -> prefs.setMaleVoiceId(voice.id)
-                                                PlaybackTtsVoiceTarget.FEMALE -> prefs.setFemaleVoiceId(voice.id)
-                                                PlaybackTtsVoiceTarget.MANAGE_ONLY -> Unit
-                                            }
+                                            applyTargetVoice()
                                             activeDialogTarget = null
                                         } else if (dl?.isDownloading != true) {
-                                            scope.launch {
-                                                val ok = TtsModelManager.downloadVoice(context, voice.id)
-                                                if (ok) {
-                                                    when (target) {
-                                                        PlaybackTtsVoiceTarget.PRIMARY -> prefs.setPrimaryVoiceId(voice.id)
-                                                        PlaybackTtsVoiceTarget.MALE -> prefs.setMaleVoiceId(voice.id)
-                                                        PlaybackTtsVoiceTarget.FEMALE -> prefs.setFemaleVoiceId(voice.id)
-                                                        PlaybackTtsVoiceTarget.MANAGE_ONLY -> Unit
-                                                    }
-                                                }
+                                            TtsModelManager.startDownload(context, voice.id) { ok ->
+                                                if (ok) applyTargetVoice()
                                             }
                                         }
                                     }
@@ -377,6 +393,8 @@ private fun SettingsTtsPreviewButton(
         isPlaying -> "Dừng"
         else -> "Nghe thử"
     }
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Button(
         onClick = onClick,
@@ -384,11 +402,21 @@ private fun SettingsTtsPreviewButton(
         colors = ButtonDefaults.colors(
             containerColor = if (isPlaying) NuvioTheme.colors.Secondary.copy(alpha = 0.28f) else NuvioTheme.colors.BackgroundCard,
             contentColor = NuvioTheme.colors.TextPrimary,
-            focusedContainerColor = settingsFocusFillColor(),
-            focusedContentColor = NuvioTheme.colors.Primary
+            focusedContainerColor = Color.White,
+            focusedContentColor = Color.Black
+        ),
+        border = ButtonDefaults.border(
+            focusedBorder = if (tvFocusMode) {
+                Border(border = BorderStroke(2.dp, Color.White), shape = shape)
+            } else {
+                Border.None
+            }
         ),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-        modifier = Modifier.defaultMinSize(minWidth = 86.dp, minHeight = 42.dp)
+        modifier = Modifier
+            .defaultMinSize(minWidth = 86.dp, minHeight = 42.dp)
+            .nuvioV2Focus(isFocused && tvFocusMode, shape, stationary = true)
+            .onFocusChanged { isFocused = it.isFocused }
     ) {
         Icon(
             imageVector = if (isPlaying) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,

@@ -2,7 +2,10 @@
 
 package com.nuvio.tv.ui.screens.player
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,18 +37,19 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.Border
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
@@ -63,14 +68,14 @@ import com.nuvio.tv.core.tts.TtsVoicePreviewPlayer
 import com.nuvio.tv.core.tts.TtsVoicePreviewState
 import com.nuvio.tv.ui.components.PanelEyebrow
 import com.nuvio.tv.ui.components.PlayerPanelRow
+import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
 import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.tvhybrid.Button
 import com.nuvio.tv.ui.tvhybrid.IconButton
 import com.nuvio.tv.ui.v2.appearance.LocalV2Appearance
+import com.nuvio.tv.ui.v2.components.nuvioV2Focus
 import com.nuvio.tv.ui.v2.player.v2PlayerPanel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -100,8 +105,7 @@ internal fun TtsPlayerOverlay(
             return@LaunchedEffect
         }
         if (!tvFocusMode) return@LaunchedEffect
-        delay(100)
-        runCatching { panelFocusRequester.requestFocus() }
+        panelFocusRequester.requestFocusAfterFrames()
     }
     DisposableEffect(Unit) {
         onDispose { TtsVoicePreviewPlayer.stop() }
@@ -129,6 +133,7 @@ internal fun TtsPlayerOverlay(
                 .align(Alignment.BottomEnd)
                 .heightIn(max = 620.dp)
                 .v2PlayerPanel()
+                .focusGroup()
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -158,12 +163,31 @@ internal fun TtsSettingsPanel(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     val installedIds by TtsModelManager.installedIds.collectAsState()
     val downloadStates by TtsModelManager.downloadStates.collectAsState()
     val previewState by TtsVoicePreviewPlayer.state.collectAsState()
     val runtimeStatus by TtsDiagnosticsState.statusMessage.collectAsState()
+
     var activePicker by remember { mutableStateOf<VoicePickerTarget?>(null) }
+    var lastOpenedPicker by remember { mutableStateOf<VoicePickerTarget?>(null) }
+    var pendingRestoreFromPicker by remember { mutableStateOf(false) }
+
+    val fallbackEnableRowFocusRequester = remember { FocusRequester() }
+    val enableRowFocusRequester = initialFocusRequester ?: fallbackEnableRowFocusRequester
+    val primaryRowFocusRequester = remember { FocusRequester() }
+    val maleRowFocusRequester = remember { FocusRequester() }
+    val femaleRowFocusRequester = remember { FocusRequester() }
+    val pickerBackFocusRequester = remember { FocusRequester() }
+    val pickerSelectedFocusRequester = remember { FocusRequester() }
+
+    val mainListState = rememberLazyListState()
+    val pickerListState = rememberLazyListState()
+
+    BackHandler(enabled = activePicker != null) {
+        pendingRestoreFromPicker = true
+        activePicker = null
+    }
 
     LaunchedEffect(Unit) {
         TtsModelManager.refreshInstalled(context)
@@ -173,45 +197,85 @@ internal fun TtsSettingsPanel(
         onDispose { TtsVoicePreviewPlayer.stop() }
     }
 
-    if (activePicker != null) {
-        val target = activePicker!!
-        val selectedVoiceId = when (target) {
-            VoicePickerTarget.PRIMARY -> ttsSettings.primaryVoiceId
-            VoicePickerTarget.MALE -> ttsSettings.maleVoiceId
-            VoicePickerTarget.FEMALE -> ttsSettings.femaleVoiceId
+    val currentTarget = activePicker
+    val sortedPickerVoices = remember(currentTarget) {
+        when (currentTarget) {
+            VoicePickerTarget.MALE -> TtsVoiceCatalog.voices.sortedByDescending {
+                it.gender == SpeakerGender.MALE
+            }
+            VoicePickerTarget.FEMALE -> TtsVoiceCatalog.voices.sortedByDescending {
+                it.gender == SpeakerGender.FEMALE
+            }
+            VoicePickerTarget.PRIMARY, null -> TtsVoiceCatalog.voices
         }
-        val title = when (target) {
+    }
+    val selectedVoiceIdForTarget = when (currentTarget) {
+        VoicePickerTarget.PRIMARY -> ttsSettings.primaryVoiceId
+        VoicePickerTarget.MALE -> ttsSettings.maleVoiceId
+        VoicePickerTarget.FEMALE -> ttsSettings.femaleVoiceId
+        null -> null
+    }
+
+    LaunchedEffect(currentTarget, tvFocusMode) {
+        if (!tvFocusMode) return@LaunchedEffect
+        if (currentTarget != null) {
+            lastOpenedPicker = currentTarget
+            val selectedIndex = sortedPickerVoices.indexOfFirst { it.id == selectedVoiceIdForTarget }
+            val scrollItemIndex = if (selectedIndex >= 0) selectedIndex else 0
+            pickerListState.scrollToItem(scrollItemIndex)
+            val requester = if (selectedIndex >= 0) pickerSelectedFocusRequester else pickerBackFocusRequester
+            requester.requestFocusAfterFrames()
+        } else if (pendingRestoreFromPicker) {
+            pendingRestoreFromPicker = false
+            val restoreRequester = when (lastOpenedPicker) {
+                VoicePickerTarget.PRIMARY -> primaryRowFocusRequester
+                VoicePickerTarget.MALE -> maleRowFocusRequester
+                VoicePickerTarget.FEMALE -> femaleRowFocusRequester
+                null -> enableRowFocusRequester
+            }
+            if (!restoreRequester.requestFocusAfterFrames()) {
+                enableRowFocusRequester.requestFocusAfterFrames()
+            }
+        }
+    }
+
+    if (currentTarget != null) {
+        val selectedVoiceId = selectedVoiceIdForTarget.orEmpty()
+        val title = when (currentTarget) {
             VoicePickerTarget.PRIMARY -> "‹ Quay lại · Chọn giọng đọc"
             VoicePickerTarget.MALE -> "‹ Quay lại · Chọn giọng Nam"
             VoicePickerTarget.FEMALE -> "‹ Quay lại · Chọn giọng Nữ"
         }
 
-        val sortedVoices = remember(target) {
-            when (target) {
-                VoicePickerTarget.MALE -> TtsVoiceCatalog.voices.sortedByDescending {
-                    it.gender == SpeakerGender.MALE
-                }
-                VoicePickerTarget.FEMALE -> TtsVoiceCatalog.voices.sortedByDescending {
-                    it.gender == SpeakerGender.FEMALE
-                }
-                VoicePickerTarget.PRIMARY -> TtsVoiceCatalog.voices
+        val closePicker: () -> Unit = {
+            pendingRestoreFromPicker = true
+            activePicker = null
+        }
+
+        val applySelectedVoice: (String) -> Unit = { voiceId ->
+            when (currentTarget) {
+                VoicePickerTarget.PRIMARY -> onEvent(PlayerEvent.OnSelectTtsPrimaryVoice(voiceId))
+                VoicePickerTarget.MALE -> onEvent(PlayerEvent.OnSelectTtsMaleVoice(voiceId))
+                VoicePickerTarget.FEMALE -> onEvent(PlayerEvent.OnSelectTtsFemaleVoice(voiceId))
             }
         }
 
         LazyColumn(
+            state = pickerListState,
             verticalArrangement = Arrangement.spacedBy(6.dp),
             contentPadding = PaddingValues(top = NuvioTheme.spacing.sm, bottom = NuvioTheme.spacing.sm),
             modifier = modifier
                 .heightIn(max = 460.dp)
                 .fillMaxWidth()
+                .focusGroup()
         ) {
             item(key = "tts_picker_back") {
                 PlayerPanelRow(
                     title = title,
                     subtitle = "Bấm 'Nghe thử' trước khi tải về máy",
                     selected = false,
-                    onClick = { activePicker = null },
-                    focusRequester = initialFocusRequester
+                    onClick = closePicker,
+                    focusRequester = pickerBackFocusRequester
                 )
             }
             previewState.errorMessage?.let { errMsg ->
@@ -224,7 +288,7 @@ internal fun TtsSettingsPanel(
                     )
                 }
             }
-            items(items = sortedVoices, key = { "voice_${it.id}" }) { voice ->
+            items(items = sortedPickerVoices, key = { "voice_${it.id}" }) { voice ->
                 val isDownloaded = voice.backend != TtsBackendType.PIPER_ONNX || voice.id in installedIds
                 val dlState: TtsDownloadState? = downloadStates[voice.id]
                 val statusLabel = when {
@@ -245,23 +309,15 @@ internal fun TtsSettingsPanel(
                             subtitle = dlState?.errorMessage ?: statusLabel,
                             titleEnd = if (isSelected) "Đang chọn" else if (!isDownloaded) "Tải về" else null,
                             selected = isSelected,
+                            focusRequester = if (isSelected) pickerSelectedFocusRequester else null,
                             onClick = {
                                 if (isDownloaded) {
-                                    when (target) {
-                                        VoicePickerTarget.PRIMARY -> onEvent(PlayerEvent.OnSelectTtsPrimaryVoice(voice.id))
-                                        VoicePickerTarget.MALE -> onEvent(PlayerEvent.OnSelectTtsMaleVoice(voice.id))
-                                        VoicePickerTarget.FEMALE -> onEvent(PlayerEvent.OnSelectTtsFemaleVoice(voice.id))
-                                    }
-                                    activePicker = null
+                                    applySelectedVoice(voice.id)
+                                    closePicker()
                                 } else if (dlState?.isDownloading != true) {
-                                    scope.launch {
-                                        val ok = TtsModelManager.downloadVoice(context, voice.id)
+                                    TtsModelManager.startDownload(context, voice.id) { ok ->
                                         if (ok) {
-                                            when (target) {
-                                                VoicePickerTarget.PRIMARY -> onEvent(PlayerEvent.OnSelectTtsPrimaryVoice(voice.id))
-                                                VoicePickerTarget.MALE -> onEvent(PlayerEvent.OnSelectTtsMaleVoice(voice.id))
-                                                VoicePickerTarget.FEMALE -> onEvent(PlayerEvent.OnSelectTtsFemaleVoice(voice.id))
-                                            }
+                                            applySelectedVoice(voice.id)
                                         }
                                     }
                                 }
@@ -271,6 +327,7 @@ internal fun TtsSettingsPanel(
                     TtsOverlayPreviewButton(
                         voiceId = voice.id,
                         previewState = previewState,
+                        tvFocusMode = tvFocusMode,
                         onClick = {
                             TtsVoicePreviewPlayer.togglePreview(
                                 context = context,
@@ -300,11 +357,13 @@ internal fun TtsSettingsPanel(
     }
 
     LazyColumn(
+        state = mainListState,
         verticalArrangement = Arrangement.spacedBy(6.dp),
         contentPadding = PaddingValues(top = NuvioTheme.spacing.sm, bottom = NuvioTheme.spacing.sm),
         modifier = modifier
             .heightIn(max = 460.dp)
             .fillMaxWidth()
+            .focusGroup()
     ) {
         item(key = "tts_toggle_enable") {
             PlayerPanelRow(
@@ -317,7 +376,7 @@ internal fun TtsSettingsPanel(
                 titleEnd = if (ttsSettings.enabled) "Bật" else "Tắt",
                 selected = ttsSettings.enabled,
                 onClick = { onEvent(PlayerEvent.OnSetTtsEnabled(!ttsSettings.enabled)) },
-                focusRequester = initialFocusRequester
+                focusRequester = enableRowFocusRequester
             )
         }
 
@@ -347,12 +406,14 @@ internal fun TtsSettingsPanel(
                                 subtitle = if (ready) primary.displayName else "${primary.displayName} (Chưa tải - chạm để tải)",
                                 titleEnd = "Chọn ›",
                                 selected = false,
+                                focusRequester = primaryRowFocusRequester,
                                 onClick = { activePicker = VoicePickerTarget.PRIMARY }
                             )
                         }
                         TtsOverlayPreviewButton(
                             voiceId = primary.id,
                             previewState = previewState,
+                            tvFocusMode = tvFocusMode,
                             onClick = {
                                 TtsVoicePreviewPlayer.togglePreview(
                                     context = context,
@@ -380,12 +441,14 @@ internal fun TtsSettingsPanel(
                                 subtitle = if (maleReady) male.displayName else "${male.displayName} (Chưa tải)",
                                 titleEnd = "Chọn ›",
                                 selected = false,
+                                focusRequester = maleRowFocusRequester,
                                 onClick = { activePicker = VoicePickerTarget.MALE }
                             )
                         }
                         TtsOverlayPreviewButton(
                             voiceId = male.id,
                             previewState = previewState,
+                            tvFocusMode = tvFocusMode,
                             onClick = {
                                 TtsVoicePreviewPlayer.togglePreview(
                                     context = context,
@@ -408,12 +471,14 @@ internal fun TtsSettingsPanel(
                                 subtitle = if (femaleReady) female.displayName else "${female.displayName} (Chưa tải)",
                                 titleEnd = "Chọn ›",
                                 selected = false,
+                                focusRequester = femaleRowFocusRequester,
                                 onClick = { activePicker = VoicePickerTarget.FEMALE }
                             )
                         }
                         TtsOverlayPreviewButton(
                             voiceId = female.id,
                             previewState = previewState,
+                            tvFocusMode = tvFocusMode,
                             onClick = {
                                 TtsVoicePreviewPlayer.togglePreview(
                                     context = context,
@@ -432,6 +497,7 @@ internal fun TtsSettingsPanel(
                     valueText = String.format(Locale.US, "%.2fx", ttsSettings.speechSpeed),
                     canDecrease = ttsSettings.speechSpeed > 0.72f,
                     canIncrease = ttsSettings.speechSpeed < 1.48f,
+                    tvFocusMode = tvFocusMode,
                     onDecrease = {
                         val next = (((ttsSettings.speechSpeed - 0.05f) * 20).roundToInt() / 20f).coerceAtLeast(0.7f)
                         onEvent(PlayerEvent.OnSetTtsSpeechSpeed(next))
@@ -449,6 +515,7 @@ internal fun TtsSettingsPanel(
                     valueText = "${ttsSettings.ttsVolumePercent}%",
                     canDecrease = ttsSettings.ttsVolumePercent > 0,
                     canIncrease = ttsSettings.ttsVolumePercent < 150,
+                    tvFocusMode = tvFocusMode,
                     onDecrease = {
                         onEvent(PlayerEvent.OnSetTtsVolumePercent((ttsSettings.ttsVolumePercent - 10).coerceAtLeast(0)))
                     },
@@ -464,6 +531,7 @@ internal fun TtsSettingsPanel(
                     valueText = "${ttsSettings.movieVolumePercent}%",
                     canDecrease = ttsSettings.movieVolumePercent > 0,
                     canIncrease = ttsSettings.movieVolumePercent < 100,
+                    tvFocusMode = tvFocusMode,
                     onDecrease = {
                         onEvent(PlayerEvent.OnSetTtsMovieVolumePercent((ttsSettings.movieVolumePercent - 10).coerceAtLeast(0)))
                     },
@@ -489,7 +557,7 @@ internal fun TtsSettingsPanel(
                     subtitle = if (ttsSettings.preserveTvPassthrough) {
                         "Giữ HDMI AC3/DTS/Atmos (không tự giảm tiếng phim & không tách Nam/Nữ)"
                     } else {
-                        "Tự giải mã PCM để giảm tiếng phim & tách giọng Nam/Nữ chính xác"
+                        "Tắt Passthrough để giải mã PCM để giảm tiếng phim & tách giọng Nam/Nữ"
                     },
                     titleEnd = if (ttsSettings.preserveTvPassthrough) "Giữ HDMI" else "PCM Mix",
                     selected = ttsSettings.preserveTvPassthrough,
@@ -506,9 +574,25 @@ private fun TtsValueStepperRow(
     valueText: String,
     canDecrease: Boolean,
     canIncrease: Boolean,
+    tvFocusMode: Boolean,
     onDecrease: () -> Unit,
     onIncrease: () -> Unit
 ) {
+    val decreaseFocusRequester = remember { FocusRequester() }
+    val increaseFocusRequester = remember { FocusRequester() }
+    var decreaseFocused by remember { mutableStateOf(false) }
+    var increaseFocused by remember { mutableStateOf(false) }
+
+    // Keep TV focus inside the stepper if a boundary becomes disabled while focused.
+    LaunchedEffect(canDecrease, canIncrease, tvFocusMode) {
+        if (!tvFocusMode) return@LaunchedEffect
+        if (!canDecrease && decreaseFocused && canIncrease) {
+            increaseFocusRequester.requestFocusAfterFrames(1)
+        } else if (!canIncrease && increaseFocused && canDecrease) {
+            decreaseFocusRequester.requestFocusAfterFrames(1)
+        }
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -538,11 +622,22 @@ private fun TtsValueStepperRow(
                 colors = IconButtonDefaults.colors(
                     containerColor = NuvioColors.BackgroundCard,
                     contentColor = NuvioColors.TextPrimary,
-                    focusedContainerColor = NuvioColors.FocusBackground,
-                    focusedContentColor = NuvioColors.Primary
+                    focusedContainerColor = Color.White,
+                    focusedContentColor = Color.Black
+                ),
+                border = IconButtonDefaults.border(
+                    focusedBorder = if (tvFocusMode) {
+                        Border(border = BorderStroke(2.dp, Color.White), shape = CircleShape)
+                    } else {
+                        Border.None
+                    }
                 ),
                 shape = IconButtonDefaults.shape(shape = CircleShape),
-                modifier = Modifier.size(34.dp)
+                modifier = Modifier
+                    .size(34.dp)
+                    .focusRequester(decreaseFocusRequester)
+                    .nuvioV2Focus(decreaseFocused && tvFocusMode, CircleShape, stationary = true)
+                    .onFocusChanged { decreaseFocused = it.isFocused }
             ) {
                 Icon(Icons.Default.Remove, contentDescription = "Giảm $label", modifier = Modifier.size(16.dp))
             }
@@ -552,11 +647,22 @@ private fun TtsValueStepperRow(
                 colors = IconButtonDefaults.colors(
                     containerColor = NuvioColors.BackgroundCard,
                     contentColor = NuvioColors.TextPrimary,
-                    focusedContainerColor = NuvioColors.FocusBackground,
-                    focusedContentColor = NuvioColors.Primary
+                    focusedContainerColor = Color.White,
+                    focusedContentColor = Color.Black
+                ),
+                border = IconButtonDefaults.border(
+                    focusedBorder = if (tvFocusMode) {
+                        Border(border = BorderStroke(2.dp, Color.White), shape = CircleShape)
+                    } else {
+                        Border.None
+                    }
                 ),
                 shape = IconButtonDefaults.shape(shape = CircleShape),
-                modifier = Modifier.size(34.dp)
+                modifier = Modifier
+                    .size(34.dp)
+                    .focusRequester(increaseFocusRequester)
+                    .nuvioV2Focus(increaseFocused && tvFocusMode, CircleShape, stationary = true)
+                    .onFocusChanged { increaseFocused = it.isFocused }
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Tăng $label", modifier = Modifier.size(16.dp))
             }
@@ -568,6 +674,7 @@ private fun TtsValueStepperRow(
 private fun TtsOverlayPreviewButton(
     voiceId: String,
     previewState: TtsVoicePreviewState,
+    tvFocusMode: Boolean,
     onClick: () -> Unit
 ) {
     val isActive = previewState.activeVoiceId == voiceId
@@ -578,17 +685,29 @@ private fun TtsOverlayPreviewButton(
         isPlaying -> "Dừng"
         else -> "Nghe thử"
     }
+    var isFocused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(10.dp)
     Button(
         onClick = onClick,
-        shape = ButtonDefaults.shape(shape = RoundedCornerShape(10.dp)),
+        shape = ButtonDefaults.shape(shape = shape),
         colors = ButtonDefaults.colors(
             containerColor = if (isPlaying) NuvioColors.Secondary.copy(alpha = 0.30f) else Color.White.copy(alpha = 0.14f),
             contentColor = Color.White,
-            focusedContainerColor = NuvioColors.FocusBackground,
-            focusedContentColor = NuvioColors.Primary
+            focusedContainerColor = Color.White,
+            focusedContentColor = Color.Black
+        ),
+        border = ButtonDefaults.border(
+            focusedBorder = if (tvFocusMode) {
+                Border(border = BorderStroke(2.dp, Color.White), shape = shape)
+            } else {
+                Border.None
+            }
         ),
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-        modifier = Modifier.defaultMinSize(minWidth = 74.dp, minHeight = 36.dp)
+        modifier = Modifier
+            .defaultMinSize(minWidth = 74.dp, minHeight = 36.dp)
+            .nuvioV2Focus(isFocused && tvFocusMode, shape, stationary = true)
+            .onFocusChanged { isFocused = it.isFocused }
     ) {
         Icon(
             imageVector = if (isPlaying) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
