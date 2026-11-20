@@ -69,9 +69,9 @@ class PlaybackPositionRowTest {
         assertEquals("Movie Name", playerHeaderDisplayTitle(movieState))
     }
 
-    @Test fun `formatSubtitleDelay matches millisecond delay display in seconds`() {
-        assertEquals("+0.000s", formatSubtitleDelay(0))
-        assertEquals("+0.100s", formatSubtitleDelay(SUBTITLE_DELAY_STEP_MS))
-        assertEquals("-0.200s", formatSubtitleDelay(-2 * SUBTITLE_DELAY_STEP_MS))
+    @Test fun `formatSubtitleDelaySeconds matches millisecond delay display in seconds`() {
+        assertEquals("+0.000s", formatSubtitleDelaySeconds(0))
+        assertEquals("+0.100s", formatSubtitleDelaySeconds(SUBTITLE_DELAY_STEP_MS))
+        assertEquals("-0.200s", formatSubtitleDelaySeconds(-2 * SUBTITLE_DELAY_STEP_MS))
     }
 }

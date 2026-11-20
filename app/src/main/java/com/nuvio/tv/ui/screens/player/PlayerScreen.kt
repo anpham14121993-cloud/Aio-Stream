@@ -4993,7 +4993,7 @@ private fun SubtitleDelayOverlay(
                 color = Color.White
             )
             Text(
-                text = formatSubtitleDelay(subtitleDelayMs).keepLtr(),
+                text = formatSubtitleDelaySeconds(subtitleDelayMs).keepLtr(),
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.White.copy(alpha = 0.95f)
             )

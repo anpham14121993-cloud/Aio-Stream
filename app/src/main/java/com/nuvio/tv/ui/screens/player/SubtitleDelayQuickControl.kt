@@ -64,7 +64,7 @@ import java.util.Locale
 private const val SUBTITLE_DELAY_HOLD_MS = 500L
 
 /** Formats subtitle delay matching the SubtitleDelayOverlay (+0.000s / -0.100s). */
-internal fun formatSubtitleDelay(delayMs: Int): String {
+internal fun formatSubtitleDelaySeconds(delayMs: Int): String {
     return String.format(Locale.US, "%+.3fs", delayMs / 1000f)
 }
 
@@ -103,7 +103,7 @@ internal fun SubtitleDelayQuickControl(
 ) {
     val v2 = LocalV2Appearance.current != null
     val haptic = LocalHapticFeedback.current
-    val delayText = formatSubtitleDelay(delayMs)
+    val delayText = formatSubtitleDelaySeconds(delayMs)
     val valueDescription = stringResource(R.string.player_subtitle_delay_value_cd, delayText)
 
     var minusFocused by remember { mutableStateOf(false) }
