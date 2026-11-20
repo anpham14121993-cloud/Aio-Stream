@@ -3,7 +3,6 @@ name: Build AioStream Universal APK
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -14,7 +13,7 @@ permissions:
 
 concurrency:
   group: aiostream-ci-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: true
 
 jobs:
   build-universal-apk:
@@ -26,54 +25,122 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Reuse verified APK from matching commit build
-        id: reuse_apk
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Resolve release version & tag
+        id: resolve_version
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          set -euo pipefail
-          mkdir -p dist
-          existing_run_id="$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=${{ github.sha }}&status=completed&per_page=20" \
-            --jq '[.workflow_runs[] | select(.id != '"${{ github.run_id }}"' and .conclusion == "success" and (.event == "push" or .event == "workflow_dispatch") and .path == ".github/workflows/build-apk.yml")] | .[0].id // ""')"
-          if [[ -n "${existing_run_id}" ]]; then
-            echo "Reusing passing build run ${existing_run_id} for commit ${{ github.sha }}..."
-            if gh run download "${existing_run_id}" --name AioStream-universal-release --dir dist; then
-              downloaded_apk="$(find dist -maxdepth 3 -name '*.apk' | head -n 1)"
-              if [[ -n "${downloaded_apk}" && -f "${downloaded_apk}" ]]; then
-                if [[ "${downloaded_apk}" != "dist/AioStream-universal-release.apk" ]]; then
-                  mv "${downloaded_apk}" dist/AioStream-universal-release.apk
-                fi
-                python3 scripts/verify_native_apk.py dist/AioStream-universal-release.apk --universal
-                ls -lh dist/AioStream-universal-release.apk
-                echo "reused=true" >> "${GITHUB_OUTPUT}"
-                exit 0
-              fi
-            fi
-          fi
-          rm -rf dist/*
-          echo "reused=false" >> "${GITHUB_OUTPUT}"
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.request
+
+          with open("app/build.gradle.kts", "r", encoding="utf-8") as f:
+              gradle_txt = f.read()
+
+          code_m = re.search(r'arcVersionCode"\).*?:\s*(\d+)', gradle_txt)
+          name_m = re.search(r'arcVersionName"\).*?:\s*"([^"]+)"', gradle_txt)
+          base_code = int(code_m.group(1)) if code_m else 10010
+          base_name = name_m.group(1).strip() if name_m else "1.0.10"
+
+          def parse_ver(raw):
+              m = re.match(r'^v?(\d+)\.(\d+)\.(\d+)$', raw.strip())
+              if not m:
+                  return None
+              return tuple(int(x) for x in m.groups())
+
+          base_ver = parse_ver(base_name) or (1, 0, 10)
+
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/releases?per_page=30",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "User-Agent": "AioStream-CI",
+              },
+          )
+          releases = []
+          try:
+              with urllib.request.urlopen(req, timeout=20) as resp:
+                  releases = json.loads(resp.read().decode("utf-8"))
+          except Exception as exc:
+              print(f"Warning: failed to query existing releases ({exc}), falling back to build.gradle.kts")
+
+          existing_tags = set()
+          try:
+              tag_req = urllib.request.Request(
+                  f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/tags?per_page=30",
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                      "User-Agent": "AioStream-CI",
+                  },
+              )
+              with urllib.request.urlopen(tag_req, timeout=20) as resp:
+                  for t in json.loads(resp.read().decode("utf-8")):
+                      tname = (t.get("name") or "").strip()
+                      if tname:
+                          existing_tags.add(tname)
+          except Exception as exc:
+              print(f"Warning: failed to query existing tags ({exc})")
+
+          max_ver = (0, 0, 0)
+          max_code = 0
+          code_comment_re = re.compile(r'<!--\s*nuvio-fork-version-code:\s*(\d+)\s*-->')
+
+          for rel in releases:
+              tag = (rel.get("tag_name") or "").strip()
+              if tag:
+                  existing_tags.add(tag)
+              v = parse_ver(tag)
+              if v and v > max_ver:
+                  max_ver = v
+              body = rel.get("body") or ""
+              cm = code_comment_re.search(body)
+              if cm:
+                  max_code = max(max_code, int(cm.group(1)))
+              elif v:
+                  max_code = max(max_code, v[0] * 10000 + v[1] * 100 + v[2])
+
+          if base_ver > max_ver and f"v{base_name}" not in existing_tags:
+              ver = base_ver
+              code = max(base_code, max_code + 1)
+          else:
+              top = max(max_ver, base_ver)
+              candidate = (top[0], top[1], top[2] + 1)
+              while f"v{candidate[0]}.{candidate[1]}.{candidate[2]}" in existing_tags:
+                  candidate = (candidate[0], candidate[1], candidate[2] + 1)
+              ver = candidate
+              code = max(max_code + 1, base_code + 1, ver[0] * 10000 + ver[1] * 100 + ver[2])
+
+          version_name = f"{ver[0]}.{ver[1]}.{ver[2]}"
+          tag = f"v{version_name}"
+          print(f"Resolved single-build release: tag={tag}, versionName={version_name}, versionCode={code}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"tag={tag}\n")
+              out.write(f"version_name={version_name}\n")
+              out.write(f"version_code={code}\n")
+          PY
 
       - name: Set up JDK 17
-        if: steps.reuse_apk.outputs.reused != 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Gradle
-        if: steps.reuse_apk.outputs.reused != 'true'
         uses: gradle/actions/setup-gradle@v4
 
       - name: Install Android NDK 29.0.14206865 & SDK 36
-        if: steps.reuse_apk.outputs.reused != 'true'
         run: |
           SDK_MANAGER="$(command -v sdkmanager || find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager | sort -V | tail -n 1)"
           yes | "${SDK_MANAGER}" --licenses >/dev/null || true
           "${SDK_MANAGER}" "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
 
       - name: Prepare build properties and signing config
-        if: steps.reuse_apk.outputs.reused != 'true'
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.AIOSTREAM_KEYSTORE_BASE64 }}
           RELEASE_KEY_ALIAS: ${{ secrets.AIOSTREAM_KEY_ALIAS }}
@@ -115,10 +182,11 @@ jobs:
           fi
 
       - name: Run AioStream core & modified unit test suites
-        if: steps.reuse_apk.outputs.reused != 'true'
         timeout-minutes: 20
         run: |
           ./gradlew :app:testFullDebugUnitTest \
+            -ParcVersionName="${{ steps.resolve_version.outputs.version_name }}" \
+            -ParcVersionCode="${{ steps.resolve_version.outputs.version_code }}" \
             --tests 'com.nuvio.tv.data.repository.MDBListRepositoryTest' \
             --tests 'com.nuvio.tv.data.local.*' \
             --tests 'com.nuvio.tv.domain.model.*' \
@@ -143,15 +211,17 @@ jobs:
             --stacktrace
 
       - name: Build Universal Release APK (armeabi-v7a + arm64-v8a)
-        if: steps.reuse_apk.outputs.reused != 'true'
         timeout-minutes: 45
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           MDBLIST_API_KEY: ${{ secrets.MDBLIST_API_KEY }}
-        run: ./gradlew :app:assembleFullRelease --stacktrace
+        run: |
+          ./gradlew :app:assembleFullRelease \
+            -ParcVersionName="${{ steps.resolve_version.outputs.version_name }}" \
+            -ParcVersionCode="${{ steps.resolve_version.outputs.version_code }}" \
+            --stacktrace
 
       - name: Verify Universal APK native libraries & rename output
-        if: steps.reuse_apk.outputs.reused != 'true'
         run: |
           mkdir -p dist
           apk_path="$(find app/build/outputs/apk/full/release -maxdepth 2 -name '*.apk' | head -n 1)"
@@ -165,7 +235,6 @@ jobs:
           ls -lh dist/AioStream-universal-release.apk
 
       - name: Upload Universal APK artifact
-        if: steps.reuse_apk.outputs.reused != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: AioStream-universal-release
@@ -173,9 +242,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish GitHub Release on version tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/AioStream-universal-release.apk
-          generate_release_notes: true
+      - name: Publish GitHub Release for auto-update
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.resolve_version.outputs.tag }}"
+          CODE="${{ steps.resolve_version.outputs.version_code }}"
+          NOTES="<!-- nuvio-fork-version-code: ${CODE} -->"
+          gh release create "${TAG}" dist/AioStream-universal-release.apk \
+            --target "${{ github.sha }}" \
+            --title "${TAG}" \
+            --notes "${NOTES}" \
+            --generate-notes
