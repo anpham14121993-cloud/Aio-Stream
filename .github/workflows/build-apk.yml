@@ -92,6 +92,8 @@ jobs:
             --tests 'com.nuvio.tv.ui.screens.settings.*' \
             --tests 'com.nuvio.tv.ui.screens.player.MobilePlayerAspectPolicyTest' \
             --tests 'com.nuvio.tv.ui.screens.player.TunneledSurfaceResizeModeTest' \
+            --tests 'com.nuvio.tv.ui.screens.player.PlaybackPositionRowTest' \
+            --tests 'com.nuvio.tv.ui.screens.player.PlayerControlDeckGeometryTest' \
             --tests 'com.nuvio.tv.core.sync.ProfileSettingsCredentialPolicyTest' \
             --tests 'com.nuvio.tv.core.sync.ProfileSettingsSubtitleLanguageSyncTest' \
             --tests 'com.nuvio.tv.core.backup.BackupCatalogTest' \

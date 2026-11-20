@@ -171,21 +171,12 @@ internal fun PlayerCustomControls(
     val fallback = layout.focusFallback(focus.lastFocused, deckAvailable)
     val scope = rememberCoroutineScope()
     val recoveryFocus = if (hasSeekTimeline) progressFocus else containerFocus
-    var rowHeight by remember { mutableIntStateOf(0) }
-    val bottomPadding = if (v2) 24.dp else 48.dp
-    val bottomFraction = viewModel.controller.videoBottomFractionState.value
-    val band = bottomFraction?.takeIf { it > .5f && it < .995f && root.height > 0 }?.let {
-        with(density) { ((1f - it) * root.height).toDp() }
-    }
-    val gap = if (band != null && band >= 64.dp && rowHeight > 0 &&
-        state.resizeMode == androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT) {
-        (band - with(density) { rowHeight.toDp() } - bottomPadding).coerceAtLeast(8.dp)
-    } else 8.dp
     val panelVisible = state.showStreamInfoOverlay || state.showEpisodesPanel || state.showChaptersPanel ||
         state.showSourcesPanel || state.showAudioOverlay || state.showSubtitleOverlay || state.showSubtitleStylePanel ||
         state.showSubtitleTimingDialog || state.showSubtitleDelayOverlay || state.showSpeedDialog ||
         state.showPartyPanel || state.postPlayMode is PostPlayMode.StillWatching
     val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
+    var delayQuickControlFocused by remember { mutableStateOf(false) }
     LaunchedEffect(focus.requestGeneration, layout, deckAvailable, state.showMoreDialog, hasSeekTimeline, panelVisible, tvFocusMode) {
         if (focus.requestGeneration == 0) return@LaunchedEffect
         if (panelVisible || !tvFocusMode) { focus.requestGeneration = 0; return@LaunchedEffect }
@@ -199,7 +190,8 @@ internal fun PlayerCustomControls(
         focus.requestGeneration = 0
     }
     // Capture before removing the focused target can clear the group's focus state.
-    val needsRecovery = tvFocusMode && !warming && state.showControls && !state.showMoreDialog && focus.buttonFocused && focus.lastFocused !in order
+    val needsRecovery = tvFocusMode && !warming && state.showControls && !state.showMoreDialog &&
+        focus.buttonFocused && !delayQuickControlFocused && focus.lastFocused !in order
     SideEffect { if (needsRecovery && !panelVisible && focus.requestGeneration == 0) {
         if (PlayerControlAction.MORE in order) focus.pendingReturn = PlayerControlAction.MORE
         focus.restore(layout, deckAvailable)
@@ -215,18 +207,31 @@ internal fun PlayerCustomControls(
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp)
             .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = chromePolicy.backgroundAlpha)))))
         PlayerControlChrome(v2, Modifier.align(Alignment.BottomCenter).verticalScroll(rememberScrollState()),
-            gap = gap,
+            gap = 0.dp,
             title = {
             if (state.activeSkipInterval == null) {
-                val title = state.contentName ?: state.title
                 Text(
-                    text = title,
+                    text = playerHeaderDisplayTitle(state),
                     color = Color.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.hideUnderSeekThumbnails()
                 )
+            }
+            }, subtitle = {
+            if (state.activeSkipInterval == null) {
+                val episodeText = playerHeaderSeasonEpisodeText(state)
+                if (episodeText != null) {
+                    Text(
+                        text = episodeText,
+                        color = Color.White.copy(alpha = 0.9f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.hideUnderSeekThumbnails()
+                    )
+                }
             }
             }, timeline = {
             if (hasSeekTimeline) Box(Modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
@@ -241,10 +246,9 @@ internal fun PlayerCustomControls(
                     warming = warming)
             }
             }, time = {
-            if (hasSeekTimeline) PlayerControlsTimeTextHost(viewModel)
+            if (hasSeekTimeline) PlayerControlsTimeTextHost(viewModel, Modifier.hideUnderSeekThumbnails())
             }, deck = {
             Row(Modifier.fillMaxWidth().onGloballyPositioned {
-                    rowHeight = it.size.height
                     if (!hasSeekTimeline && root.height > 0) onSkipAnchorChanged(with(density) {
                         (root.height - it.positionInRoot().y).toDp() + 8.dp
                     })
@@ -262,7 +266,16 @@ internal fun PlayerCustomControls(
                     },
                     upFocus = if (hasSeekTimeline) progressFocus else progressUpFocus ?: containerFocus,
                     onBottom = actions.hide, onClick = ::invoke,
-                    onFocused = { focus.lastFocused = it; actions.interaction() }, modifier = Modifier.weight(1f))
+                    onFocused = { focus.lastFocused = it; actions.interaction() },
+                    subtitleDelayControl = SubtitleDelayDeckConfig(
+                        delayMs = state.subtitleDelayMs,
+                        onAdjustDelay = actions.adjustSubtitleDelay,
+                        onResetDelay = actions.resetSubtitleDelay,
+                        onOpenTimingDialog = actions.openSubtitleTimingDialog,
+                        onInteraction = actions.interaction,
+                        onFocusedChanged = { delayQuickControlFocused = it }
+                    ),
+                    modifier = Modifier.weight(1f))
             }
             if (reportCodeVisible && !state.playbackIssueReportId.isNullOrBlank()) Text(
                 state.playbackIssueReportId, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis,

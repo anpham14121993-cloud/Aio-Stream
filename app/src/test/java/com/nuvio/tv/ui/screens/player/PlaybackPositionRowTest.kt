@@ -43,4 +43,35 @@ class PlaybackPositionRowTest {
         val compact = visibleStatsSections(sections, compact = true)
         assertEquals(listOf("Position", "Video", "Buffer"), compact.flatMap { it.rows }.map { it.label })
     }
+
+    @Test fun `formatElapsedDuration formats elapsed over duration cleanly`() {
+        assertEquals("4:05 / 42:30", formatElapsedDuration(245_000L, 2_550_000L))
+        assertEquals("1:02:15 / 2:10:14", formatElapsedDuration(3_735_000L, 7_814_000L))
+        assertEquals("0:00", formatElapsedDuration(0L, 0L))
+        assertEquals("4:05", formatElapsedDuration(245_000L, 2_550_000L, isLive = true))
+    }
+
+    @Test fun `playerHeaderDisplayTitle uses series contentName when episode metadata is present`() {
+        val episodeState = PlayerUiState(
+            title = "Episode Name",
+            contentName = "Series Name",
+            currentSeason = 2,
+            currentEpisode = 5
+        )
+        assertEquals("Series Name", playerHeaderDisplayTitle(episodeState))
+
+        val movieState = PlayerUiState(
+            title = "Movie Name",
+            contentName = "Ignored Content Name",
+            currentSeason = null,
+            currentEpisode = null
+        )
+        assertEquals("Movie Name", playerHeaderDisplayTitle(movieState))
+    }
+
+    @Test fun `formatSubtitleDelay matches millisecond delay display in seconds`() {
+        assertEquals("+0.000s", formatSubtitleDelay(0))
+        assertEquals("+0.100s", formatSubtitleDelay(SUBTITLE_DELAY_STEP_MS))
+        assertEquals("-0.200s", formatSubtitleDelay(-2 * SUBTITLE_DELAY_STEP_MS))
+    }
 }

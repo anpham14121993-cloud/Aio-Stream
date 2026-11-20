@@ -70,7 +70,10 @@ data class V2PlayerActions(
     val more: () -> Unit, val external: () -> Unit, val info: () -> Unit,
     val stats: () -> Unit, val interaction: () -> Unit, val hide: () -> Unit,
     val party: () -> Unit = {},
-    val chapters: () -> Unit = {}
+    val chapters: () -> Unit = {},
+    val adjustSubtitleDelay: (Int) -> Unit = {},
+    val resetSubtitleDelay: () -> Unit = {},
+    val openSubtitleTimingDialog: (fromKeyDown: Boolean) -> Unit = {}
 )
 
 private data class Utility(val id: V2PlayerControl, val icon: ImageVector, val label: String, val action: () -> Unit, val panel: Boolean = false, val enabled: Boolean = true)
@@ -123,7 +126,7 @@ fun V2PlayerControls(
             .fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (uiState.activeSkipInterval == null) {
                 Text(
-                    text = uiState.contentName ?: uiState.title,
+                    text = playerHeaderDisplayTitle(uiState),
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
@@ -135,8 +138,14 @@ fun V2PlayerControls(
             }
             Column(Modifier.fillMaxWidth()
                 .then(if (deck) Modifier.nuvioGlass(GlassRole.CONTROL, shape = RoundedCornerShape(12.dp)) else Modifier)
-                .padding(horizontal = 12.dp, vertical = if (deck) 8.dp else 4.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                .padding(start = 12.dp, end = 12.dp, top = if (deck) 8.dp else 0.dp, bottom = if (deck) 8.dp else 4.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                PlayerTimelineHeaderRow(
+                    state = uiState,
+                    viewModel = viewModel,
+                    hasSeekTimeline = true,
+                    modifier = Modifier.hideUnderSeekThumbnails()
+                )
                 Box(Modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
                     onSkipAnchorChanged(with(density) { (view.height - coordinates.positionInRoot().y).toDp() } + 12.dp)
                 }) {
@@ -144,19 +153,35 @@ fun V2PlayerControls(
                         upFocusRequester = progressUpFocus ?: FocusRequester.Cancel,
                         downFocusRequester = playFocus, onFocused = actions.interaction, onClick = actions.playPause)
                 }
-                PlayerControlsTimeTextHost(viewModel)
-                Spacer(Modifier.height(if (deck) 4.dp else 8.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val showNextEpisode = uiState.nextEpisode?.hasAired == true &&
+                        (uiState.postPlayMode as? PostPlayMode.AutoPlay)?.let { !it.searching && it.countdownSec == null } != false
+                    val nextEpisodeFocus = remember { FocusRequester() }
+                    val delayMinusFocus = remember { FocusRequester() }
+                    val delayPlusFocus = remember { FocusRequester() }
                     V2TransportButton(if (uiState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         stringResource(if (uiState.isPlaying) R.string.player_pill_pause else R.string.player_pill_play),
                         playFocus, progressFocus, deck, actions.playPause, actions)
                     V2TransportButton(Icons.Default.RestartAlt, stringResource(R.string.player_pill_restart),
                         focus.target(V2PlayerControl.RESTART), progressFocus, false, actions.seekToStart, actions)
-                    if (uiState.nextEpisode?.hasAired == true && (uiState.postPlayMode as? PostPlayMode.AutoPlay)?.let { !it.searching && it.countdownSec == null } != false) {
+                    if (showNextEpisode) {
                         V2TransportButton(Icons.Default.SkipNext, stringResource(R.string.player_pill_next_episode),
-                            remember { FocusRequester() }, progressFocus, false, actions.playNext, actions)
+                            nextEpisodeFocus, progressFocus, false, actions.playNext, actions)
                     }
+                    SubtitleDelayQuickControl(
+                        delayMs = uiState.subtitleDelayMs,
+                        onAdjustDelay = actions.adjustSubtitleDelay,
+                        onResetDelay = actions.resetSubtitleDelay,
+                        onOpenTimingDialog = actions.openSubtitleTimingDialog,
+                        onInteraction = actions.interaction,
+                        upFocusRequester = progressFocus,
+                        leftFocusRequester = if (showNextEpisode) nextEpisodeFocus else focus.target(V2PlayerControl.RESTART),
+                        rightFocusRequester = statsFocus,
+                        onBottom = actions.hide,
+                        minusFocusRequester = delayMinusFocus,
+                        plusFocusRequester = delayPlusFocus
+                    )
                     Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                         UtilityRow(if (uiState.showMoreDialog) utilities.dropLast(1) + more + utilities.last() else utilities,
                             focus, statsFocus, progressFocus, actions)

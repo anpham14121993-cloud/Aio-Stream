@@ -14,6 +14,7 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.*
@@ -67,9 +68,14 @@ internal fun PlayerControlDeck(
     onFocusLost: (PlayerControlAction) -> Unit = {},
     onSelectKey: ((PlayerControlAction, KeyEvent) -> Boolean)? = null,
     onPlan: (PlayerControlDeckPlan) -> Unit = {},
+    subtitleDelayControl: SubtitleDelayDeckConfig? = null,
     modifier: Modifier = Modifier
 ) {
     var plan by remember { mutableStateOf(PlayerControlDeckPlan(emptyList(), 0, 0, 0, null)) }
+    val showDelayAccessory = subtitleDelayControl != null && !preview
+    val delayMinusFocus = remember { FocusRequester() }
+    val delayValueFocus = remember { FocusRequester() }
+    val delayPlusFocus = remember { FocusRequester() }
 
     val v2 = LocalV2Appearance.current != null
     val deckAvailable = playerControlDeckAvailable(layout, available, false)
@@ -94,8 +100,16 @@ internal fun PlayerControlDeck(
                 }
                 .focusProperties {
                     canFocus = enabled
-                    left = plan.neighbour(action, PlayerControlDirection.LEFT)?.let(targets) ?: FocusRequester.Cancel
-                    right = plan.neighbour(action, PlayerControlDirection.RIGHT)?.let(targets) ?: FocusRequester.Cancel
+                    left = if (showDelayAccessory && action == plan.leftAccessoryRightNeighbour) {
+                        delayPlusFocus
+                    } else {
+                        plan.neighbour(action, PlayerControlDirection.LEFT)?.let(targets) ?: FocusRequester.Cancel
+                    }
+                    right = if (showDelayAccessory && action == plan.leftAccessoryLeftNeighbour) {
+                        delayMinusFocus
+                    } else {
+                        plan.neighbour(action, PlayerControlDirection.RIGHT)?.let(targets) ?: FocusRequester.Cancel
+                    }
                     up = plan.neighbour(action, PlayerControlDirection.UP)?.let(targets) ?: upFocus ?: FocusRequester.Cancel
                     down = plan.neighbour(action, PlayerControlDirection.DOWN)?.let(targets) ?: FocusRequester.Cancel
                 }.onPreviewKeyEvent { event ->
@@ -126,18 +140,56 @@ internal fun PlayerControlDeck(
             Text(menuLabel, color = Color.White.copy(alpha = .65f), style = MaterialTheme.typography.labelSmall,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
+        if (showDelayAccessory && subtitleDelayControl != null) {
+            SubtitleDelayQuickControl(
+                delayMs = subtitleDelayControl.delayMs,
+                onAdjustDelay = subtitleDelayControl.onAdjustDelay,
+                onResetDelay = subtitleDelayControl.onResetDelay,
+                onOpenTimingDialog = subtitleDelayControl.onOpenTimingDialog,
+                onInteraction = subtitleDelayControl.onInteraction,
+                enabled = enabled,
+                upFocusRequester = upFocus,
+                leftFocusRequester = plan.leftAccessoryLeftNeighbour?.let(targets),
+                rightFocusRequester = plan.leftAccessoryRightNeighbour?.let(targets),
+                onBottom = onBottom,
+                minusFocusRequester = delayMinusFocus,
+                valueFocusRequester = delayValueFocus,
+                plusFocusRequester = delayPlusFocus,
+                onFocusedChanged = subtitleDelayControl.onFocusedChanged
+            )
+        }
     }) { measurables, constraints ->
         val width = constraints.maxWidth.takeUnless { it == Constraints.Infinity } ?: constraints.minWidth
         val gapPx = gap.roundToPx(); val region = ((width - gapPx * 2).coerceAtLeast(0) / 3)
         val placeables = actions.indices.associate { index -> actions[index] to measurables[index].measure(Constraints(maxWidth = region)) }
-        val sectionWidth = (width - gapPx.coerceAtMost(width / 2)).coerceAtLeast(0) / 2
-        val label = if (preview) measurables[actions.size].measure(Constraints(maxWidth = sectionWidth)) else null
-        val menuLabelPlaceable = if (preview) measurables[actions.size + 1].measure(Constraints(maxWidth = sectionWidth)) else null
+        val label = if (preview) {
+            val sectionWidth = (width - gapPx.coerceAtMost(width / 2)).coerceAtLeast(0) / 2
+            measurables[actions.size].measure(Constraints(maxWidth = sectionWidth))
+        } else null
+        val menuLabelPlaceable = if (preview) {
+            val sectionWidth = (width - gapPx.coerceAtMost(width / 2)).coerceAtLeast(0) / 2
+            measurables[actions.size + 1].measure(Constraints(maxWidth = sectionWidth))
+        } else null
+        val accessoryPlaceable = if (showDelayAccessory) {
+            measurables[actions.size].measure(Constraints(maxWidth = width))
+        } else null
         val labelHeight = maxOf(label?.height ?: 0, menuLabelPlaceable?.height ?: 0) + gapPx
-        val next = playerControlPrimaryDeckPlan(layout, available, placeables.mapValues { PlayerControlDeckSize(it.value.width, it.value.height) }, width, gapPx, preview, labelHeight)
+        val next = playerControlPrimaryDeckPlan(
+            layout = layout,
+            available = available,
+            sizes = placeables.mapValues { PlayerControlDeckSize(it.value.width, it.value.height) },
+            width = width,
+            gap = gapPx,
+            preview = preview,
+            labelHeight = labelHeight,
+            leftAccessorySize = accessoryPlaceable?.let { PlayerControlDeckSize(it.width, it.height) }
+        )
         if (plan != next) { plan = next; onPlan(next) }
         this.layout(width, constraints.constrainHeight(next.height)) {
             for (cell in next.cells) placeables.getValue(cell.action).place(cell.x, cell.y)
+            next.leftAccessoryBounds?.let { bounds ->
+                accessoryPlaceable?.place(bounds.x, bounds.y)
+            }
             if (next.hiddenLabelY != null) label?.place(0, next.hiddenLabelY)
             if (next.moreLabelY != null) menuLabelPlaceable?.place(width - menuLabelPlaceable.width, next.moreLabelY)
         }
@@ -146,8 +198,8 @@ internal fun PlayerControlDeck(
 
 @Composable
 internal fun PlayerControlChrome(v2: Boolean, modifier: Modifier = Modifier, rightInset: Dp = 0.dp,
-    gap: Dp = 4.dp, title: @Composable () -> Unit, timeline: @Composable () -> Unit,
-    time: @Composable () -> Unit, deck: @Composable () -> Unit) {
+    gap: Dp = 0.dp, title: @Composable () -> Unit, subtitle: @Composable () -> Unit = {},
+    timeline: @Composable () -> Unit, time: @Composable () -> Unit, deck: @Composable () -> Unit) {
     val isHandheld = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current != com.nuvio.tv.ui.monolith.DeviceFormFactor.TV
     val chromeModifier = if (isHandheld) {
         modifier
@@ -165,10 +217,28 @@ internal fun PlayerControlChrome(v2: Boolean, modifier: Modifier = Modifier, rig
             appearance?.visualStyle == com.nuvio.tv.domain.model.VisualStyle.CINEMATIC_GLASS).showDeckPanel
         Column(Modifier.fillMaxWidth()
             .then(if (panel) Modifier.nuvioGlass(GlassRole.CONTROL, shape = RoundedCornerShape(12.dp)) else Modifier)
-            .then(if (v2) Modifier.padding(horizontal = 12.dp, vertical = if (panel) 8.dp else 4.dp) else Modifier),
-            verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) { timeline(); time() }
-            Spacer(Modifier.height(gap)); deck()
+            .then(
+                if (v2) Modifier.padding(
+                    start = 12.dp,
+                    end = 12.dp,
+                    top = if (panel) 8.dp else 0.dp,
+                    bottom = if (panel) 8.dp else 4.dp
+                ) else Modifier
+            ),
+            verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.weight(1f).padding(end = 12.dp)) { subtitle() }
+                    time()
+                }
+                timeline()
+            }
+            if (gap > 0.dp) Spacer(Modifier.height(gap))
+            deck()
         }
     }
 }

@@ -113,4 +113,61 @@ class PlayerControlDeckGeometryTest {
             assertEquals(all,preview.cells.map { it.action }.toSet());assertEquals(runtime.cells,preview.cells.filterNot { it.hidden })
         }
     }
+
+    @Test fun `left accessory sits beside next episode and updates height and neighbours`() {
+        val l = PlayerControlLayout.original(true)
+        val accessory = PlayerControlDeckSize(width = 110, height = 36)
+        val p = playerControlDeckPlan(
+            layout = l,
+            available = all,
+            sizes = sizes(width = 36, height = 24),
+            width = 900,
+            requestedGap = 10,
+            showHidden = false,
+            hiddenLabelHeight = 15,
+            moreExpanded = false,
+            leftAccessorySize = accessory
+        )
+        val nextCell = p.cell(PlayerControlAction.NEXT_EPISODE)
+        val accBounds = p.leftAccessoryBounds
+        assertNotNull(accBounds)
+        assertEquals(nextCell.x + nextCell.width + 10, accBounds!!.x)
+        assertEquals(0, accBounds.y)
+        assertEquals(36, accBounds.height)
+        assertEquals(36, p.mainHeight)
+        assertEquals(PlayerControlAction.NEXT_EPISODE, p.leftAccessoryLeftNeighbour)
+        assertEquals(PlayerControlAction.STATS, p.leftAccessoryRightNeighbour)
+    }
+
+    @Test fun `left accessory falls back to restart when next episode is absent and wraps cleanly on narrow width`() {
+        val l = PlayerControlLayout.original(true)
+        val noNext = all - PlayerControlAction.NEXT_EPISODE
+        val wide = playerControlDeckPlan(
+            layout = l,
+            available = noNext,
+            sizes = sizes(width = 36, height = 24),
+            width = 900,
+            requestedGap = 10,
+            showHidden = false,
+            hiddenLabelHeight = 15,
+            moreExpanded = false,
+            leftAccessorySize = PlayerControlDeckSize(100, 24)
+        )
+        assertEquals(PlayerControlAction.RESTART, wide.leftAccessoryLeftNeighbour)
+        assertEquals(wide.cell(PlayerControlAction.RESTART).x + 36 + 10, wide.leftAccessoryBounds!!.x)
+
+        val narrow = playerControlDeckPlan(
+            layout = l,
+            available = all,
+            sizes = sizes(width = 40, height = 24),
+            width = 240,
+            requestedGap = 8,
+            showHidden = false,
+            hiddenLabelHeight = 15,
+            moreExpanded = false,
+            leftAccessorySize = PlayerControlDeckSize(90, 24)
+        )
+        val narrowBounds = narrow.leftAccessoryBounds!!
+        assertTrue(narrowBounds.y >= narrow.cell(PlayerControlAction.PLAY_PAUSE).height + 8)
+    }
 }

@@ -4,13 +4,27 @@ import com.nuvio.tv.data.local.*
 import kotlin.math.abs
 
 internal data class PlayerControlDeckSize(val width: Int, val height: Int)
+internal data class PlayerControlDeckBounds(val x: Int, val y: Int, val width: Int, val height: Int)
 /** hidden identifies preview-only placement outside the main deck; brightness uses saved visibility/capability. */
 internal data class PlayerControlDeckCell(val action: PlayerControlAction, val x: Int, val y: Int, val width: Int, val height: Int, val hidden: Boolean) {
     val centreX get() = x + width / 2
     val centreY get() = y + height / 2
 }
 internal enum class PlayerControlDirection { LEFT, RIGHT, UP, DOWN }
-internal data class PlayerControlDeckPlan(val cells: List<PlayerControlDeckCell>, val width: Int, val height: Int, val mainHeight: Int, val hiddenLabelY: Int?, val collapsedActions: Set<PlayerControlAction> = emptySet(), val moreLabelY: Int? = null, val moreLabelX: Int = 0, val previewSectionWidth: Int = 0) {
+internal data class PlayerControlDeckPlan(
+    val cells: List<PlayerControlDeckCell>,
+    val width: Int,
+    val height: Int,
+    val mainHeight: Int,
+    val hiddenLabelY: Int?,
+    val collapsedActions: Set<PlayerControlAction> = emptySet(),
+    val moreLabelY: Int? = null,
+    val moreLabelX: Int = 0,
+    val previewSectionWidth: Int = 0,
+    val leftAccessoryBounds: PlayerControlDeckBounds? = null,
+    val leftAccessoryLeftNeighbour: PlayerControlAction? = null,
+    val leftAccessoryRightNeighbour: PlayerControlAction? = null
+) {
     fun neighbour(action: PlayerControlAction, direction: PlayerControlDirection): PlayerControlAction? {
         val from = cells.firstOrNull { it.action == action } ?: return null
         val horizontal = direction == PlayerControlDirection.LEFT || direction == PlayerControlDirection.RIGHT
@@ -43,7 +57,17 @@ internal fun playerControlDeckAvailable(layout: PlayerControlLayout, available: 
     else available - playerControlCollapsedActions(layout, available)
 
 /** Runtime and preview share measured packing. More's visual anchor is independent of its saved menu boundary. */
-internal fun playerControlDeckPlan(layout: PlayerControlLayout, available: Set<PlayerControlAction>, sizes: Map<PlayerControlAction, PlayerControlDeckSize>, width: Int, requestedGap: Int, showHidden: Boolean, hiddenLabelHeight: Int, moreExpanded: Boolean = true): PlayerControlDeckPlan {
+internal fun playerControlDeckPlan(
+    layout: PlayerControlLayout,
+    available: Set<PlayerControlAction>,
+    sizes: Map<PlayerControlAction, PlayerControlDeckSize>,
+    width: Int,
+    requestedGap: Int,
+    showHidden: Boolean,
+    hiddenLabelHeight: Int,
+    moreExpanded: Boolean = true,
+    leftAccessorySize: PlayerControlDeckSize? = null
+): PlayerControlDeckPlan {
     require(width >= 0 && requestedGap >= 0 && hiddenLabelHeight >= 0)
     require(sizes.values.all { it.width >= 0 && it.height >= 0 })
     val gap = requestedGap.coerceAtMost(width / 2)
@@ -55,6 +79,10 @@ internal fun playerControlDeckPlan(layout: PlayerControlLayout, available: Set<P
     val more = PlayerControlAction.MORE
     val hasMore = visible.values.any { more in it } && sizes.containsKey(more)
     val actions = visible.mapValues { (_, entries) -> entries.filter { it != more } }
+    val leftActions = actions.getValue(PlayerControlGroup.LEFT)
+    val accReserve = if (leftAccessorySize != null) {
+        leftAccessorySize.width.coerceAtLeast(0) + if (leftActions.isEmpty()) 0 else gap
+    } else 0
     fun natural(entries: List<PlayerControlAction>) = entries.sumOf { sizes[it]?.width ?: 0 } + gap * (entries.size - 1).coerceAtLeast(0)
     var leftWidth = region
     var rightWidth = region
@@ -63,7 +91,7 @@ internal fun playerControlDeckPlan(layout: PlayerControlLayout, available: Set<P
     val centreEmpty = actions.getValue(PlayerControlGroup.CENTRE).isEmpty()
     if (centreEmpty) {
         val capacity = (width - gap).coerceAtLeast(0)
-        val leftNeed = natural(actions.getValue(PlayerControlGroup.LEFT))
+        val leftNeed = natural(leftActions) + accReserve
         val rightNeed = natural(actions.getValue(PlayerControlGroup.RIGHT)) +
             if (hasMore) (sizes.getValue(more).width + if (actions.getValue(PlayerControlGroup.RIGHT).isEmpty()) 0 else gap) else 0
         val half = capacity / 2
@@ -98,15 +126,53 @@ internal fun playerControlDeckPlan(layout: PlayerControlLayout, available: Set<P
     val groupRows = actions.mapValues { (group, entries) -> rows(entries, when (group) {
         PlayerControlGroup.LEFT -> leftWidth; PlayerControlGroup.CENTRE -> region; PlayerControlGroup.RIGHT -> rightWidth
     }, if (group == PlayerControlGroup.RIGHT) rightActionWidth else if (group == PlayerControlGroup.LEFT) leftWidth else region) }
-    val mainHeight = maxOf(groupRows.entries.maxOfOrNull { (group, rows) -> blockHeight(rows, hasMore && group == PlayerControlGroup.RIGHT) } ?: 0, if (hasMore) sizes.getValue(more).height else 0)
+
+    val leftRows = groupRows.getValue(PlayerControlGroup.LEFT)
+    val accW = (leftAccessorySize?.width ?: 0).coerceIn(0, leftWidth)
+    val accH = (leftAccessorySize?.height ?: 0).coerceAtLeast(0)
+    var accSameRow = false
+    val leftAccessoryBounds: PlayerControlDeckBounds?
+    val leftBlockHeight: Int
+    if (leftAccessorySize == null) {
+        leftAccessoryBounds = null
+        leftBlockHeight = blockHeight(leftRows)
+    } else if (leftRows.isEmpty()) {
+        leftAccessoryBounds = PlayerControlDeckBounds(0, 0, accW, accH)
+        leftBlockHeight = accH
+    } else {
+        val lastRow = leftRows.last()
+        val lastRowUsed = lastRow.sumOf { sizes.getValue(it).width.coerceIn(0, leftWidth) } + gap * (lastRow.size - 1).coerceAtLeast(0)
+        val yBeforeLast = if (leftRows.size <= 1) 0 else leftRows.dropLast(1).sumOf { rowHeight(it) + gap }
+        if (lastRowUsed + gap + accW <= leftWidth) {
+            accSameRow = true
+            val sharedHeight = maxOf(rowHeight(lastRow), accH)
+            leftAccessoryBounds = PlayerControlDeckBounds(lastRowUsed + gap, yBeforeLast + (sharedHeight - accH) / 2, accW, accH)
+            leftBlockHeight = yBeforeLast + sharedHeight
+        } else {
+            val accY = yBeforeLast + rowHeight(lastRow) + gap
+            leftAccessoryBounds = PlayerControlDeckBounds(0, accY, accW, accH)
+            leftBlockHeight = accY + accH
+        }
+    }
+
+    val mainHeight = maxOf(
+        leftBlockHeight,
+        groupRows.entries.filter { it.key != PlayerControlGroup.LEFT }
+            .maxOfOrNull { (group, rows) -> blockHeight(rows, hasMore && group == PlayerControlGroup.RIGHT) } ?: 0,
+        if (hasMore) sizes.getValue(more).height else 0
+    )
     val cells = mutableListOf<PlayerControlDeckCell>()
-    fun placeRows(rows: List<List<PlayerControlAction>>, left: Int, limit: Int, initialY: Int, alignment: PlayerControlGroup, hidden: Boolean, anchored: Boolean = false) {
+    fun placeRows(rows: List<List<PlayerControlAction>>, left: Int, limit: Int, initialY: Int, alignment: PlayerControlGroup, hidden: Boolean, anchored: Boolean = false, extraLastRowHeight: Int = 0) {
         var y = initialY
         for ((index, row) in rows.withIndex()) {
             val rowLimit = if (anchored && index == 0) rightActionWidth else limit
             val used = row.sumOf { sizes.getValue(it).width.coerceIn(0, rowLimit) } + gap * (row.size - 1).coerceAtLeast(0)
             var x = left + when (alignment) { PlayerControlGroup.LEFT -> 0; PlayerControlGroup.CENTRE -> (rowLimit - used) / 2; PlayerControlGroup.RIGHT -> rowLimit - used }
-            val height = maxOf(rowHeight(row), if (anchored && index == 0) sizes.getValue(more).height else 0)
+            val height = maxOf(
+                rowHeight(row),
+                if (anchored && index == 0) sizes.getValue(more).height else 0,
+                if (index == rows.lastIndex) extraLastRowHeight else 0
+            )
             for (action in row) {
                 val size = sizes.getValue(action); val cellWidth = size.width.coerceIn(0, rowLimit)
                 cells += PlayerControlDeckCell(action, x, y + (height - size.height) / 2, cellWidth, size.height, hidden)
@@ -118,12 +184,19 @@ internal fun playerControlDeckPlan(layout: PlayerControlLayout, available: Set<P
     for (group in PlayerControlGroup.entries) {
         val limit = when (group) { PlayerControlGroup.LEFT -> leftWidth; PlayerControlGroup.CENTRE -> region; PlayerControlGroup.RIGHT -> rightWidth }
         val left = when (group) { PlayerControlGroup.LEFT -> 0; PlayerControlGroup.CENTRE -> (width - region) / 2; PlayerControlGroup.RIGHT -> width - rightWidth }
-        placeRows(groupRows.getValue(group), left, limit, 0, group, false, hasMore && group == PlayerControlGroup.RIGHT)
+        val extraLastH = if (group == PlayerControlGroup.LEFT && accSameRow) accH else 0
+        placeRows(groupRows.getValue(group), left, limit, 0, group, false, hasMore && group == PlayerControlGroup.RIGHT, extraLastH)
     }
     if (hasMore) {
         val size = sizes.getValue(more)
         cells += PlayerControlDeckCell(more, width - moreWidth, 0, moreWidth, size.height, false)
     }
+    val leftAccLeft = if (leftAccessoryBounds != null) leftActions.lastOrNull() else null
+    val leftAccRight = if (leftAccessoryBounds != null) {
+        actions.getValue(PlayerControlGroup.CENTRE).firstOrNull()
+            ?: actions.getValue(PlayerControlGroup.RIGHT).firstOrNull()
+            ?: if (hasMore) more else null
+    } else null
     // Preview-only sections retain one stable keyed widget per action. Explicit visibility
     // takes precedence over menu membership; hiding More retains its members.
     val hidden = if (showHidden) layout.entries.filter { !it.visible || it.action !in placed }.map { it.action } else emptyList()
@@ -138,6 +211,18 @@ internal fun playerControlDeckPlan(layout: PlayerControlLayout, available: Set<P
         placeRows(menuRows, menuX, (width - menuX).coerceAtLeast(0), labelY + hiddenLabelHeight, PlayerControlGroup.RIGHT, true)
     }
     val height = if (labelY == null) mainHeight else labelY + hiddenLabelHeight + maxOf(blockHeight(hiddenRows), blockHeight(menuRows))
-    return PlayerControlDeckPlan(cells, width, height, mainHeight, labelY, collapsed,
-        moreLabelY = labelY, moreLabelX = if (showHidden) menuX else 0, previewSectionWidth = if (showHidden) sectionWidth else 0)
+    return PlayerControlDeckPlan(
+        cells = cells,
+        width = width,
+        height = height,
+        mainHeight = mainHeight,
+        hiddenLabelY = labelY,
+        collapsedActions = collapsed,
+        moreLabelY = labelY,
+        moreLabelX = if (showHidden) menuX else 0,
+        previewSectionWidth = if (showHidden) sectionWidth else 0,
+        leftAccessoryBounds = leftAccessoryBounds,
+        leftAccessoryLeftNeighbour = leftAccLeft,
+        leftAccessoryRightNeighbour = leftAccRight
+    )
 }

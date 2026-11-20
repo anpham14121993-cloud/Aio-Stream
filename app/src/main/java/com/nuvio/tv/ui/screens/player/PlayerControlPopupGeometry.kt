@@ -11,8 +11,17 @@ internal fun playerControlMoreEntries(layout: PlayerControlLayout, available: Se
 }
 
 /** Opening a popup never changes primary geometry or the stable editable ghost positions. */
-internal fun playerControlPrimaryDeckPlan(layout: PlayerControlLayout, available: Set<PlayerControlAction>, sizes: Map<PlayerControlAction, PlayerControlDeckSize>, width: Int, gap: Int, preview: Boolean, labelHeight: Int): PlayerControlDeckPlan =
-    playerControlDeckPlan(layout, available, sizes, width, gap, preview, labelHeight, moreExpanded = false)
+internal fun playerControlPrimaryDeckPlan(
+    layout: PlayerControlLayout,
+    available: Set<PlayerControlAction>,
+    sizes: Map<PlayerControlAction, PlayerControlDeckSize>,
+    width: Int,
+    gap: Int,
+    preview: Boolean,
+    labelHeight: Int,
+    leftAccessorySize: PlayerControlDeckSize? = null
+): PlayerControlDeckPlan =
+    playerControlDeckPlan(layout, available, sizes, width, gap, preview, labelHeight, moreExpanded = false, leftAccessorySize = leftAccessorySize)
 
 internal data class PlayerControlPopupBounds(val left: Int, val top: Int, val right: Int, val bottom: Int) {
     val width get() = (right - left).coerceAtLeast(0)

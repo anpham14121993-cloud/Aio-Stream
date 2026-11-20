@@ -17,9 +17,12 @@ internal fun formatSeekTime(millis: Long): String {
     }
 }
 
-/** The Stats overlay's Position row. A live window or an unknown length shows the position alone. */
-internal fun positionStatsRow(positionMs: Long, durationMs: Long, isLive: Boolean): StatsRow {
+/** Formats playback position as `elapsed / total`, or `elapsed` alone for live/unknown duration. */
+internal fun formatElapsedDuration(positionMs: Long, durationMs: Long, isLive: Boolean = false): String {
     val position = formatSeekTime(positionMs)
-    val text = if (isLive || durationMs <= 0L) position else "$position / ${formatSeekTime(durationMs)}"
-    return StatsRow("Position", text)
+    return if (isLive || durationMs <= 0L) position else "$position / ${formatSeekTime(durationMs)}"
 }
+
+/** The Stats overlay's Position row. A live window or an unknown length shows the position alone. */
+internal fun positionStatsRow(positionMs: Long, durationMs: Long, isLive: Boolean): StatsRow =
+    StatsRow("Position", formatElapsedDuration(positionMs, durationMs, isLive))

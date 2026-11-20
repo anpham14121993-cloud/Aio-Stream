@@ -148,20 +148,21 @@ internal fun PlayerControlLayoutEditor(
                     CompositionLocalProvider(LocalDensity provides activityDensity) {
                     ScaledPlayerControlPreview(referenceWidth, Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), popupBounds = popupBounds) {
                         PlayerControlChrome(v2,
+                            gap = 0.dp,
                             title = {
                                 Text(stringResource(R.string.player_layout_preview_title), color = Color.White,
                                     style = MaterialTheme.typography.titleLarge, maxLines = 1)
-                                Text("2026", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            }, subtitle = {
+                                if (previewEpisode) {
+                                    Text(stringResource(R.string.player_season_episode, 1, 2), color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall)
+                                }
                             }, timeline = {
                                 Box(Modifier.fillMaxWidth().height(20.dp), contentAlignment = Alignment.CenterStart) {
                                     Box(Modifier.fillMaxWidth().height(4.dp).background(Color.White.copy(alpha = .25f)))
                                     Box(Modifier.fillMaxWidth(.35f).height(4.dp).background(Color.White))
                                 }
                             }, time = {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("00:35:00", color = Color.White, style = MaterialTheme.typography.bodySmall)
-                                    Text("-01:05:00", color = Color.White, style = MaterialTheme.typography.bodySmall)
-                                }
+                                Text("00:35:00 / 01:40:00", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.bodySmall)
                             }, deck = {
                                 PlayerControlDeck(editor.draft.preview, previewAvailable, targets::getValue,
                                     preview = true, enabled = !saving && !editor.draft.rejected,
