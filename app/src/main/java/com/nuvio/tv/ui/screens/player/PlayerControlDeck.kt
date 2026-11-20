@@ -201,8 +201,6 @@ internal fun PlayerControlChrome(v2: Boolean, modifier: Modifier = Modifier, rig
     gap: Dp = 0.dp, title: @Composable () -> Unit, subtitle: @Composable () -> Unit = {},
     timeline: @Composable () -> Unit, time: @Composable () -> Unit, deck: @Composable () -> Unit) {
     val isHandheld = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current != com.nuvio.tv.ui.monolith.DeviceFormFactor.TV
-    val inLayoutPreview = LocalPlayerControlPopupPreview.current != null
-    val raiseForTv = !isHandheld && !inLayoutPreview
     val chromeModifier = if (isHandheld) {
         modifier
             .fillMaxWidth()
@@ -211,13 +209,7 @@ internal fun PlayerControlChrome(v2: Boolean, modifier: Modifier = Modifier, rig
         modifier.fillMaxWidth()
     }
     Column(chromeModifier.padding(start = if (v2) 32.dp else 48.dp,
-        end = (if (v2) 32.dp else 48.dp) + rightInset,
-        bottom = when {
-            raiseForTv && v2 -> 52.dp
-            raiseForTv -> 58.dp
-            v2 -> 14.dp
-            else -> 28.dp
-        }),
+        end = (if (v2) 32.dp else 48.dp) + rightInset, bottom = if (v2) 14.dp else 28.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Column(if (v2) Modifier.padding(horizontal = 12.dp) else Modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) { title() }
         val appearance = LocalV2Appearance.current

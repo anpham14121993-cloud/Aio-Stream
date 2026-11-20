@@ -2264,7 +2264,7 @@ fun PlayerScreen(
                 onDismissStillWatching = { viewModel.onEvent(PlayerEvent.OnDismissStillWatchingPrompt) },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 26.dp, bottom = if (uiState.showControls) maxOf(controlsSkipAnchor, 122.dp) else 30.dp)
+                    .padding(end = 26.dp, bottom = if (uiState.showControls) 122.dp else 30.dp)
                     .zIndex(2.1f),
             )
 
@@ -3745,14 +3745,11 @@ private fun PlayerControlsOverlay(
             }
         }
 
-        val isTvDevice = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current ==
-            com.nuvio.tv.ui.monolith.DeviceFormFactor.TV
-
         // Bottom gradient
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (isTvDevice) 240.dp else 200.dp)
+                .height(200.dp)
                 .align(Alignment.BottomCenter)
                 .background(
                     Brush.verticalGradient(
@@ -3764,7 +3761,7 @@ private fun PlayerControlsOverlay(
                 )
         )
 
-        val controlsBottomPadding = if (isTvDevice) 64.dp else 28.dp
+        val controlsBottomPadding = if (handheldTouchChrome) 28.dp else 40.dp
 
         Column(
             modifier = Modifier
@@ -4667,17 +4664,10 @@ private fun SeekOverlay(
     chapterFractions: List<Float> = emptyList(),
     chapterText: String? = null
 ) {
-    val isTvDevice = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current ==
-        com.nuvio.tv.ui.monolith.DeviceFormFactor.TV
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(
-                start = NuvioTheme.spacing.xxl,
-                end = NuvioTheme.spacing.xxl,
-                top = NuvioTheme.spacing.xl,
-                bottom = if (isTvDevice) 52.dp else NuvioTheme.spacing.xl
-            )
+            .padding(horizontal = NuvioTheme.spacing.xxl, vertical = NuvioTheme.spacing.xl)
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             ProgressBar(

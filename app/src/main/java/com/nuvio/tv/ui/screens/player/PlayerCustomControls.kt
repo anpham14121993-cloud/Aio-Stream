@@ -205,11 +205,9 @@ internal fun PlayerCustomControls(
         focus.pendingReturn = action
         actionCallback(action, actions)()
     }
-    val isTvDevice = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current ==
-        com.nuvio.tv.ui.monolith.DeviceFormFactor.TV
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(if (isTvDevice) 300.dp else 260.dp)
+        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp)
             .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = chromePolicy.backgroundAlpha)))))
         PlayerControlChrome(v2, Modifier.align(Alignment.BottomCenter).verticalScroll(rememberScrollState()),
             gap = 0.dp,

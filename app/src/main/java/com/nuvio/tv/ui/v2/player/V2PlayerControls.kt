@@ -96,8 +96,6 @@ fun V2PlayerControls(
     val cinematicGlass = LocalV2Appearance.current?.visualStyle == VisualStyle.CINEMATIC_GLASS
     val density = LocalDensity.current
     val view = LocalView.current
-    val isTvDevice = com.nuvio.tv.ui.monolith.LocalDeviceFormFactor.current ==
-        com.nuvio.tv.ui.monolith.DeviceFormFactor.TV
     val utilities = buildList {
         // Unified Stream Info + Playback Stats panel via single Info button.
         add(Utility(V2PlayerControl.STATS, Icons.Default.Info, stringResource(R.string.cd_stream_info), {
@@ -121,11 +119,11 @@ fun V2PlayerControls(
             actions.report, enabled = !uiState.playbackIssueReportStatus.isReportBusyOrDone))
     }
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(if (isTvDevice) 280.dp else 240.dp)
+        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(240.dp)
             .background(Brush.verticalGradient(listOf(Color.Transparent,
                 Color.Black.copy(alpha = if (cinematicGlass) .20f else if (deck) .55f else .78f)))))
         Column(Modifier.align(Alignment.BottomCenter)
-            .padding(start = 32.dp, end = 32.dp, bottom = if (isTvDevice) 52.dp else 14.dp)
+            .padding(start = 32.dp, end = 32.dp, bottom = 14.dp)
             .fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (uiState.activeSkipInterval == null) {
                 Text(
