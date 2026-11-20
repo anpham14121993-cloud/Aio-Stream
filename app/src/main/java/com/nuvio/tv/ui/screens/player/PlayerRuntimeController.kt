@@ -906,6 +906,8 @@ class PlayerRuntimeController(
         return anchor + (delta * ttsClockSpeed).toLong()
     }
 
+    private val ttsMainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
     internal val ttsCoordinator = TtsSubtitleCoordinator(
         context = context,
         preferences = ttsPreferences,
@@ -921,7 +923,7 @@ class PlayerRuntimeController(
             if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
                 applyDuck.run()
             } else {
-                mainHandler.post(applyDuck)
+                ttsMainHandler.post(applyDuck)
             }
         }
     )
