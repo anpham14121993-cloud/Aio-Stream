@@ -51,7 +51,7 @@ import com.nuvio.tv.ui.screens.player.*
 import com.nuvio.tv.ui.v2.appearance.LocalV2Appearance
 import com.nuvio.tv.ui.v2.components.*
 
-enum class V2PlayerControl { INFO, STATS, AUDIO, SUBTITLES, SOURCES, EPISODES, CHAPTERS, RESTART, MORE, SPEED, ASPECT, EXTERNAL, ENGINE, REPORT }
+enum class V2PlayerControl { INFO, STATS, AUDIO, SUBTITLES, TTS, SOURCES, EPISODES, CHAPTERS, RESTART, MORE, SPEED, ASPECT, EXTERNAL, ENGINE, REPORT }
 
 /** Owned by PlayerScreen, so requesters survive a utility panel replacing the control deck. */
 @Stable
@@ -65,7 +65,7 @@ class V2PlayerFocusState {
 data class V2PlayerActions(
     val playPause: () -> Unit, val playNext: () -> Unit,
     val seekToStart: () -> Unit, val episodes: () -> Unit, val sources: () -> Unit,
-    val audio: () -> Unit, val subtitles: () -> Unit, val speed: () -> Unit,
+    val audio: () -> Unit, val subtitles: () -> Unit, val tts: () -> Unit = {}, val speed: () -> Unit,
     val aspect: () -> Unit, val engine: () -> Unit, val report: () -> Unit,
     val more: () -> Unit, val external: () -> Unit, val info: () -> Unit,
     val stats: () -> Unit, val interaction: () -> Unit, val hide: () -> Unit,
@@ -103,6 +103,7 @@ fun V2PlayerControls(
         }, panel = true))
         if (uiState.audioTracks.isNotEmpty()) add(Utility(V2PlayerControl.AUDIO, Icons.Default.Speaker, stringResource(R.string.cd_audio_tracks), actions.audio, true))
         if (uiState.subtitleTracks.isNotEmpty() || uiState.addonSubtitles.isNotEmpty()) add(Utility(V2PlayerControl.SUBTITLES, Icons.Default.Subtitles, stringResource(R.string.cd_subtitles), actions.subtitles, true))
+        add(Utility(V2PlayerControl.TTS, Icons.Default.RecordVoiceOver, stringResource(R.string.cd_tts_dubbing), actions.tts, true))
         add(Utility(V2PlayerControl.SOURCES, Icons.Default.Cloud, stringResource(R.string.cd_sources), actions.sources, true))
         if (uiState.currentSeason != null && uiState.currentEpisode != null) add(Utility(V2PlayerControl.EPISODES, Icons.AutoMirrored.Filled.List, stringResource(R.string.player_pill_episodes), actions.episodes, true))
         if (uiState.chapters.isNotEmpty()) add(Utility(V2PlayerControl.CHAPTERS, Icons.Default.Bookmarks, stringResource(R.string.player_chapters), actions.chapters, true))

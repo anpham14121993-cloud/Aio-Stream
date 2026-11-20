@@ -458,7 +458,7 @@ fun PlayerScreen(
             // V2 Speed is Activity-local, so the root key dispatcher sees Back.
             // Original's separate Dialog window continues handling its own Back.
             viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay)
-        } else if (uiState.showAudioOverlay || uiState.showSubtitleOverlay) {
+        } else if (uiState.showAudioOverlay || uiState.showSubtitleOverlay || uiState.showTtsOverlay) {
             viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay)
         } else if (uiState.showStreamInfoOverlay) {
             dismissStreamInfoOverlay()
@@ -764,6 +764,7 @@ fun PlayerScreen(
         uiState.showSubtitleTimingDialog,
         uiState.showAudioOverlay,
         uiState.showSubtitleOverlay,
+        uiState.showTtsOverlay,
         uiState.showSpeedDialog,
         (isV2 || uiState.controlLayout != null) && uiState.showStreamInfoOverlay,
         uiState.controlLayout == null,
@@ -778,13 +779,13 @@ fun PlayerScreen(
         val pressesAtStart = keyPresses[0]
         seenPauseFocus = pauseRequest
         if (!uiState.showControls) customFocus.controlsHidden(panelOpen = uiState.showEpisodesPanel || uiState.showChaptersPanel ||
-            uiState.showSourcesPanel || uiState.showAudioOverlay || uiState.showSubtitleOverlay ||
+            uiState.showSourcesPanel || uiState.showAudioOverlay || uiState.showSubtitleOverlay || uiState.showTtsOverlay ||
             uiState.showSubtitleStylePanel || uiState.showSubtitleDelayOverlay || uiState.showSubtitleTimingDialog ||
             uiState.showSpeedDialog || uiState.showStreamInfoOverlay || uiState.showPartyPanel)
         if (shouldConfirmNextEpisodeOnEnd || postPlayRecommendationState.isVisible) return@LaunchedEffect
         if (uiState.error != null) return@LaunchedEffect
         if (uiState.showControls && !uiState.showEpisodesPanel && !uiState.showChaptersPanel && !uiState.showSourcesPanel &&
-            !uiState.showAudioOverlay && !uiState.showSubtitleOverlay &&
+            !uiState.showAudioOverlay && !uiState.showSubtitleOverlay && !uiState.showTtsOverlay &&
             !uiState.showSubtitleStylePanel && !uiState.showSubtitleDelayOverlay &&
             !uiState.showSubtitleTimingDialog &&
             !uiState.showSpeedDialog && !((isV2 || uiState.controlLayout != null) && uiState.showStreamInfoOverlay)
@@ -910,7 +911,7 @@ fun PlayerScreen(
     }
     val remoteButtonsReady = uiState.error == null &&
         !uiState.showEpisodesPanel && !uiState.showChaptersPanel && !uiState.showSourcesPanel &&
-        !uiState.showAudioOverlay && !uiState.showSubtitleOverlay &&
+        !uiState.showAudioOverlay && !uiState.showSubtitleOverlay && !uiState.showTtsOverlay &&
         !uiState.showSubtitleStylePanel && !uiState.showSpeedDialog &&
         !uiState.showSubtitleDelayOverlay && !uiState.showSubtitleTimingDialog &&
         !uiState.showMoreDialog && !uiState.showStreamInfoOverlay && !uiState.showPartyPanel &&
@@ -1433,7 +1434,7 @@ fun PlayerScreen(
 
                 // When a side panel or dialog is open, let it handle all keys
                 val panelOrDialogOpen = uiState.showEpisodesPanel || uiState.showChaptersPanel || uiState.showSourcesPanel ||
-                        uiState.showAudioOverlay || uiState.showSubtitleOverlay ||
+                        uiState.showAudioOverlay || uiState.showSubtitleOverlay || uiState.showTtsOverlay ||
                         uiState.showSubtitleStylePanel || uiState.showSpeedDialog ||
                         uiState.showSubtitleDelayOverlay || uiState.showSubtitleTimingDialog ||
                         uiState.showMoreDialog ||
@@ -1644,6 +1645,7 @@ fun PlayerScreen(
                 !uiState.showPartyPanel &&
                 !uiState.showAudioOverlay &&
                 !uiState.showSubtitleOverlay &&
+                !uiState.showTtsOverlay &&
                 !uiState.showSubtitleStylePanel &&
                 !uiState.showSubtitleDelayOverlay &&
                 !uiState.showSubtitleTimingDialog &&
@@ -1665,6 +1667,7 @@ fun PlayerScreen(
             !uiState.showSourcesPanel &&
             !uiState.showAudioOverlay &&
             !uiState.showSubtitleOverlay &&
+            !uiState.showTtsOverlay &&
             !uiState.showSpeedDialog &&
             !postPlayRecommendationState.isVisible &&
             uiState.postPlayMode !is PostPlayMode.StillWatching
@@ -1724,15 +1727,21 @@ fun PlayerScreen(
             !postPlayRecommendationState.isTrailerPlaying &&
             (!postPlayRecommendationState.isVisible || !postPlayRecommendationState.hasAutoPlayedTrailer)
         ) {
-            LaunchedEffect(postPlayRecommendationState.isVisible) {
+            LaunchedEffect(
+                postPlayRecommendationState.isVisible,
+                uiState.ttsSettings.enabled,
+                uiState.ttsSettings.hideSubtitlesOnTts
+            ) {
+                val hideForTts = uiState.ttsSettings.enabled && uiState.ttsSettings.hideSubtitlesOnTts
                 val playerView = viewModel.controller.exoPlayerView
-                val vis = if (postPlayRecommendationState.isVisible) {
+                val vis = if (postPlayRecommendationState.isVisible || hideForTts) {
                     android.view.View.GONE
                 } else {
                     android.view.View.VISIBLE
                 }
                 playerView?.subtitleView?.visibility = vis
                 playerView?.setAssOverlayVisibility(vis)
+                viewModel.controller.mpvView?.setHideSubtitlesVisually(hideForTts)
             }
 
             Box(modifier = playerSurfaceModifier) {
@@ -2196,7 +2205,7 @@ fun PlayerScreen(
 
             // Skip Intro button (bottom-left, lifted when controls are visible)
             val skipIntroCanFocus = isSkipIntroCanFocus(
-                subtitleOverlayVisible = uiState.showSubtitleOverlay,
+                subtitleOverlayVisible = uiState.showSubtitleOverlay || uiState.showTtsOverlay,
             )
             SkipIntroButton(
                 interval = if (uiState.showPauseOverlay || uiState.showLoadingOverlay || postPlayRecommendationState.isVisible) {
@@ -2303,6 +2312,7 @@ fun PlayerScreen(
                 !uiState.showSourcesPanel &&
                 !uiState.showAudioOverlay &&
                 !uiState.showSubtitleOverlay &&
+                !uiState.showTtsOverlay &&
                 !uiState.showSubtitleStylePanel &&
                 !uiState.showSpeedDialog &&
                 !uiState.showMoreDialog &&
@@ -2385,6 +2395,7 @@ fun PlayerScreen(
                         onShowSourcesPanel = { viewModel.onEvent(PlayerEvent.OnShowSourcesPanel) },
                         onShowAudioDialog = { viewModel.onEvent(PlayerEvent.OnShowAudioOverlay) },
                         onShowSubtitleDialog = { viewModel.onEvent(PlayerEvent.OnShowSubtitleOverlay) },
+                        onShowTtsDialog = { viewModel.onEvent(PlayerEvent.OnShowTtsOverlay) },
                         onShowSpeedDialog = { viewModel.onEvent(PlayerEvent.OnShowSpeedDialog) },
                         onToggleAspectRatio = {
                             Log.d("PlayerScreen", "onToggleAspectRatio called - dispatching event")
@@ -2487,6 +2498,7 @@ fun PlayerScreen(
                     !uiState.showSourcesPanel &&
                     !uiState.showAudioOverlay &&
                     !uiState.showSubtitleOverlay &&
+                    !uiState.showTtsOverlay &&
                     !uiState.showSubtitleTimingDialog &&
                     !uiState.showSpeedDialog,
                 enter = fadeIn(animationSpec = tween(120)),
@@ -2817,6 +2829,7 @@ fun PlayerScreen(
                 isLoadingAddons = uiState.isLoadingAddonSubtitles,
                 useLibass = uiState.useLibass,
                 isUsingMpv = uiState.internalPlayerEngine == InternalPlayerEngine.MVP_PLAYER,
+                ttsSettings = uiState.ttsSettings,
                 onInternalTrackSelected = { viewModel.onEvent(PlayerEvent.OnSelectSubtitleTrack(it)) },
                 onAddonSubtitleSelected = { viewModel.onEvent(PlayerEvent.OnSelectAddonSubtitle(it)) },
                 onDisableSubtitles = { viewModel.onEvent(PlayerEvent.OnDisableSubtitles) },
@@ -2824,6 +2837,20 @@ fun PlayerScreen(
                 onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay) },
                 onBackgroundDismiss = {
                     viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay)
+                    viewModel.hideControls()
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2.6f)
+            )
+
+            TtsPlayerOverlay(
+                visible = uiState.showTtsOverlay,
+                ttsSettings = uiState.ttsSettings,
+                onEvent = { viewModel.onEvent(it) },
+                onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissTtsOverlay) },
+                onBackgroundDismiss = {
+                    viewModel.onEvent(PlayerEvent.OnDismissTtsOverlay)
                     viewModel.hideControls()
                 },
                 modifier = Modifier
@@ -2840,6 +2867,7 @@ fun PlayerScreen(
                     !uiState.showSourcesPanel &&
                     !uiState.showAudioOverlay &&
                     !uiState.showSubtitleOverlay &&
+                    !uiState.showTtsOverlay &&
                     !uiState.showSubtitleStylePanel &&
                     !uiState.showSubtitleDelayOverlay &&
                     !uiState.showSpeedDialog &&
@@ -3556,6 +3584,7 @@ private fun PlayerControlsOverlay(
     onShowSourcesPanel: () -> Unit,
     onShowAudioDialog: () -> Unit,
     onShowSubtitleDialog: () -> Unit,
+    onShowTtsDialog: () -> Unit = {},
     onShowSpeedDialog: () -> Unit,
     onToggleAspectRatio: () -> Unit,
     onSwitchPlayerEngine: () -> Unit,
@@ -3613,7 +3642,7 @@ private fun PlayerControlsOverlay(
                     viewModel.onEvent(PlayerEvent.OnSeekTo(0L, exact = true))
                     if (!customIsV2 && !uiState.isPlaying) onPlayPause()
                 }, episodes = onShowEpisodesPanel, chapters = onShowChaptersPanel, sources = onShowSourcesPanel,
-                audio = onShowAudioDialog, subtitles = onShowSubtitleDialog, speed = onShowSpeedDialog,
+                audio = onShowAudioDialog, subtitles = onShowSubtitleDialog, tts = onShowTtsDialog, speed = onShowSpeedDialog,
                 aspect = onToggleAspectRatio, engine = requestEngineSwitch, report = onReportPlaybackIssue,
                 more = onToggleMoreActions, external = onOpenInExternalPlayer, info = onShowStreamInfo,
                 stats = onTogglePlaybackStats, interaction = onResetHideTimer, hide = onHideControls,
@@ -3632,7 +3661,7 @@ private fun PlayerControlsOverlay(
                     viewModel.onEvent(PlayerEvent.OnSeekTo(0L, exact = true))
                 },
                 episodes = onShowEpisodesPanel, chapters = onShowChaptersPanel, sources = onShowSourcesPanel,
-                audio = onShowAudioDialog, subtitles = onShowSubtitleDialog, speed = onShowSpeedDialog,
+                audio = onShowAudioDialog, subtitles = onShowSubtitleDialog, tts = onShowTtsDialog, speed = onShowSpeedDialog,
                 aspect = onToggleAspectRatio, engine = requestEngineSwitch, report = onReportPlaybackIssue,
                 more = onToggleMoreActions, external = onOpenInExternalPlayer, info = onShowStreamInfo,
                 stats = onTogglePlaybackStats, interaction = onResetHideTimer, hide = onHideControls,
@@ -3811,6 +3840,14 @@ private fun PlayerControlsOverlay(
                             onFocused = onResetHideTimer
                         )
                         }
+                        ControlButton(
+                            icon = Icons.Default.RecordVoiceOver,
+                            contentDescription = stringResource(R.string.cd_tts_dubbing),
+                            onClick = onShowTtsDialog,
+                            downFocusRequester = progressBarFocusRequester,
+                            onUpKey = onHideControls,
+                            onFocused = onResetHideTimer
+                        )
                         ControlButton(
                             icon = Icons.Default.Cloud,
                             contentDescription = stringResource(R.string.cd_sources),

@@ -68,7 +68,7 @@ internal fun PlayerControlsWarmUp(
             onSkipAnchorChanged = {},
             actions = V2PlayerActions(
                 playPause = none, playNext = none, seekToStart = none, episodes = none, sources = none,
-                audio = none, subtitles = none, speed = none, aspect = none, engine = none, report = none,
+                audio = none, subtitles = none, tts = none, speed = none, aspect = none, engine = none, report = none,
                 more = none, external = none, info = none, stats = none, interaction = none, hide = none
             ),
             reportCodeVisible = reportCodeVisible,

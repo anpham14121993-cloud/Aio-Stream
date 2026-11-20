@@ -18,6 +18,7 @@ internal val SETTINGS_SEARCH_ENTRIES: List<SettingsSearchEntry> = listOf(
     SettingsSearchEntry(R.string.animeskip_client_id_title, R.string.animeskip_client_id_subtitle, SettingsCategory.INTEGRATION, integration = IntegrationSettingsSection.AnimeSkip),
     SettingsSearchEntry(R.string.autosync_setting_title, R.string.autosync_setting_description, SettingsCategory.PLAYBACK, playback = PlaybackSection.SUBTITLES, modes = SettingsSearchModes.ADVANCED),
     SettingsSearchEntry(R.string.autosync_thorough_title, R.string.autosync_thorough_description, SettingsCategory.PLAYBACK, playback = PlaybackSection.SUBTITLES, modes = SettingsSearchModes.ADVANCED),
+    SettingsSearchEntry(R.string.playback_section_tts, R.string.playback_section_tts_desc, SettingsCategory.PLAYBACK, playback = PlaybackSection.TTS, keywords = listOf("tts", "thuyết minh", "lồng tiếng", "piper", "giọng đọc")),
     SettingsSearchEntry(R.string.calendar_setting_coming_up, R.string.calendar_setting_coming_up_sub, SettingsCategory.LAYOUT, layout = LayoutSection.HOME_CONTENT, modes = SettingsSearchModes.ADVANCED),
     SettingsSearchEntry(R.string.calendar_coming_up_hidden, R.string.calendar_coming_up_hidden_sub, SettingsCategory.LAYOUT, layout = LayoutSection.HOME_CONTENT, modes = SettingsSearchModes.ADVANCED),
     SettingsSearchEntry(R.string.calendar_setting_menu, R.string.calendar_setting_menu_sub, SettingsCategory.LAYOUT, layout = LayoutSection.CALENDAR, modes = SettingsSearchModes.ADVANCED),

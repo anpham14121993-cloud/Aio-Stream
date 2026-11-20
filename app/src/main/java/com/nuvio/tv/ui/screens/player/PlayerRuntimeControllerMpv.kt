@@ -792,6 +792,7 @@ internal fun PlayerRuntimeController.seekPlaybackTo(
     seekParameters: SeekParameters = SeekParameters.CLOSEST_SYNC,
     exact: Boolean = false
 ) {
+    ttsCoordinator.onSeek(positionMs)
     if (isUsingMpvEngine()) {
         mpvView?.let { view ->
             com.nuvio.tv.core.report.PlaybackRecorder.seek(view.currentPositionMs().coerceAtLeast(0L), positionMs)
@@ -842,6 +843,7 @@ internal fun PlayerRuntimeController.setPlaybackSpeedInternal(speed: Float) {
 }
 
 internal fun PlayerRuntimeController.setPlaybackPaused(paused: Boolean) {
+    ttsCoordinator.onPlaybackStateChanged(!paused)
     if (isUsingMpvEngine()) {
         mpvView?.setPaused(paused)
         _uiState.update { it.copy(isPlaying = !paused) }

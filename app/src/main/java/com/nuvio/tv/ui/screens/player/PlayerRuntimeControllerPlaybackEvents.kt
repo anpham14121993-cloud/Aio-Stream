@@ -418,7 +418,12 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         durationMs = playerDuration
                     )
                     val playingNow = view.isPlayingNow()
-                    subtitleCueTracker.updateText(view.currentSubtitleText())
+                    ttsCoordinator.onPlaybackStateChanged(playingNow)
+                    val mpvSubText = view.currentSubtitleText()
+                    subtitleCueTracker.updateText(mpvSubText)
+                    if (!mpvSubText.isNullOrBlank()) {
+                        ttsCoordinator.onLiveCueText(mpvSubText, pos)
+                    }
                     val cacheBuffering = view.isPausedForCacheNow() || view.isCoreIdleNow()
                     var firstFrameReady = hasRenderedFirstFrame
                         if (!firstFrameReady) {
@@ -1810,7 +1815,7 @@ internal fun PlayerRuntimeController.schedulePauseOverlay() {
     pauseOverlayJob = scope.launch {
         delay(pauseOverlayDelayMs)
         val s = _uiState.value
-        val anyPanelOpen = s.showSubtitleOverlay || s.showSubtitleStylePanel ||
+        val anyPanelOpen = s.showSubtitleOverlay || s.showTtsOverlay || s.showSubtitleStylePanel ||
             s.showSpeedDialog || s.showMoreDialog || s.showEpisodesPanel || s.showChaptersPanel ||
             s.showSourcesPanel || s.showAudioOverlay || s.showStreamInfoOverlay ||
             s.showSubtitleTimingDialog || s.showSubtitleDelayOverlay || s.showPartyPanel
@@ -2361,6 +2366,7 @@ fun PlayerRuntimeController.onEvent(
                 it.copy(
                     showAudioOverlay = true,
                     showSubtitleOverlay = false,
+                    showTtsOverlay = false,
                     showSubtitleStylePanel = false,
                     showMoreDialog = false,
                     showSubtitleTimingDialog = false,
@@ -2374,6 +2380,7 @@ fun PlayerRuntimeController.onEvent(
                 it.copy(
                     showSubtitleOverlay = true,
                     showAudioOverlay = false,
+                    showTtsOverlay = false,
                     showSubtitleStylePanel = false,
                     showMoreDialog = false,
                     showSubtitleTimingDialog = false,
@@ -2382,10 +2389,37 @@ fun PlayerRuntimeController.onEvent(
                 )
             }
         }
+        PlayerEvent.OnShowTtsOverlay -> {
+            _uiState.update {
+                it.copy(
+                    showTtsOverlay = true,
+                    showAudioOverlay = false,
+                    showSubtitleOverlay = false,
+                    showTtsOverlay = false,
+                    showSubtitleStylePanel = false,
+                    showMoreDialog = false,
+                    showSubtitleTimingDialog = false,
+                    showSubtitleDelayOverlay = false,
+                    showSpeedDialog = false,
+                    showEpisodesPanel = false,
+                    showChaptersPanel = false,
+                    showSourcesPanel = false,
+                    showPartyPanel = false,
+                    showStreamInfoOverlay = false,
+                    showControls = true
+                )
+            }
+            cancelHideControls()
+        }
+        PlayerEvent.OnDismissTtsOverlay -> {
+            _uiState.update { it.copy(showTtsOverlay = false) }
+            scheduleHideControls()
+        }
         PlayerEvent.OnOpenSubtitleStylePanel -> {
             _uiState.update {
                 it.copy(
                     showSubtitleOverlay = false,
+                    showTtsOverlay = false,
                     showSubtitleStylePanel = true,
                     showMoreDialog = false,
                     showSubtitleTimingDialog = false,
@@ -2437,6 +2471,7 @@ fun PlayerRuntimeController.onEvent(
                     showSpeedDialog = true,
                     showAudioOverlay = false,
                     showSubtitleOverlay = false,
+                    showTtsOverlay = false,
                     showSubtitleStylePanel = false,
                     showMoreDialog = false,
                     showSubtitleTimingDialog = false,
@@ -2451,6 +2486,7 @@ fun PlayerRuntimeController.onEvent(
                     showMoreDialog = true,
                     showAudioOverlay = false,
                     showSubtitleOverlay = false,
+                    showTtsOverlay = false,
                     showSubtitleStylePanel = false,
                     showSubtitleTimingDialog = false,
                     showSubtitleDelayOverlay = false,
@@ -2527,6 +2563,7 @@ fun PlayerRuntimeController.onEvent(
                 it.copy(
                     showAudioOverlay = false,
                     showSubtitleOverlay = false,
+                    showTtsOverlay = false,
                     showSubtitleStylePanel = false,
                     showSubtitleTimingDialog = false,
                     showSpeedDialog = false,
@@ -2799,6 +2836,7 @@ fun PlayerRuntimeController.onEvent(
                     showPartyPanel = true,
                     showAudioOverlay = false,
                     showSubtitleOverlay = false,
+                    showTtsOverlay = false,
                     showSubtitleStylePanel = false,
                     showSpeedDialog = false,
                     showMoreDialog = false,
@@ -2824,6 +2862,40 @@ fun PlayerRuntimeController.onEvent(
                     deviceLocalPlayerPreferences.setPlayerStatsHudActive(newActive)
                 }
             }
+        }
+        is PlayerEvent.OnSetTtsEnabled -> {
+            ttsPreferences.setEnabled(event.enabled)
+            lastSidecarCueSignature = null
+            renderSidecarCuesAtCurrentPosition()
+        }
+        is PlayerEvent.OnSetTtsDualVoiceEnabled -> {
+            ttsPreferences.setDualVoiceEnabled(event.enabled)
+        }
+        is PlayerEvent.OnSelectTtsPrimaryVoice -> {
+            ttsPreferences.setPrimaryVoiceId(event.voiceId)
+        }
+        is PlayerEvent.OnSelectTtsMaleVoice -> {
+            ttsPreferences.setMaleVoiceId(event.voiceId)
+        }
+        is PlayerEvent.OnSelectTtsFemaleVoice -> {
+            ttsPreferences.setFemaleVoiceId(event.voiceId)
+        }
+        is PlayerEvent.OnSetTtsSpeechSpeed -> {
+            ttsPreferences.setSpeechSpeed(event.speed)
+        }
+        is PlayerEvent.OnSetTtsVolumePercent -> {
+            ttsPreferences.setTtsVolumePercent(event.percent)
+        }
+        is PlayerEvent.OnSetTtsMovieVolumePercent -> {
+            ttsPreferences.setMovieVolumePercent(event.percent)
+        }
+        is PlayerEvent.OnSetHideSubtitlesOnTts -> {
+            ttsPreferences.setHideSubtitlesOnTts(event.hide)
+            lastSidecarCueSignature = null
+            renderSidecarCuesAtCurrentPosition()
+        }
+        is PlayerEvent.OnSetPreserveTvPassthrough -> {
+            ttsPreferences.setPreserveTvPassthrough(event.preserve)
         }
     }
 }

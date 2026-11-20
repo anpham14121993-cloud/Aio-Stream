@@ -17,6 +17,7 @@ internal fun PlayerRuntimeController.notePlayerPanels() {
 internal fun openPanel(s: PlayerUiState): String? = when {
     s.showPlaybackStatsOverlay -> "stats"
     s.showAudioOverlay -> "audio"
+    s.showTtsOverlay -> "tts"
     s.showSubtitleOverlay || s.showSubtitleStylePanel || s.showSubtitleTimingDialog || s.showSubtitleDelayOverlay -> "subtitles"
     s.showSourcesPanel -> "sources"
     s.showStreamInfoOverlay -> "stream info"

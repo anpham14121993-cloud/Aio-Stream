@@ -8,6 +8,7 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.nuvio.tv.core.streams.CompiledStreamBadgeFilter
 import com.nuvio.tv.core.streams.StreamBadgePlacement
+import com.nuvio.tv.core.tts.TtsSettingsState
 import com.nuvio.tv.data.local.FrameRateMatchingMode
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.data.local.LibassRenderType
@@ -128,6 +129,7 @@ data class PlayerUiState(
     val isCenterMixAvailable: Boolean = false,
     val showAudioOverlay: Boolean = false,
     val showSubtitleOverlay: Boolean = false,
+    val showTtsOverlay: Boolean = false,
     val showSubtitleStylePanel: Boolean = false,
     val showSubtitleTimingDialog: Boolean = false,
     val showSubtitleDelayOverlay: Boolean = false,
@@ -283,7 +285,8 @@ data class PlayerUiState(
     val hideTorrentStats: Boolean = true,
     val controlLayout: com.nuvio.tv.data.local.PlayerControlLayout? = null,
     val isLive: Boolean = false,
-    val playerNotice: String? = null
+    val playerNotice: String? = null,
+    val ttsSettings: TtsSettingsState = TtsSettingsState()
 ) {
     /** Subtitle style to render with, after applying the HDR override for the current video. */
     val effectiveSubtitleStyle: SubtitleStyleSettings
@@ -490,6 +493,18 @@ sealed class PlayerEvent {
     data object OnTogglePlayerStatsHud : PlayerEvent()
     data object OnToggleTorrentStats : PlayerEvent()
     data object OnTogglePlaybackStats : PlayerEvent()
+    data object OnShowTtsOverlay : PlayerEvent()
+    data object OnDismissTtsOverlay : PlayerEvent()
+    data class OnSetTtsEnabled(val enabled: Boolean) : PlayerEvent()
+    data class OnSetTtsDualVoiceEnabled(val enabled: Boolean) : PlayerEvent()
+    data class OnSelectTtsPrimaryVoice(val voiceId: String) : PlayerEvent()
+    data class OnSelectTtsMaleVoice(val voiceId: String) : PlayerEvent()
+    data class OnSelectTtsFemaleVoice(val voiceId: String) : PlayerEvent()
+    data class OnSetTtsSpeechSpeed(val speed: Float) : PlayerEvent()
+    data class OnSetTtsVolumePercent(val percent: Int) : PlayerEvent()
+    data class OnSetTtsMovieVolumePercent(val percent: Int) : PlayerEvent()
+    data class OnSetHideSubtitlesOnTts(val hide: Boolean) : PlayerEvent()
+    data class OnSetPreserveTvPassthrough(val preserve: Boolean) : PlayerEvent()
 }
 
 data class ParentalWarning(

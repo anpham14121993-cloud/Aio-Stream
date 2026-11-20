@@ -283,7 +283,8 @@ internal fun PlayerRuntimeController.renderSidecarCuesAtCurrentPosition() {
 }
 
 private fun PlayerRuntimeController.showSidecarCues(view: SubtitleView, cues: List<Cue>) {
-    view.setCues(cues)
+    val hideVisual = ttsPreferences.current.let { it.enabled && it.hideSubtitlesOnTts }
+    view.setCues(if (hideVisual) emptyList() else cues)
     subtitleCueTracker.update(cues)
 }
 

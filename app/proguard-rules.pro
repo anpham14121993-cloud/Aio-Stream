@@ -171,3 +171,6 @@
 
 -dontwarn java.beans.ConstructorProperties
 -dontwarn java.beans.Transient
+
+# ── ONNX Runtime (Piper TTS) ──────────────────────────────────────────────────
+-keep class ai.onnxruntime.** { *; }

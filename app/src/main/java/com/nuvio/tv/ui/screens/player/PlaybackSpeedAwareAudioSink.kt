@@ -30,6 +30,7 @@ internal class PlaybackSpeedAwareAudioSink(
     sink: AudioSink,
     initialForcePcm: Boolean = false,
     forcePcmForBluetooth: Boolean = false,
+    forcePcmForTts: Boolean = false,
     passthroughPolicy: AudioPassthroughPolicy = AudioPassthroughPolicy.ALLOW_ALL,
     private val onDiagnosticEvent: ((String) -> Unit)? = null,
     // Claims AC-3 up to 5.1 whatever the platform reports, for Force AC-3 and for
@@ -54,6 +55,9 @@ internal class PlaybackSpeedAwareAudioSink(
 
     @Volatile
     private var bluetoothForcePcm: Boolean = forcePcmForBluetooth
+
+    @Volatile
+    private var ttsForcePcm: Boolean = forcePcmForTts
 
     @Volatile
     private var passthroughPolicy: AudioPassthroughPolicy = passthroughPolicy
@@ -105,11 +109,23 @@ internal class PlaybackSpeedAwareAudioSink(
         bluetoothForcePcm = enabled
         if (enabled) {
             forcePcmForCurrentSession = true
-        } else if (!startedWithForcedPcm && playbackSpeed == 1f) {
+        } else if (!startedWithForcedPcm && !ttsForcePcm && playbackSpeed == 1f) {
             // Session was not built as PCM-only; leaving Bluetooth can restore passthrough.
             forcePcmForCurrentSession = false
         }
         return wasBluetoothForce != bluetoothForcePcm || wasSessionForce != forcePcmForCurrentSession
+    }
+
+    fun setTtsForcePcm(enabled: Boolean): Boolean {
+        val wasTtsForce = ttsForcePcm
+        val wasSessionForce = forcePcmForCurrentSession
+        ttsForcePcm = enabled
+        if (enabled) {
+            forcePcmForCurrentSession = true
+        } else if (!startedWithForcedPcm && !bluetoothForcePcm && playbackSpeed == 1f) {
+            forcePcmForCurrentSession = false
+        }
+        return wasTtsForce != ttsForcePcm || wasSessionForce != forcePcmForCurrentSession
     }
 
     fun isBluetoothForcePcm(): Boolean = bluetoothForcePcm
@@ -329,8 +345,8 @@ internal class PlaybackSpeedAwareAudioSink(
         if (!isEncodedPassthroughCandidate(format)) {
             return false
         }
-        // Bluetooth: always decode to PCM (Media3 DEFAULT_AUDIO_CAPABILITIES policy).
-        if (bluetoothForcePcm || forcePcmForCurrentSession) {
+        // Bluetooth or TTS PCM mix: decode to PCM instead of IEC/raw passthrough.
+        if (bluetoothForcePcm || ttsForcePcm || forcePcmForCurrentSession) {
             return true
         }
         // Non-1x speed cannot be applied to bitstream passthrough tracks.

@@ -12,7 +12,7 @@ internal fun playerControlAvailability(
     reportsAvailable: Boolean = IssueReports.available
 ): Set<PlayerControlAction> = buildSet {
     addAll(listOf(PlayerControlAction.PLAY_PAUSE, PlayerControlAction.STATS,
-        PlayerControlAction.SOURCES, PlayerControlAction.MORE,
+        PlayerControlAction.TTS, PlayerControlAction.SOURCES, PlayerControlAction.MORE,
         PlayerControlAction.ENGINE, PlayerControlAction.WATCH_PARTY, PlayerControlAction.INFO,
         PlayerControlAction.SPEED))
     if (!state.isServerStream) add(PlayerControlAction.EXTERNAL)

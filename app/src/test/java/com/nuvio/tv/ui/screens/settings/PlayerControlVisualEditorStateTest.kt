@@ -71,7 +71,7 @@ class PlayerControlVisualEditorStateTest {
     }
     @Test fun `hidden controls move without becoming visible and all sixteen remain editable`() {
         var s = original().select(info).beginMove()
-        repeat(12) { s = s.step(-1) }
+        repeat(13) { s = s.step(-1) }
         assertEquals(PlayerControlGroup.CENTRE, group(s, info)); assertFalse(s.draft.preview.entries.single { it.action == info }.visible)
         assertEquals(PlayerControlAction.entries.toSet(), s.draft.preview.entries.map { it.action }.toSet())
     }

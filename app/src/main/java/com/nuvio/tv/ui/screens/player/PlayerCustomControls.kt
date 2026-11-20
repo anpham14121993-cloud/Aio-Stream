@@ -81,6 +81,7 @@ internal fun playerControlLabel(action: PlayerControlAction, playing: Boolean = 
     PlayerControlAction.STATS -> R.string.cd_playback_stats
     PlayerControlAction.AUDIO -> R.string.cd_audio_tracks
     PlayerControlAction.SUBTITLES -> R.string.cd_subtitles
+    PlayerControlAction.TTS -> R.string.cd_tts_dubbing
     PlayerControlAction.SOURCES -> R.string.cd_sources
     PlayerControlAction.MORE -> R.string.player_more_short
     PlayerControlAction.SPEED -> R.string.cd_playback_speed
@@ -101,6 +102,7 @@ internal fun playerControlIcon(action: PlayerControlAction, playing: Boolean): I
     PlayerControlAction.STATS -> Icons.Default.Info
     PlayerControlAction.AUDIO -> Icons.Default.Speaker
     PlayerControlAction.SUBTITLES -> Icons.Default.Subtitles
+    PlayerControlAction.TTS -> Icons.Default.RecordVoiceOver
     PlayerControlAction.SOURCES -> Icons.Default.Cloud
     PlayerControlAction.MORE -> Icons.Default.MoreHoriz
     PlayerControlAction.SPEED -> Icons.Default.Speed
@@ -132,6 +134,7 @@ private fun actionCallback(action: PlayerControlAction, actions: V2PlayerActions
     PlayerControlAction.STATS -> actions.info
     PlayerControlAction.AUDIO -> actions.audio
     PlayerControlAction.SUBTITLES -> actions.subtitles
+    PlayerControlAction.TTS -> actions.tts
     PlayerControlAction.SOURCES -> actions.sources
     PlayerControlAction.MORE -> actions.more
     PlayerControlAction.SPEED -> actions.speed
@@ -172,9 +175,9 @@ internal fun PlayerCustomControls(
     val scope = rememberCoroutineScope()
     val recoveryFocus = if (hasSeekTimeline) progressFocus else containerFocus
     val panelVisible = state.showStreamInfoOverlay || state.showEpisodesPanel || state.showChaptersPanel ||
-        state.showSourcesPanel || state.showAudioOverlay || state.showSubtitleOverlay || state.showSubtitleStylePanel ||
-        state.showSubtitleTimingDialog || state.showSubtitleDelayOverlay || state.showSpeedDialog ||
-        state.showPartyPanel || state.postPlayMode is PostPlayMode.StillWatching
+        state.showSourcesPanel || state.showAudioOverlay || state.showSubtitleOverlay || state.showTtsOverlay ||
+        state.showSubtitleStylePanel || state.showSubtitleTimingDialog || state.showSubtitleDelayOverlay ||
+        state.showSpeedDialog || state.showPartyPanel || state.postPlayMode is PostPlayMode.StillWatching
     val tvFocusMode = com.nuvio.tv.ui.monolith.isTvFocusMode()
     var delayQuickControlFocused by remember { mutableStateOf(false) }
     LaunchedEffect(focus.requestGeneration, layout, deckAvailable, state.showMoreDialog, hasSeekTimeline, panelVisible, tvFocusMode) {

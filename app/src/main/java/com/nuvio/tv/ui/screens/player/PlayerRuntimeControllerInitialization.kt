@@ -1507,6 +1507,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                     if (pv != null) pv.videoBoundsFraction(videoAspectRatio) else null
                 },
                 gainAudioProcessor = gainAudioProcessor,
+                ttsAudioTapProcessor = ttsCoordinator.audioTapProcessor,
+                ttsForcePcm = ttsPreferences.current.let { it.enabled && !it.preserveTvPassthrough },
                 downmixEnabled = surroundDownmixEnabled,
                 audioOutputChannels = surroundAudioOutputChannels,
                 downmixNormalizationEnabled = !playerSettings.maintainOriginalAudioOnDownmix,
@@ -1524,7 +1526,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                 onNativeSelectionChanged = { selected -> nativeVideoSelection.update(nativeSelectionOwner, selected) },
                 nativeMelEnabled = am9SystemProperty("debug.nuvio.native_dv7_mel") != "0",
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
-                initialForcePcm = hasTriedAudioPcmFallback || isBluetoothAudioOutput,
+                initialForcePcm = hasTriedAudioPcmFallback || isBluetoothAudioOutput ||
+                    ttsPreferences.current.let { it.enabled && !it.preserveTvPassthrough },
                 vendorUnstablePts = am9SystemProperty("debug.nuvio.aml_unstable_pts") == "1",
                 forceSoftwareAv1 = am9SystemProperty("debug.nuvio.sw_av1") == "1",
                 mapDv7ToHevc = mapDv7ToHevcEnabled,
@@ -1542,7 +1545,16 @@ internal fun PlayerRuntimeController.initializePlayer(
                     applyCenterMixLevel(_uiState.value.centerMixLevelDb)
                     updateAudioControlAvailability()
                 },
-                onCuesShown = subtitleCueTracker::update
+                onCuesShown = { cues ->
+                    subtitleCueTracker.update(cues)
+                    val cueText = cues
+                        .mapNotNull { it.text?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+                        .joinToString("\n")
+                    if (cueText.isNotEmpty()) {
+                        val posMs = currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: 0L
+                        ttsCoordinator.onLiveCueText(cueText, posMs)
+                    }
+                }
             ).setExtensionRendererMode(effectiveDecoderPriority)
                 .setEnableDecoderFallback(true)
                 .setMediaCodecSelector(codecSelector)
@@ -1951,6 +1963,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         // Holding the seek button emits a discontinuity per step, and reading the
                         // span set on each one is real work on a cache holding thousands of spans.
                         val seekedToMs = newPosition.positionMs
+                        ttsCoordinator.onSeek(seekedToMs)
                         seekSourceLogJob?.cancel()
                         seekSourceLogJob = scope.launch {
                             delay(SEEK_SOURCE_SETTLE_MS)
@@ -2249,6 +2262,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                                 "userPaused=$userPausedManually"
                         )
                         _uiState.update { it.copy(isPlaying = isPlaying) }
+                        ttsCoordinator.onPlaybackStateChanged(isPlaying)
                         if (isPlaying) {
                             userPausedManually = false
                             dropPausedThumbnail()
@@ -3525,6 +3539,8 @@ private class SubtitleOffsetRenderersFactory(
     private val isSidecarAddonSubtitleActiveProvider: () -> Boolean = { false },
     private val videoBoundsFractionProvider: () -> RectF?,
     private val gainAudioProcessor: GainAudioProcessor,
+    private val ttsAudioTapProcessor: com.nuvio.tv.core.tts.TtsAudioTapProcessor? = null,
+    private val ttsForcePcm: Boolean = false,
     private val downmixEnabled: Boolean,
     private val audioOutputChannels: com.nuvio.tv.data.local.AudioOutputChannels,
     private val downmixNormalizationEnabled: Boolean,
@@ -3668,7 +3684,7 @@ private class SubtitleOffsetRenderersFactory(
         })
             .setEnableFloatOutput(enableFloatOutput)
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-            .setAudioProcessors(arrayOf(gainAudioProcessor))
+            .setAudioProcessors(listOfNotNull(gainAudioProcessor, ttsAudioTapProcessor).toTypedArray())
             .setAudioTrackBufferSizeProvider(cappedPassthroughBufferSizeProvider)
         val baseAudioSink = builder.build()
         // Read-only capability snapshot for the diagnostics page. Never opens an
@@ -3700,7 +3716,7 @@ private class SubtitleOffsetRenderersFactory(
         val iecAudioSink = IecPassthroughAudioSink(
             sink = baseAudioSink,
             trueHdBufferTargetMs = com.nuvio.tv.ui.screens.player.iec.IecStallMargin.trueHdBufferMs(smallBox),
-            hbrIecEnabled = !useSystemPassthrough && !forceOpticalPassthrough && !bluetoothForcePcm && !iecOff,
+            hbrIecEnabled = !useSystemPassthrough && !forceOpticalPassthrough && !bluetoothForcePcm && !ttsForcePcm && !iecOff,
             onIecBecameReady = {
                 Handler(Looper.getMainLooper()).post {
                     speedAwareSink?.notifyAudioProcessingRequirementChanged()
@@ -3718,6 +3734,7 @@ private class SubtitleOffsetRenderersFactory(
             sink = iecAudioSink,
             initialForcePcm = initialForcePcm,
             forcePcmForBluetooth = bluetoothForcePcm,
+            forcePcmForTts = ttsForcePcm,
             passthroughPolicy = audioPassthroughPolicy,
             onDiagnosticEvent = onAudioDiagnosticEvent,
             forceAc3Support = forceOpticalPassthrough || deniedTranscodeMimes.isNotEmpty(),

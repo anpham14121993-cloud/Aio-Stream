@@ -21,6 +21,7 @@ class SettingsStructureTest {
                 PlaybackSection.REMOTE_BUTTONS,
                 PlaybackSection.AUDIO,
                 PlaybackSection.SUBTITLES,
+                PlaybackSection.TTS,
                 PlaybackSection.VIDEO,
                 PlaybackSection.BUFFER_NETWORK,
                 PlaybackSection.P2P

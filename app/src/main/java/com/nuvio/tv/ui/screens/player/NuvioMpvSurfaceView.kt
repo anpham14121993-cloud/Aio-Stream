@@ -54,6 +54,9 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     private var soundNightMode = NightModeLevel.OFF
     private var dialogueBoostDb = 0
     private var stereoDownmixLimited = false
+    private var ttsDuckVolume = 1.0
+    private var hideSubtitlesVisually = false
+    private var lastAppliedSubtitleStyle: SubtitleStyleSettings? = null
     private var allowedSpdifCodecs = ""
     private var appliedSpdifCodecs: String? = null
     private var bluetoothRoute = false
@@ -425,12 +428,29 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         val chain = mpvSoundFilterChain(soundGainDb, soundNightMode, dialogueBoostDb.takeIf { stereoDownmixLimited })
         if (chain == appliedSoundFilterChain) return
         runCatching {
-            mpv.setPropertyDouble("volume", 100.0)
+            mpv.setPropertyDouble("volume", (ttsDuckVolume * 100.0).coerceIn(0.0, 100.0))
             mpv.setPropertyString("af", chain)
             appliedSoundFilterChain = chain
         }.onFailure {
             Log.w(TAG, "Failed to apply sound adjustments on mpv (db=$soundGainDb, night=$soundNightMode): ${it.message}")
         }
+    }
+
+    fun setTtsDuckVolume(factor: Float) {
+        val clamped = factor.toDouble().coerceIn(0.0, 1.0)
+        if (abs(ttsDuckVolume - clamped) < 0.005) return
+        ttsDuckVolume = clamped
+        if (!initialized) return
+        runCatching {
+            mpv.setPropertyDouble("volume", clamped * 100.0)
+        }
+    }
+
+    fun setHideSubtitlesVisually(hide: Boolean) {
+        if (hideSubtitlesVisually == hide) return
+        hideSubtitlesVisually = hide
+        val style = lastAppliedSubtitleStyle ?: return
+        applySubtitleStyle(style)
     }
 
     /** Dialogue boost on mpv: a louder centre in mpv's own downmix to stereo. */
@@ -709,6 +729,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     var subtitleLiftFraction: Double = 0.0
 
     fun applySubtitleStyle(style: SubtitleStyleSettings) {
+        lastAppliedSubtitleStyle = style
         if (!initialized) return
         runCatching {
             val scale = subtitleScale(style) * plainFontScale(style)
@@ -748,9 +769,17 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
             mpv.setPropertyInt("sub-margin-y", subMarginY)
             mpv.setPropertyDouble("sub-shadow-offset", edges.shadowOffset)
             mpv.setPropertyString("sub-border-style", edges.borderStyle)
-            mpv.setPropertyString("sub-color", toMpvColor(style.textColor))
-            mpv.setPropertyString("sub-back-color", toMpvColor(edges.backColor))
-            mpv.setPropertyString("sub-outline-color", toMpvColor(style.outlineColor))
+            if (hideSubtitlesVisually) {
+                mpv.setPropertyString("sub-ass-override", "force")
+                mpv.setPropertyString("sub-color", "#00000000")
+                mpv.setPropertyString("sub-back-color", "#00000000")
+                mpv.setPropertyString("sub-outline-color", "#00000000")
+            } else {
+                mpv.setPropertyString("sub-ass-override", "no")
+                mpv.setPropertyString("sub-color", toMpvColor(style.textColor))
+                mpv.setPropertyString("sub-back-color", toMpvColor(edges.backColor))
+                mpv.setPropertyString("sub-outline-color", toMpvColor(style.outlineColor))
+            }
             mpv.setPropertyBoolean("sub-filter-sdh", style.stripSdh)
             mpv.setPropertyBoolean("sub-filter-sdh-harder", style.stripSdh)
         }.onFailure {

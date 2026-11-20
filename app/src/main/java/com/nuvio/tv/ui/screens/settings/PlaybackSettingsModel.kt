@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.QueuePlayNext
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Subtitles
@@ -33,6 +34,7 @@ internal enum class PlaybackSection(
     REMOTE_BUTTONS(R.string.remote_buttons_section_title, R.string.remote_buttons_section_desc, Icons.Default.SettingsRemote),
     AUDIO(R.string.audio_section, R.string.playback_section_audio_only_desc, Icons.AutoMirrored.Filled.VolumeUp),
     SUBTITLES(R.string.playback_section_subtitles, R.string.playback_section_subtitles_desc, Icons.Default.Subtitles),
+    TTS(R.string.playback_section_tts, R.string.playback_section_tts_desc, Icons.Default.RecordVoiceOver),
     VIDEO(R.string.video_section, R.string.playback_section_video_desc, Icons.Default.VideoSettings),
     BUFFER_NETWORK(R.string.playback_section_buffer_network, R.string.playback_section_buffer_network_desc, Icons.Default.NetworkCheck),
     P2P(R.string.settings_p2p_title, R.string.settings_p2p_subtitle, Icons.Default.Hub)

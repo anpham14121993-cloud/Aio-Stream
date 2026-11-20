@@ -28,6 +28,8 @@ import com.nuvio.tv.core.cloud.CloudLibraryRepository
 import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.core.tracking.TrackingMediaReference
 import com.nuvio.tv.core.tracking.TrackingScrobbleCoordinator
+import com.nuvio.tv.core.tts.TtsPreferencesStore
+import com.nuvio.tv.core.tts.TtsSubtitleCoordinator
 import com.nuvio.tv.core.torrent.TorrentService
 import com.nuvio.tv.data.local.AutoSkipSegmentType
 import com.nuvio.tv.data.local.InternalPlayerEngine
@@ -586,6 +588,20 @@ class PlayerRuntimeController(
             subtitleCueTracker.setPrescannedTexts(
                 value.flatMap { it.cues }.mapNotNull { it.text?.toString()?.takeIf(String::isNotBlank) }
             )
+            val syncCues = value.mapNotNull { entry ->
+                val text = entry.cues
+                    .mapNotNull { cue -> cue.text?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+                    .joinToString("\n")
+                if (text.isEmpty()) return@mapNotNull null
+                val startMs = (entry.startTimeUs / 1000L).coerceAtLeast(0L)
+                val endMs = if (entry.durationUs != C.TIME_UNSET && entry.durationUs > 0L) {
+                    ((entry.startTimeUs + entry.durationUs) / 1000L).coerceAtLeast(startMs + 250L)
+                } else {
+                    startMs + 2500L
+                }
+                SubtitleSyncCue(startTimeMs = startMs, endTimeMs = endMs, text = text)
+            }.sortedBy { it.startTimeMs }
+            ttsCoordinator.updateTimelineCues(syncCues)
         }
     internal val subtitlePresentation = SubtitlePresentation()
     internal var lastSidecarCueSignature: Long? = null
@@ -856,6 +872,17 @@ class PlayerRuntimeController(
             scope.launch(Dispatchers.Main) { updateAudioControlAvailability() }
         }
     }
+    internal val ttsPreferences = TtsPreferencesStore(context)
+    internal val ttsCoordinator = TtsSubtitleCoordinator(
+        context = context,
+        preferences = ttsPreferences,
+        positionProviderMs = { currentPlaybackPositionMs()?.coerceAtLeast(0L) ?: 0L },
+        onDuckVolumeChanged = { factor ->
+            val clamped = factor.coerceIn(0.0f, 1.0f)
+            _exoPlayer?.volume = clamped
+            mpvView?.setTtsDuckVolume(clamped)
+        }
+    )
     internal var loudnessEnhancer: LoudnessEnhancer? = null
     internal var trackSelector: DefaultTrackSelector? = null
     internal var currentMediaSession: MediaSession? = null
@@ -1140,6 +1167,7 @@ class PlayerRuntimeController(
         observeDeviceLocalTunneledSurfaceFill()
         observeDeviceLocalReleaseDecoderOnBackground()
         observeStreamDelayTrackSelection()
+        observeTtsSettings()
     }
 
     // The stream delay hint can be scoped to a language: re-apply it whenever the selected tracks change.
@@ -1184,8 +1212,29 @@ class PlayerRuntimeController(
         }
     }
 
+    private fun observeTtsSettings() {
+        scope.launch {
+            ttsPreferences.state.collect { settings ->
+                _uiState.update { it.copy(ttsSettings = settings) }
+                ttsCoordinator.onSettingsUpdated(settings)
+                mpvView?.setHideSubtitlesVisually(settings.enabled && settings.hideSubtitlesOnTts)
+                applyTtsForcePcm(settings.enabled && !settings.preserveTvPassthrough)
+            }
+        }
+    }
+
+    internal fun applyTtsForcePcm(forcePcm: Boolean) {
+        if (playbackSpeedAwareAudioSink?.setTtsForcePcm(forcePcm) == true) {
+            playbackSpeedAwareAudioSink?.notifyAudioProcessingRequirementChanged()
+            _exoPlayer?.let { player ->
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().build()
+            }
+        }
+    }
+
     fun onCleared() {
         com.nuvio.tv.core.image.PictureMemoryRelease.cancelDuringFilm()
+        ttsCoordinator.release()
         scrubGlideJob?.cancel()
         seekSettleJob?.cancel()
         ScrubGlide.stop()

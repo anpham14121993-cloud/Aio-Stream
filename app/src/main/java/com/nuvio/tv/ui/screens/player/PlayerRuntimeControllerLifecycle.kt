@@ -154,6 +154,7 @@ internal fun PlayerRuntimeController.releasePlayer(
     isAudioOutputBypassing = false
     updateAudioControlAvailability()
     playbackSpeedAwareAudioSink = null
+    ttsCoordinator.onPlaybackStateChanged(false)
     currentExoPlayerListener = null
     currentExoAnalyticsListener = null
     resetPlaybackTimeline()

@@ -88,6 +88,7 @@ import androidx.tv.material3.IconButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
+import com.nuvio.tv.core.tts.TtsSettingsState
 import com.nuvio.tv.data.local.SUBTITLE_LANGUAGE_FORCED
 import com.nuvio.tv.data.local.SubtitleStyleSettings
 import com.nuvio.tv.domain.model.Subtitle
@@ -117,6 +118,7 @@ internal fun SubtitleSelectionOverlay(
     isLoadingAddons: Boolean,
     useLibass: Boolean = false,
     isUsingMpv: Boolean = false,
+    ttsSettings: TtsSettingsState = TtsSettingsState(),
     onInternalTrackSelected: (Int) -> Unit,
     onAddonSubtitleSelected: (Subtitle) -> Unit,
     onDisableSubtitles: () -> Unit,
@@ -187,6 +189,7 @@ internal fun SubtitleSelectionOverlay(
     val flatOptions = remember(optionsByLanguage) { optionsByLanguage.values.flatten() }
 
     var editorOpen by remember(visible) { mutableStateOf(false) }
+    var ttsOpen by remember(visible) { mutableStateOf(false) }
     var currentSelectedOptionId by remember(visible) { mutableStateOf(sessionSelectedOptionId) }
     // null = the language list is showing; otherwise the subtitles of that language.
     var shownLanguageKey by remember(visible) {
@@ -196,7 +199,10 @@ internal fun SubtitleSelectionOverlay(
     var languageFocusKey by remember(visible) { mutableStateOf(shownLanguageKey) }
     val shownLanguage = languageItems.firstOrNull { it.key == shownLanguageKey }
     val shownOptions = shownLanguage?.let { optionsByLanguage[it.key] }.orEmpty()
-    BackHandler(enabled = visible && !editorOpen && shownLanguage != null && languageItems.size > 1) {
+    BackHandler(enabled = visible && ttsOpen) {
+        ttsOpen = false
+    }
+    BackHandler(enabled = visible && !editorOpen && !ttsOpen && shownLanguage != null && languageItems.size > 1) {
         languageFocusKey = shownLanguageKey
         shownLanguageKey = null
     }
@@ -309,18 +315,49 @@ internal fun SubtitleSelectionOverlay(
         ) {
             PanelEyebrow(text = stringResource(R.string.subtitle_dialog_title))
 
-            PanelActionRow(
-                label = if (editorOpen) {
-                    stringResource(R.string.panel_audio_back_to_tracks)
-                } else {
-                    stringResource(R.string.subtitle_style_title)
-                },
-                onClick = { editorOpen = !editorOpen }
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    PanelActionRow(
+                        label = if (editorOpen) {
+                            stringResource(R.string.panel_audio_back_to_tracks)
+                        } else {
+                            stringResource(R.string.subtitle_style_title)
+                        },
+                        onClick = {
+                            val next = !editorOpen
+                            editorOpen = next
+                            if (next) ttsOpen = false
+                        }
+                    )
+                }
+                Box(modifier = Modifier.weight(1f)) {
+                    PanelActionRow(
+                        label = when {
+                            ttsOpen -> stringResource(R.string.panel_audio_back_to_tracks)
+                            ttsSettings.enabled -> "Thuyết minh • Bật"
+                            else -> "Thuyết minh"
+                        },
+                        onClick = {
+                            val next = !ttsOpen
+                            ttsOpen = next
+                            if (next) editorOpen = false
+                        }
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
 
-            if (editorOpen) {
+            if (ttsOpen) {
+                TtsSettingsPanel(
+                    ttsSettings = ttsSettings,
+                    onEvent = onEvent,
+                    initialFocusRequester = if (tvFocusMode) listFocusRequester else null
+                )
+            } else if (editorOpen) {
                 val codec = sessionInternalTracks.getOrNull(selectedInternalIndex)?.codec.orEmpty().lowercase(java.util.Locale.US)
                 val bitmapTrack = selectedAddonSubtitle == null && isBitmapSubtitleCodec(codec)
                 if (bitmapTrack) {
