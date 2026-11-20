@@ -9,7 +9,7 @@ import java.util.Locale
  */
 object AssDialogueParser {
     private val TIME_REGEX = Regex("""(\d+):(\d{1,2}):(\d{1,2})[.:](\d{1,3})""")
-    private val OVERRIDE_TAG_REGEX = Regex("""\{[^}]*}""")
+    private val OVERRIDE_TAG_REGEX = Regex("""\{[^\}]*\}""")
 
     /**
      * Parses a Matroska ASS/SSA `Block` dialogue payload (`ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text`).

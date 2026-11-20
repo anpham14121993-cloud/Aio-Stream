@@ -75,4 +75,46 @@ class TtsVoiceCatalogAndProcessorTest {
         assertEquals("Câu 1\nCâu 2", merged[0].text)
         assertEquals(3000L, merged[0].endTimeMs)
     }
+
+    @Test
+    fun androidIcuSafeRegexesAndNormalizationWork() {
+        // Reflectively inspect all Regex patterns on TTS singletons so an accidental unescaped '}'
+        // (valid on OpenJDK JVM, fatal PatternSyntaxException on Android ICU4C) fails CI immediately.
+        val singletons = listOf<Any>(AssDialogueParser, VietnameseTextNormalizer, VietnameseG2P)
+        val regexes = mutableListOf<Regex>()
+        for (target in singletons) {
+            for (field in target::class.java.declaredFields) {
+                field.isAccessible = true
+                when (val v = field.get(target)) {
+                    is Regex -> regexes += v
+                    is List<*> -> v.forEach { item ->
+                        if (item is Pair<*, *> && item.first is Regex) {
+                            regexes += item.first as Regex
+                        }
+                    }
+                }
+            }
+        }
+        assertFalse(regexes.isEmpty())
+        for (rx in regexes) {
+            val pat = rx.pattern
+            for (i in pat.indices) {
+                val c = pat[i]
+                if (c == '}' && (i == 0 || pat[i - 1] != '\\')) {
+                    val openIdx = pat.lastIndexOf('{', i - 1)
+                    val prev = if (openIdx >= 0) pat.substring(openIdx + 1, i) else ""
+                    val isQuantifier = prev.isNotEmpty() && prev.all { it.isDigit() || it == ',' }
+                    val isUnicodeProp = openIdx >= 2 && pat[openIdx - 2] == '\\' && (pat[openIdx - 1] == 'p' || pat[openIdx - 1] == 'P')
+                    assertFalse("Unescaped '}' breaks Android ICU regex in: $pat", !isQuantifier && !isUnicodeProp)
+                }
+            }
+        }
+
+        val normalizer = VietnameseTextNormalizer.parseAndCleanCue(
+            "[F][D:100][E:happy] {\\pos(10,20)}Xin chào (cười) [nhạc] {note}"
+        )
+        assertEquals(SpeakerGender.FEMALE, normalizer.tagGender)
+        assertEquals(100L, normalizer.delayMs)
+        assertEquals("Xin chào", normalizer.speakableText)
+    }
 }

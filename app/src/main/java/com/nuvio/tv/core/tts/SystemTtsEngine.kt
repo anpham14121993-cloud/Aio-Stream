@@ -31,6 +31,9 @@ class SystemTtsEngine(private val context: Context) {
     @Volatile
     private var ready = false
 
+    @Volatile
+    private var released = false
+
     private val cacheDir: File by lazy {
         File(appContext.cacheDir, "tts_cache").apply { mkdirs() }
     }
@@ -41,6 +44,8 @@ class SystemTtsEngine(private val context: Context) {
         speechRate: Float,
         cacheKey: String
     ): File? {
+        if (released) return null
+
         val cleanText = text.trim()
         if (cleanText.isEmpty()) return null
 
@@ -52,6 +57,7 @@ class SystemTtsEngine(private val context: Context) {
         val tts = ensureInitialized() ?: return null
 
         return synthMutex.withLock {
+            if (released) return@withLock null
             if (outFile.exists() && outFile.length() > 256L) {
                 return@withLock outFile
             }
@@ -70,7 +76,8 @@ class SystemTtsEngine(private val context: Context) {
                 tts.setSpeechRate(speechRate.coerceIn(0.6f, 2.0f))
 
                 val result = withContext(Dispatchers.IO) {
-                    tts.synthesizeToFile(cleanText, null, tmpFile, utteranceId)
+                    if (released) return@withContext TextToSpeech.ERROR
+                    tts.synthesizeToFile(cleanText, android.os.Bundle(), tmpFile, utteranceId)
                 }
                 if (result != TextToSpeech.SUCCESS) {
                     tmpFile.delete()
@@ -99,9 +106,11 @@ class SystemTtsEngine(private val context: Context) {
     }
 
     private suspend fun ensureInitialized(): TextToSpeech? {
+        if (released) return null
         if (ready && engine != null) return engine
 
         return initMutex.withLock {
+            if (released) return@withLock null
             if (ready && engine != null) return@withLock engine
 
             val initDeferred = CompletableDeferred<Boolean>()
@@ -152,6 +161,10 @@ class SystemTtsEngine(private val context: Context) {
                 return@withLock null
             }
 
+            if (released) {
+                runCatching { instance.shutdown() }
+                return@withLock null
+            }
             engine = instance
             ready = true
             instance
@@ -172,14 +185,16 @@ class SystemTtsEngine(private val context: Context) {
     }
 
     fun release() {
+        released = true
         ready = false
         pendingUtterances.values.forEach { it.complete(false) }
         pendingUtterances.clear()
-        runCatching {
-            engine?.stop()
-            engine?.shutdown()
-        }
+        val toClose = engine
         engine = null
+        runCatching {
+            toClose?.stop()
+            toClose?.shutdown()
+        }
     }
 
     companion object {

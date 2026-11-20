@@ -16,11 +16,11 @@ data class ParsedSubtitleCueText(
  */
 object VietnameseTextNormalizer {
     private val LEADING_TAGS_REGEX =
-        Regex("""^\s*(?:\[([MFmf])]\s*)?(?:\[D:(\d+)]\s*)?(?:\[E:([a-zA-Z\s\-]+)]\s*)?""")
+        Regex("""^\s*(?:\[([MFmf])\]\s*)?(?:\[D:(\d+)\]\s*)?(?:\[E:([a-zA-Z\s\-]+)\]\s*)?""")
     private val HTML_TAG_REGEX = Regex("""<[^>]*>""")
-    private val ASS_OVERRIDE_REGEX = Regex("""\{\\[^}]*}""")
+    private val ASS_OVERRIDE_REGEX = Regex("""\{\\[^\}]*\}""")
     private val STAGE_NOTES_REGEX =
-        Regex("""\[.*?]|\(.*?\)|\{.*?}|【.*?】|（.*?）""")
+        Regex("""\[.*?\]|\(.*?\)|\{.*?\}|【.*?】|（.*?）""")
     private val MUSIC_SYMBOLS_REGEX = Regex("""[♪♫♩♬✦★☆•▪▫►◄◆◇■□●○※→←↑↓]""")
     private val SPEAKER_DASH_PREFIX_REGEX = Regex("""(?:^|\n)\s*[-–—]+\s*""")
     private val MULTI_WHITESPACE_REGEX = Regex("""\s+""")

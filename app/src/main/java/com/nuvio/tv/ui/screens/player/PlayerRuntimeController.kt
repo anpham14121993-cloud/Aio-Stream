@@ -394,6 +394,8 @@ class PlayerRuntimeController(
         releaseProcessWideReferences()
         mediaSourceFactory.evictCachedSession()
         releasePlayer(flushPlaybackState = true, trimBufferInBackground = true)
+        ttsCoordinator.onPlaybackStateChanged(false)
+        ttsCoordinator.clearStreamingTimelineCues()
         playerSession.close()
     }
 

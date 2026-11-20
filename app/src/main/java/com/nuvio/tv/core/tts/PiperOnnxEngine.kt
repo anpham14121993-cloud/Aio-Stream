@@ -10,6 +10,7 @@ import org.json.JSONObject
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
 import java.text.Normalizer
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class SynthesizedPcm(
     val samples: FloatArray,
@@ -25,6 +26,7 @@ class PiperOnnxEngine(private val context: Context) {
     private val appContext = context.applicationContext
     private val env: OrtEnvironment by lazy { OrtEnvironment.getEnvironment() }
     private val sessionLock = Any()
+    private val released = AtomicBoolean(false)
 
     private class LoadedVoice(
         val voiceId: String,
@@ -35,20 +37,20 @@ class PiperOnnxEngine(private val context: Context) {
         val noiseW: Float,
         val phonemeIdMap: Map<String, LongArray>
     ) {
+        @Volatile
+        var isClosed: Boolean = false
+
         fun close() {
-            runCatching { session.close() }
+            synchronized(session) {
+                if (!isClosed) {
+                    isClosed = true
+                    runCatching { session.close() }
+                }
+            }
         }
     }
 
-    private val loadedVoices = object : LinkedHashMap<String, LoadedVoice>(4, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, LoadedVoice>?): Boolean {
-            if (size > MAX_CACHED_SESSIONS) {
-                eldest?.value?.close()
-                return true
-            }
-            return false
-        }
-    }
+    private val loadedVoices = LinkedHashMap<String, LoadedVoice>(4, 0.75f, true)
 
     suspend fun synthesize(
         voiceId: String,
@@ -72,7 +74,6 @@ class PiperOnnxEngine(private val context: Context) {
         var lengthTensor: OnnxTensor? = null
         var scalesTensor: OnnxTensor? = null
         var sidTensor: OnnxTensor? = null
-        var result: OrtSession.Result? = null
 
         try {
             inputTensor = OnnxTensor.createTensor(
@@ -100,25 +101,24 @@ class PiperOnnxEngine(private val context: Context) {
                 inputs["sid"] = sidTensor
             }
 
-            result = synchronized(loaded.session) {
-                loaded.session.run(inputs)
-            }
-
-            val outputTensor = result[0] as? OnnxTensor
-            val outputValue = result[0].value
-            val pcm = extractAudioFloatArray(outputValue)
-                ?: outputTensor?.floatBuffer?.let { fb ->
-                    val arr = FloatArray(fb.remaining())
-                    fb.get(arr)
-                    arr
+            val pcm = synchronized(loaded.session) {
+                if (released.get() || loaded.isClosed) return@withContext null
+                loaded.session.run(inputs).use { res ->
+                    val outputTensor = res[0] as? OnnxTensor
+                    val outputValue = res[0].value
+                    extractAudioFloatArray(outputValue)
+                        ?: outputTensor?.floatBuffer?.let { fb ->
+                            val arr = FloatArray(fb.remaining())
+                            fb.get(arr)
+                            arr
+                        }
                 }
-                ?: return@withContext null
+            } ?: return@withContext null
             if (pcm.isEmpty()) return@withContext null
             SynthesizedPcm(samples = pcm, sampleRate = loaded.sampleRate)
         } catch (_: Throwable) {
             null
         } finally {
-            runCatching { result?.close() }
             runCatching { inputTensor?.close() }
             runCatching { lengthTensor?.close() }
             runCatching { scalesTensor?.close() }
@@ -176,6 +176,7 @@ class PiperOnnxEngine(private val context: Context) {
     }
 
     private fun getOrLoadVoice(voiceId: String): LoadedVoice? {
+        if (released.get()) return null
         synchronized(sessionLock) {
             loadedVoices[voiceId]?.let { return it }
         }
@@ -206,11 +207,11 @@ class PiperOnnxEngine(private val context: Context) {
                 }
             }
 
-            val options = OrtSession.SessionOptions().apply {
-                setIntraOpNumThreads(2)
-                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            val session = OrtSession.SessionOptions().use { options ->
+                options.setIntraOpNumThreads(2)
+                options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+                env.createSession(onnxFile.absolutePath, options)
             }
-            val session = env.createSession(onnxFile.absolutePath, options)
             val loaded = LoadedVoice(
                 voiceId = voiceId,
                 session = session,
@@ -221,14 +222,29 @@ class PiperOnnxEngine(private val context: Context) {
                 phonemeIdMap = phonemeMap
             )
 
-            synchronized(sessionLock) {
-                loadedVoices[voiceId]?.let { existing ->
-                    loaded.close()
-                    return existing
+            var evicted: LoadedVoice? = null
+            val resultVoice = synchronized(sessionLock) {
+                if (released.get()) {
+                    evicted = loaded
+                    null
+                } else {
+                    loadedVoices[voiceId]?.let { existing ->
+                        evicted = loaded
+                        existing
+                    } ?: run {
+                        if (loadedVoices.size >= MAX_CACHED_SESSIONS) {
+                            val eldestKey = loadedVoices.keys.firstOrNull()
+                            if (eldestKey != null) {
+                                evicted = loadedVoices.remove(eldestKey)
+                            }
+                        }
+                        loadedVoices[voiceId] = loaded
+                        loaded
+                    }
                 }
-                loadedVoices[voiceId] = loaded
-                loaded
             }
+            evicted?.close()
+            resultVoice
         } catch (_: Throwable) {
             null
         }
@@ -247,10 +263,13 @@ class PiperOnnxEngine(private val context: Context) {
     }
 
     fun release() {
-        synchronized(sessionLock) {
-            loadedVoices.values.forEach { it.close() }
+        released.set(true)
+        val toClose = synchronized(sessionLock) {
+            val copy = loadedVoices.values.toList()
             loadedVoices.clear()
+            copy
         }
+        toClose.forEach { it.close() }
     }
 
     companion object {

@@ -143,7 +143,15 @@ private class CompatAssSubtitleParserFactory(
         val normalized = normalizeSsaFormat(format)
         val wrapped = AutoSyncLibassSubtitles.wrapParser(assHandler, normalized, delegate.create(normalized)) // AutoSync hook
         val listener = onAssScriptParsed ?: return wrapped
-        return object : SubtitleParser by wrapped {
+        return object : SubtitleParser {
+            override fun parse(
+                data: ByteArray,
+                outputOptions: SubtitleParser.OutputOptions,
+                output: androidx.media3.common.util.Consumer<androidx.media3.extractor.text.CuesWithTiming>
+            ) {
+                parse(data, 0, data.size, outputOptions, output)
+            }
+
             override fun parse(
                 data: ByteArray,
                 offset: Int,
@@ -152,14 +160,29 @@ private class CompatAssSubtitleParserFactory(
                 output: androidx.media3.common.util.Consumer<androidx.media3.extractor.text.CuesWithTiming>
             ) {
                 runCatching {
-                    val scriptText = data.decodeToString(offset, (offset + length).coerceAtMost(data.size))
-                    val parsed = com.nuvio.tv.core.tts.AssDialogueParser.parseAssScript(scriptText)
-                    if (parsed.isNotEmpty()) {
-                        listener(parsed)
+                    val safeOffset = offset.coerceIn(0, data.size)
+                    val safeEnd = (safeOffset + length.coerceAtLeast(0)).coerceAtMost(data.size)
+                    if (safeEnd > safeOffset) {
+                        val scriptText = data.decodeToString(safeOffset, safeEnd)
+                        val parsed = com.nuvio.tv.core.tts.AssDialogueParser.parseAssScript(scriptText)
+                        if (parsed.isNotEmpty()) {
+                            listener(parsed)
+                        }
                     }
                 }
                 wrapped.parse(data, offset, length, outputOptions, output)
             }
+
+            override fun parseToLegacySubtitle(
+                data: ByteArray,
+                offset: Int,
+                length: Int
+            ): androidx.media3.extractor.text.Subtitle =
+                wrapped.parseToLegacySubtitle(data, offset, length)
+
+            override fun reset() = wrapped.reset()
+
+            override fun getCueReplacementBehavior(): Int = wrapped.getCueReplacementBehavior()
         }
     }
 

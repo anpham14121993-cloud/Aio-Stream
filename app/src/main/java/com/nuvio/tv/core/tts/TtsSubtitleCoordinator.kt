@@ -22,7 +22,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.min
 
@@ -77,7 +77,11 @@ class TtsSubtitleCoordinator(
 
     private val prefetchedClips = ConcurrentHashMap<String, PrefetchedClip>()
     private val inFlightPrefetches = ConcurrentHashMap<String, Deferred<File?>>()
-    private val streamingTimelineCues = CopyOnWriteArrayList<SubtitleSyncCue>()
+    private val timelineLock = Any()
+    private val lookaheadLock = Any()
+    private val streamingTimelineBuffer = ArrayList<SubtitleSyncCue>(256)
+    private var streamingTimelineDirty = false
+    private val released = AtomicBoolean(false)
 
     @Volatile
     private var timelineCues: List<SubtitleSyncCue> = emptyList()
@@ -127,8 +131,13 @@ class TtsSubtitleCoordinator(
     }
 
     fun updateTimelineCues(cues: List<SubtitleSyncCue>) {
-        streamingTimelineCues.clear()
-        timelineCues = AssDialogueParser.mergeSimultaneousCues(cues)
+        if (released.get()) return
+        val merged = AssDialogueParser.mergeSimultaneousCues(cues)
+        synchronized(timelineLock) {
+            streamingTimelineBuffer.clear()
+            streamingTimelineDirty = false
+            timelineCues = merged
+        }
         lastTriggeredCueKey = null
         cancelAllPrefetches()
         ensureLookaheadRunningIfNeeded()
@@ -136,37 +145,86 @@ class TtsSubtitleCoordinator(
 
     /**
      * Incrementally ingests ASS/SSA cues extracted on-the-fly from MKV containers when `useLibass = true`.
+     * Bounded and O(1) amortized under [timelineLock]; snapshot sorting/copying happens lazily on read.
      */
     fun appendStreamingTimelineCue(cue: SubtitleSyncCue) {
+        if (released.get()) return
         val parsed = VietnameseTextNormalizer.parseAndCleanCue(cue.text)
         if (parsed.speakableText.isBlank()) return
-        val last = streamingTimelineCues.lastOrNull()
-        if (last != null && kotlin.math.abs(last.startTimeMs - cue.startTimeMs) <= 120L) {
-            if (last.text == cue.text) return
-            val merged = last.copy(
-                endTimeMs = maxOf(last.endTimeMs, cue.endTimeMs),
-                text = "${last.text}\n${cue.text}"
-            )
-            streamingTimelineCues[streamingTimelineCues.lastIndex] = merged
-        } else {
-            streamingTimelineCues.add(cue)
+
+        val shouldStartLookahead = synchronized(timelineLock) {
+            val lastIdx = streamingTimelineBuffer.lastIndex
+            if (lastIdx >= 0) {
+                val last = streamingTimelineBuffer[lastIdx]
+                if (kotlin.math.abs(last.startTimeMs - cue.startTimeMs) <= 120L) {
+                    if (last.text == cue.text) return
+                    streamingTimelineBuffer[lastIdx] = last.copy(
+                        endTimeMs = maxOf(last.endTimeMs, cue.endTimeMs),
+                        text = "${last.text}\n${cue.text}"
+                    )
+                    streamingTimelineDirty = true
+                    return@synchronized streamingTimelineBuffer.size == 1
+                }
+            }
+            if (streamingTimelineBuffer.size >= MAX_STREAMING_TIMELINE_CUES) {
+                return
+            }
+            if (lastIdx < 0 || cue.startTimeMs >= streamingTimelineBuffer[lastIdx].startTimeMs) {
+                streamingTimelineBuffer.add(cue)
+            } else {
+                val insertAt = findInsertionIndex(streamingTimelineBuffer, cue.startTimeMs)
+                streamingTimelineBuffer.add(insertAt, cue)
+            }
+            streamingTimelineDirty = true
+            streamingTimelineBuffer.size == 1 || lookaheadJob?.isActive != true
         }
-        timelineCues = if (streamingTimelineCues.size <= 1) {
-            streamingTimelineCues.toList()
-        } else {
-            streamingTimelineCues.sortedBy { it.startTimeMs }
+        if (shouldStartLookahead && preferences.current.enabled) {
+            refreshStreamingTimelineSnapshot()
+            ensureLookaheadRunningIfNeeded()
         }
-        ensureLookaheadRunningIfNeeded()
     }
 
     fun clearStreamingTimelineCues() {
-        streamingTimelineCues.clear()
-        if (timelineCues.isNotEmpty()) {
+        val hadCues = synchronized(timelineLock) {
+            val nonEmpty = streamingTimelineBuffer.isNotEmpty() || timelineCues.isNotEmpty()
+            streamingTimelineBuffer.clear()
+            streamingTimelineDirty = false
             timelineCues = emptyList()
+            nonEmpty
+        }
+        if (hadCues) {
             lastTriggeredCueKey = null
             cancelAllPrefetches()
             stopLookahead()
         }
+    }
+
+    private fun refreshStreamingTimelineSnapshot(): List<SubtitleSyncCue> {
+        synchronized(timelineLock) {
+            if (streamingTimelineDirty) {
+                timelineCues = if (streamingTimelineBuffer.isEmpty()) {
+                    emptyList()
+                } else {
+                    ArrayList(streamingTimelineBuffer)
+                }
+                streamingTimelineDirty = false
+            }
+            return timelineCues
+        }
+    }
+
+    private fun findInsertionIndex(list: List<SubtitleSyncCue>, startTimeMs: Long): Int {
+        var lo = 0
+        var hi = list.lastIndex
+        while (lo <= hi) {
+            val mid = (lo + hi) ushr 1
+            if (list[mid].startTimeMs <= startTimeMs) {
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+        return lo
     }
 
     fun onPlaybackStateChanged(isPlaying: Boolean) {
@@ -189,7 +247,7 @@ class TtsSubtitleCoordinator(
         pitchAnalyzer.reset()
 
         val effectivePosMs = (newPosMs + subtitleOffsetMsProvider()).coerceAtLeast(0L)
-        val cues = timelineCues
+        val cues = refreshStreamingTimelineSnapshot()
         if (cues.isNotEmpty()) {
             val idx = findActiveCueIndex(cues, effectivePosMs - 600L)
             if (idx >= 0) {
@@ -246,30 +304,36 @@ class TtsSubtitleCoordinator(
 
     private fun ensureLookaheadRunningIfNeeded() {
         val settings = preferences.current
-        if (!settings.enabled || timelineCues.isEmpty()) {
+        val cues = refreshStreamingTimelineSnapshot()
+        if (released.get() || !settings.enabled || cues.isEmpty()) {
             stopLookahead()
             return
         }
-        if (lookaheadJob?.isActive == true) return
-
-        lookaheadJob = scope.launch {
-            while (isActive && preferences.current.enabled && timelineCues.isNotEmpty()) {
-                if (isPlayerPlaying) {
-                    val posMs = (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
-                    processTimelineTick(posMs, preferences.current)
+        synchronized(lookaheadLock) {
+            if (released.get() || lookaheadJob?.isActive == true) return
+            lookaheadJob = scope.launch {
+                while (isActive && !released.get() && preferences.current.enabled) {
+                    val currentCues = refreshStreamingTimelineSnapshot()
+                    if (currentCues.isEmpty()) break
+                    if (isPlayerPlaying) {
+                        val posMs = (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
+                        processTimelineTick(posMs, preferences.current)
+                    }
+                    delay(LOOKAHEAD_TICK_MS)
                 }
-                delay(LOOKAHEAD_TICK_MS)
             }
         }
     }
 
     private fun stopLookahead() {
-        lookaheadJob?.cancel()
-        lookaheadJob = null
+        synchronized(lookaheadLock) {
+            lookaheadJob?.cancel()
+            lookaheadJob = null
+        }
     }
 
     private fun processTimelineTick(posMs: Long, settings: TtsSettingsState) {
-        val cues = timelineCues
+        val cues = refreshStreamingTimelineSnapshot()
         if (cues.isEmpty()) return
 
         if (settings.dualVoiceEnabled && !settings.preserveTvPassthrough) {
@@ -551,6 +615,7 @@ class TtsSubtitleCoordinator(
     }
 
     private fun scheduleDuckTransition() {
+        if (released.get()) return
         val settings = preferences.current
         val targetDuck = if (settings.enabled && !settings.preserveTvPassthrough && isSpeaking) {
             (settings.movieVolumePercent / 100.0f).coerceIn(0.0f, 1.0f)
@@ -616,6 +681,7 @@ class TtsSubtitleCoordinator(
     }
 
     fun release() {
+        if (!released.compareAndSet(false, true)) return
         stopLookahead()
         duckAnimJob?.cancel()
         cancelAllPrefetches()
@@ -634,6 +700,7 @@ class TtsSubtitleCoordinator(
         private const val LIVE_DEDUP_MS = 350L
         private const val DUCK_DOWN_MS = 180L
         private const val DUCK_RESTORE_MS = 900L
+        private const val MAX_STREAMING_TIMELINE_CUES = 12_000
     }
 }
 
