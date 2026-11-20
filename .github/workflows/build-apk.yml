@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: aiostream-ci-${{ github.ref }}
@@ -25,22 +26,54 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Reuse verified APK from matching commit build
+        id: reuse_apk
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          existing_run_id="$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=${{ github.sha }}&status=completed&per_page=20" \
+            --jq '[.workflow_runs[] | select(.id != '"${{ github.run_id }}"' and .conclusion == "success" and (.event == "push" or .event == "workflow_dispatch") and .path == ".github/workflows/build-apk.yml")] | .[0].id // ""')"
+          if [[ -n "${existing_run_id}" ]]; then
+            echo "Reusing passing build run ${existing_run_id} for commit ${{ github.sha }}..."
+            if gh run download "${existing_run_id}" --name AioStream-universal-release --dir dist; then
+              downloaded_apk="$(find dist -maxdepth 3 -name '*.apk' | head -n 1)"
+              if [[ -n "${downloaded_apk}" && -f "${downloaded_apk}" ]]; then
+                if [[ "${downloaded_apk}" != "dist/AioStream-universal-release.apk" ]]; then
+                  mv "${downloaded_apk}" dist/AioStream-universal-release.apk
+                fi
+                python3 scripts/verify_native_apk.py dist/AioStream-universal-release.apk --universal
+                ls -lh dist/AioStream-universal-release.apk
+                echo "reused=true" >> "${GITHUB_OUTPUT}"
+                exit 0
+              fi
+            fi
+          fi
+          rm -rf dist/*
+          echo "reused=false" >> "${GITHUB_OUTPUT}"
+
       - name: Set up JDK 17
+        if: steps.reuse_apk.outputs.reused != 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Gradle
+        if: steps.reuse_apk.outputs.reused != 'true'
         uses: gradle/actions/setup-gradle@v4
 
       - name: Install Android NDK 29.0.14206865 & SDK 36
+        if: steps.reuse_apk.outputs.reused != 'true'
         run: |
           SDK_MANAGER="$(command -v sdkmanager || find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager | sort -V | tail -n 1)"
           yes | "${SDK_MANAGER}" --licenses >/dev/null || true
           "${SDK_MANAGER}" "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
 
       - name: Prepare build properties and signing config
+        if: steps.reuse_apk.outputs.reused != 'true'
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.AIOSTREAM_KEYSTORE_BASE64 }}
           RELEASE_KEY_ALIAS: ${{ secrets.AIOSTREAM_KEY_ALIAS }}
@@ -82,6 +115,7 @@ jobs:
           fi
 
       - name: Run AioStream core & modified unit test suites
+        if: steps.reuse_apk.outputs.reused != 'true'
         timeout-minutes: 20
         run: |
           ./gradlew :app:testFullDebugUnitTest \
@@ -108,6 +142,7 @@ jobs:
             --stacktrace
 
       - name: Build Universal Release APK (armeabi-v7a + arm64-v8a)
+        if: steps.reuse_apk.outputs.reused != 'true'
         timeout-minutes: 45
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
@@ -115,6 +150,7 @@ jobs:
         run: ./gradlew :app:assembleFullRelease --stacktrace
 
       - name: Verify Universal APK native libraries & rename output
+        if: steps.reuse_apk.outputs.reused != 'true'
         run: |
           mkdir -p dist
           apk_path="$(find app/build/outputs/apk/full/release -maxdepth 2 -name '*.apk' | head -n 1)"
@@ -128,6 +164,7 @@ jobs:
           ls -lh dist/AioStream-universal-release.apk
 
       - name: Upload Universal APK artifact
+        if: steps.reuse_apk.outputs.reused != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: AioStream-universal-release
