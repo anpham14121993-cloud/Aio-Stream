@@ -1299,13 +1299,12 @@ internal fun PlayerRuntimeController.initializePlayer(
 
             // ── Extractors & DV Hook ──
             val autoSyncObservesText = com.nuvio.tv.ui.screens.player.autosync.AutoSyncPreferences.isEnabled(context)
-            val parseSubtitlesDuringExtraction = autoSyncObservesText || ttsPreferences.current.enabled
             val extractorsFactory: ExtractorsFactory = AviTrackFormatExtractorsFactory(
                 DefaultExtractorsFactory()
                     .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)
                     .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
                     .setSubtitleParserFactory(
-                        RenderTimeSubtitles.extractionParsers(DefaultSubtitleParserFactory(), parseSubtitlesDuringExtraction)
+                        RenderTimeSubtitles.extractionParsers(DefaultSubtitleParserFactory(), autoSyncObservesText)
                     )
             )
 
@@ -1612,7 +1611,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         stripDvRpu = stripDvRpuEnabled,
                         stripHdr10PlusSei = stripHdr10PlusSei,
                         injectHdr10Sei = playerSettings.injectHdr10MetadataOnStrip,
-                        autoSyncObservesText = parseSubtitlesDuringExtraction
+                        autoSyncObservesText = autoSyncObservesText
                     ).let { MkvFrameTimingExtractorsFactory(it, startMkvFrameTiming()) }
                         .let { TsFieldPairsExtractorsFactory(it) }
             // The thumbnail tap wraps the outermost factory. The libass path takes the unwrapped one and wraps
@@ -1777,7 +1776,9 @@ internal fun PlayerRuntimeController.initializePlayer(
                         autoSyncSourceKey = url.takeIf {
                             com.nuvio.tv.ui.screens.player.autosync.AutoSyncPreferences.isEnabled(context)
                         },
-                        onAssDialogueExtracted = null,
+                        onAssDialogueExtracted = { trackId, cue ->
+                            ttsEmbeddedCueBridge.onLibassDialogueExtracted(trackId, cue)
+                        },
                         onAssScriptParsed = { cues ->
                             ttsCoordinator.updateTimelineCues(cues)
                         },

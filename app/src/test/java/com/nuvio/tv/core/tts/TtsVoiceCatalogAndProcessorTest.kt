@@ -278,15 +278,15 @@ class TtsVoiceCatalogAndProcessorTest {
             pcmBytes = rawPcm,
             sampleRate = 22_050,
             channelCount = 1,
-            tailMs = 64L
+            tailMs = 96L
         )
-        val expectedTailBytes = ((22_050L * 64L) / 1_000L).toInt() * 2
+        val expectedTailBytes = ((22_050L * 96L) / 1_000L).toInt() * 2
         assertEquals(rawPcm.size + expectedTailBytes, padded.size)
         for (i in rawPcm.size until padded.size) {
             assertEquals(0.toByte(), padded[i])
         }
 
-        // Catch-up boosts inference and playback speed when lagging or on slow CPU EMA
+        // Catch-up boosts native Piper speed moderately without starving or double-multiplying
         assertEquals(
             1.0f,
             TtsSubtitleCoordinator.computeNativeSpeedBoost(
@@ -298,37 +298,44 @@ class TtsVoiceCatalogAndProcessorTest {
                 backlogDepth = 0
             )
         )
-        assertTrue(
-            TtsSubtitleCoordinator.computeNativeSpeedBoost(
-                slotMs = 3000L,
-                textLength = 35,
-                lagMs = 950L,
-                leadRemainingMs = 0L,
-                emaSynthMs = 2500L,
-                backlogDepth = 2
-            ) >= 1.22f
+        val lagBoost = TtsSubtitleCoordinator.computeNativeSpeedBoost(
+            slotMs = 3000L,
+            textLength = 35,
+            lagMs = 950L,
+            leadRemainingMs = 0L,
+            emaSynthMs = 2500L,
+            backlogDepth = 2
         )
-        assertTrue(
-            TtsSubtitleCoordinator.computePlaybackCatchupSpeed(
-                userBaseSpeed = 1.0f,
-                lagMs = 1800L,
-                backlogDepth = 2
-            ) >= 1.38f
-        )
+        assertTrue(lagBoost in 1.15f..1.25f)
 
-        // Embedded SubRip, VTT, ASS, TX3G decode cleanly while PGS image subs are skipped
-        val srtBytes = "<i>Xin chào</i>\nHẹn gặp lại!".toByteArray(Charsets.UTF_8)
+        // Embedded MatroskaExtractor SUBRIP_PREFIX ("1\n00:00:00,000 --> 00:00:03,500\n...") strips index & timing and extracts duration
+        val mkvSrt = "1\n00:00:00,000 --> 00:00:03,500\n<i>Xin chào</i>\nHẹn gặp lại!".toByteArray(Charsets.UTF_8)
         val srtCue = TtsSubtitleTextDecoder.decodeRawSample(
             mimeType = androidx.media3.common.MimeTypes.APPLICATION_SUBRIP,
             codecs = null,
-            bytes = srtBytes,
+            bytes = mkvSrt,
             offset = 0,
-            length = srtBytes.size,
+            length = mkvSrt.size,
             startTimeUs = 12_500_000L
         )
         assertNotNull(srtCue)
         assertEquals(12_500L, srtCue!!.startTimeMs)
+        assertEquals(16_000L, srtCue.endTimeMs)
         assertEquals("Xin chào\nHẹn gặp lại!", srtCue.text)
+
+        // Numeric dialogue lines AFTER timestamp must never be stripped as cue indices
+        val numericSrt = "1\n00:00:00,000 --> 00:00:02,000\n100".toByteArray(Charsets.UTF_8)
+        assertEquals(
+            "100",
+            TtsSubtitleTextDecoder.decodeRawSample(
+                mimeType = androidx.media3.common.MimeTypes.APPLICATION_SUBRIP,
+                codecs = null,
+                bytes = numericSrt,
+                offset = 0,
+                length = numericSrt.size,
+                startTimeUs = 1_000_000L
+            )?.text
+        )
 
         val vttBytes = "WEBVTT\n\n00:00:12.000 --> 00:00:14.000\n<c.cyan>Tất cả ổn chứ?</c>".toByteArray(Charsets.UTF_8)
         val vttCue = TtsSubtitleTextDecoder.decodeRawSample(
@@ -341,6 +348,7 @@ class TtsVoiceCatalogAndProcessorTest {
         )
         assertEquals("Tất cả ổn chứ?", vttCue?.text)
 
+        // Both standard ASS Dialogue AND MatroskaExtractor SSA_PREFIX ("Dialogue: Start,End,ReadOrder,...") decode accurately
         val assDiag = "Dialogue: 0,0:00:10.00,0:00:13.00,Default,,0,0,0,,{\\an8}Không sao đâu\\NCố lên!".toByteArray(Charsets.UTF_8)
         val assCue = TtsSubtitleTextDecoder.decodeRawSample(
             mimeType = androidx.media3.common.MimeTypes.TEXT_SSA,
@@ -351,6 +359,19 @@ class TtsVoiceCatalogAndProcessorTest {
             startTimeUs = 10_000_000L
         )
         assertEquals("Không sao đâu Cố lên!", assCue?.text)
+        assertEquals(13_000L, assCue?.endTimeMs)
+
+        val mkvAssPrefix = "Dialogue: 0:00:00:00,0:00:02:50,1,0,Default,,0,0,0,,Đừng đi!".toByteArray(Charsets.UTF_8)
+        val mkvAssCue = TtsSubtitleTextDecoder.decodeRawSample(
+            mimeType = androidx.media3.common.MimeTypes.TEXT_SSA,
+            codecs = null,
+            bytes = mkvAssPrefix,
+            offset = 0,
+            length = mkvAssPrefix.size,
+            startTimeUs = 5_000_000L
+        )
+        assertEquals("Đừng đi!", mkvAssCue?.text)
+        assertEquals(7_500L, mkvAssCue?.endTimeMs)
 
         val txText = "Chào buổi tối".toByteArray(Charsets.UTF_8)
         val tx3g = ByteArray(2 + txText.size + 4)

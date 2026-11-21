@@ -172,7 +172,8 @@ internal class ActiveWavAudioTrack(
     private val totalFrames: Int
     private val sampleRate: Int
     private val bufferSizeBytes: Int
-    private val totalClipMs: Long
+    private var activeSpeed: Float = 1.0f
+    private var totalClipMs: Long
     private var enhancer: LoudnessEnhancer? = null
 
     private var writtenBytes = 0
@@ -242,13 +243,13 @@ internal class ActiveWavAudioTrack(
             pcmBytes = chosenPcm,
             sampleRate = chosenRate,
             channelCount = chosenChannels,
-            tailMs = 64L
+            tailMs = 96L
         )
         pcmData = paddedPcm
         sampleRate = chosenRate
         audioFrames = chosenPcm.size / (chosenChannels * 2)
         totalFrames = paddedPcm.size / (chosenChannels * 2)
-        totalClipMs = ((audioFrames * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong()
+        totalClipMs = ((audioFrames * 1000.0) / sampleRate).toLong()
 
         updateVolumePercent(volumePercent)
     }
@@ -297,13 +298,19 @@ internal class ActiveWavAudioTrack(
         }
         activeResumeUptimeMs = android.os.SystemClock.elapsedRealtime()
         track.play()
-        if (abs(effectiveSpeed - 1.0f) > 0.02f) {
-            runCatching {
+        val targetSpeed = effectiveSpeed.coerceIn(0.6f, 1.55f)
+        activeSpeed = if (abs(targetSpeed - 1.0f) > 0.02f) {
+            val applied = runCatching {
                 track.playbackParams = PlaybackParams()
-                    .setSpeed(effectiveSpeed.coerceIn(0.6f, 2.0f))
+                    .setSpeed(targetSpeed)
                     .setPitch(1.0f)
-            }
+                track.playbackParams.speed
+            }.getOrNull()
+            if (applied != null && abs(applied - targetSpeed) < 0.25f) applied else 1.0f
+        } else {
+            1.0f
         }
+        totalClipMs = ((audioFrames * 1000.0) / (sampleRate * activeSpeed)).toLong()
         if (writtenBytes >= pcmData.size) {
             markWrittenComplete()
         }
@@ -370,10 +377,10 @@ internal class ActiveWavAudioTrack(
     private fun markWrittenComplete() {
         // Never call track.stop() immediately after play(): vendor Android TV Audio HALs cancel
         // or mute short MODE_STREAM buffers in STATE_STOPPING before MixerThread drains them.
-        // We keep PLAYSTATE_PLAYING while trailing silence drains and stop() only in release().
+        // Keep PLAYSTATE_PLAYING while trailing silence drains and stop() only in release().
         val headNow = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
         val remainingFrames = (totalFrames - headNow).coerceAtLeast(0L)
-        drainBudgetMs = ((remainingFrames * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong() + 180L
+        drainBudgetMs = ((remainingFrames * 1000.0) / (sampleRate * activeSpeed)).toLong() + 480L
         drainStartMs = android.os.SystemClock.elapsedRealtime()
     }
 
@@ -403,7 +410,7 @@ internal class ActiveWavAudioTrack(
             val now = android.os.SystemClock.elapsedRealtime()
             if (drainStartMs < 0L) {
                 val remNow = (totalFrames - head).coerceAtLeast(0L)
-                drainBudgetMs = ((remNow * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong() + 180L
+                drainBudgetMs = ((remNow * 1000.0) / (sampleRate * activeSpeed)).toLong() + 480L
                 drainStartMs = now
             }
             val remainingAudioFrames = (audioFrames - head).coerceAtLeast(0L)
@@ -415,7 +422,7 @@ internal class ActiveWavAudioTrack(
 
             if (remainingAudioFrames <= 0L ||
                 (now - drainStartMs) >= drainBudgetMs ||
-                totalActiveMs >= totalClipMs + 140L
+                totalActiveMs >= totalClipMs + 520L
             ) {
                 release()
                 onCompleted()

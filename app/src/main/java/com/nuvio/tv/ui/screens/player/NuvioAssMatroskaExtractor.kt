@@ -27,7 +27,7 @@ internal class NuvioAssMatroskaExtractor(
     private val assHandler: AssHandler,
     flags: Int = 0,
     dolbyVisionSampleTransformer: DolbyVisionSampleTransformer? = null,
-    private val onAssDialogueExtracted: ((SubtitleSyncCue) -> Unit)? = null
+    private val onAssDialogueExtracted: ((String?, SubtitleSyncCue) -> Unit)? = null
 ) : MatroskaExtractor(
     subtitleParserFactory,
     flags,
@@ -157,7 +157,7 @@ private class NuvioAssSubtitleExtractorOutput(
     private val delegate: ExtractorOutput,
     private val assHandler: AssHandler,
     private val extractor: NuvioAssMatroskaExtractor,
-    private val onAssDialogueExtracted: ((SubtitleSyncCue) -> Unit)?
+    private val onAssDialogueExtracted: ((String?, SubtitleSyncCue) -> Unit)?
 ) : ExtractorOutput by delegate {
     override fun track(id: Int, type: Int): TrackOutput {
         return if (type == C.TRACK_TYPE_TEXT) {
@@ -173,7 +173,7 @@ private class NuvioAssTrackOutput(
     private val delegate: TrackOutput,
     private val assHandler: AssHandler,
     private val extractor: NuvioAssMatroskaExtractor,
-    private val onAssDialogueExtracted: ((SubtitleSyncCue) -> Unit)?
+    private val onAssDialogueExtracted: ((String?, SubtitleSyncCue) -> Unit)?
 ) : TrackOutput by delegate {
 
     private var isAss = false
@@ -223,7 +223,7 @@ private class NuvioAssTrackOutput(
                         if (clean.isNotEmpty()) {
                             val startMs = (timeUs / 1000L).coerceAtLeast(0L)
                             val endMs = (startMs + (durationUs / 1000L)).coerceAtLeast(startMs + 250L)
-                            emit(SubtitleSyncCue(startTimeMs = startMs, endTimeMs = endMs, text = clean))
+                            emit(trackId, SubtitleSyncCue(startTimeMs = startMs, endTimeMs = endMs, text = clean))
                         }
                     }
                 }

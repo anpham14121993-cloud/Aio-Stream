@@ -31,7 +31,8 @@ import kotlin.math.max
  */
 internal object TtsSubtitleTextDecoder {
     private val HTML_TAG_REGEX = Regex("<[^>]+>")
-    private val VTT_TIMESTAMP_LINE_REGEX = Regex("^\\d{2}:\\d{2}[:.]\\d{2}.*-->.*$")
+    private val TIMECODE_RANGE_REGEX =
+        Regex("^(\\d{1,2}):(\\d{2}):(\\d{2})[,.](\\d{3})\\s*-->\\s*(\\d{1,2}):(\\d{2}):(\\d{2})[,.](\\d{3}).*$")
 
     fun isImageSubtitleMime(mimeType: String?): Boolean {
         val m = mimeType?.lowercase(Locale.US) ?: return false
@@ -87,35 +88,84 @@ internal object TtsSubtitleTextDecoder {
             codecLower.contains("s_text/ssa") ||
             codecLower.contains("x-ssa")
         if (isAss) {
-            val clean = decodeAssPacket(rawStr) ?: return null
+            val decoded = decodeAssPacketWithDuration(rawStr) ?: return null
+            val durMs = decoded.second ?: DEFAULT_EMBEDDED_DURATION_MS
             return SubtitleSyncCue(
                 startTimeMs = startMs,
-                endTimeMs = startMs + DEFAULT_EMBEDDED_DURATION_MS,
-                text = clean
+                endTimeMs = startMs + durMs,
+                text = decoded.first
             )
         }
 
-        val cleaned = cleanPlainSubtitlePacket(rawStr) ?: return null
+        val decodedPlain = cleanPlainSubtitlePacketWithDuration(rawStr) ?: return null
+        val durMs = decodedPlain.second ?: DEFAULT_EMBEDDED_DURATION_MS
         return SubtitleSyncCue(
             startTimeMs = startMs,
-            endTimeMs = startMs + DEFAULT_EMBEDDED_DURATION_MS,
-            text = cleaned
+            endTimeMs = startMs + durMs,
+            text = decodedPlain.first
         )
     }
 
-    internal fun decodeAssPacket(raw: String): String? {
+    internal fun decodeAssPacket(raw: String): String? =
+        decodeAssPacketWithDuration(raw)?.first
+
+    internal fun decodeAssPacketWithDuration(raw: String): Pair<String, Long?>? {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return null
-        val payload = if (trimmed.startsWith("Dialogue:", ignoreCase = true)) {
-            val afterPrefix = trimmed.substringAfter(':').trimStart()
-            // Dialogue line has 9 commas before Text; AssDialogueParser expects 8 commas (MKV block).
-            val firstComma = afterPrefix.indexOf(',')
-            if (firstComma >= 0) afterPrefix.substring(firstComma + 1) else afterPrefix
-        } else {
-            trimmed
+        if (trimmed.startsWith("Dialogue:", ignoreCase = true)) {
+            val body = trimmed.substringAfter(':').trimStart()
+            val firstComma = body.indexOf(',')
+            val firstToken = if (firstComma > 0) body.substring(0, firstComma).trim() else ""
+            // MatroskaExtractor SSA_PREFIX uses "Dialogue: Start,End,ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text" (10 commas).
+            // Standard ASS Dialogue line uses "Dialogue: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text" (9 commas).
+            val isMkvPrefixed = firstToken.contains(':')
+            val commasBeforeText = if (isMkvPrefixed) 10 else 9
+            val durationMs = extractAssDurationMs(body, startCol = if (isMkvPrefixed) 0 else 1)
+            val dialoguePart = substringAfterNthComma(body, commasBeforeText) ?: body
+            val clean = AssDialogueParser.parseMatroskaDialogueText(dialoguePart)
+            return clean.takeIf { it.isNotBlank() }?.let { it to durationMs }
         }
-        val parsed = AssDialogueParser.parseMatroskaDialogueText(payload)
-        return parsed.takeIf { it.isNotBlank() }
+        val parsed = AssDialogueParser.parseMatroskaDialogueText(trimmed)
+        return parsed.takeIf { it.isNotBlank() }?.let { it to null }
+    }
+
+    private fun extractAssDurationMs(body: String, startCol: Int): Long? {
+        val parts = body.split(',', limit = startCol + 3)
+        if (parts.size <= startCol + 1) return null
+        val startMs = parseAssClockMs(parts[startCol]) ?: return null
+        val endMs = parseAssClockMs(parts[startCol + 1]) ?: return null
+        return (endMs - startMs).takeIf { it >= 200L }
+    }
+
+    private fun parseAssClockMs(raw: String): Long? {
+        val clean = raw.trim()
+        val colonParts = clean.split(':')
+        if (colonParts.size == 4) {
+            val h = colonParts[0].toLongOrNull() ?: return null
+            val m = colonParts[1].toLongOrNull() ?: return null
+            val s = colonParts[2].toLongOrNull() ?: return null
+            val cs = colonParts[3].take(2).padEnd(2, '0').toLongOrNull() ?: return null
+            return ((h * 3600L + m * 60L + s) * 1000L) + (cs * 10L)
+        }
+        if (colonParts.size == 3) {
+            val h = colonParts[0].toLongOrNull() ?: return null
+            val m = colonParts[1].toLongOrNull() ?: return null
+            val secDot = colonParts[2].split('.', ',')
+            val s = secDot[0].toLongOrNull() ?: return null
+            val frac = secDot.getOrNull(1)?.take(2)?.padEnd(2, '0')?.toLongOrNull() ?: 0L
+            return ((h * 3600L + m * 60L + s) * 1000L) + (frac * 10L)
+        }
+        return null
+    }
+
+    private fun substringAfterNthComma(s: String, count: Int): String? {
+        var found = 0
+        for (i in s.indices) {
+            if (s[i] == ',' && ++found == count) {
+                return s.substring(i + 1)
+            }
+        }
+        return null
     }
 
     internal fun decodeTx3g(bytes: ByteArray, offset: Int, length: Int): String? {
@@ -126,22 +176,53 @@ internal object TtsSubtitleTextDecoder {
         return cleanPlainSubtitlePacket(decoded)
     }
 
-    internal fun cleanPlainSubtitlePacket(raw: String): String? {
+    internal fun cleanPlainSubtitlePacket(raw: String): String? =
+        cleanPlainSubtitlePacketWithDuration(raw)?.first
+
+    internal fun cleanPlainSubtitlePacketWithDuration(raw: String): Pair<String, Long?>? {
         val normalized = raw
             .replace("\uFEFF", "")
             .replace("\r\n", "\n")
             .replace('\r', '\n')
-        val lines = normalized.lineSequence()
-            .map { line -> line.replace(HTML_TAG_REGEX, "").trim() }
-            .filter { line ->
-                line.isNotEmpty() &&
-                    !line.equals("WEBVTT", ignoreCase = true) &&
-                    !VTT_TIMESTAMP_LINE_REGEX.matches(line)
+        val rawLines = normalized.split('\n').map { it.trim() }
+        val kept = ArrayList<String>(rawLines.size)
+        var parsedDurationMs: Long? = null
+        var i = 0
+        while (i < rawLines.size) {
+            val line = rawLines[i]
+            if (line.isEmpty() || line.equals("WEBVTT", ignoreCase = true)) {
+                i++
+                continue
             }
-            .toList()
-        if (lines.isEmpty()) return null
-        val joined = lines.joinToString("\n").trim()
-        return joined.takeIf { it.isNotEmpty() }
+            val tcMatch = TIMECODE_RANGE_REGEX.matchEntire(line)
+            if (tcMatch != null) {
+                val startTc = ((tcMatch.groupValues[1].toLong() * 3600L +
+                    tcMatch.groupValues[2].toLong() * 60L +
+                    tcMatch.groupValues[3].toLong()) * 1000L) + tcMatch.groupValues[4].toLong()
+                val endTc = ((tcMatch.groupValues[5].toLong() * 3600L +
+                    tcMatch.groupValues[6].toLong() * 60L +
+                    tcMatch.groupValues[7].toLong()) * 1000L) + tcMatch.groupValues[8].toLong()
+                if (endTc > startTc + 100L) {
+                    parsedDurationMs = endTc - startTc
+                }
+                i++
+                continue
+            }
+            // Strip SRT/VTT cue index line (e.g. "1" in MatroskaExtractor SUBRIP_PREFIX) ONLY when
+            // immediately followed by a timestamp range line, preserving numeric spoken dialogue.
+            val nextLine = rawLines.getOrNull(i + 1)
+            if (line.all { it.isDigit() } && nextLine != null && TIMECODE_RANGE_REGEX.matches(nextLine)) {
+                i++
+                continue
+            }
+            val stripped = line.replace(HTML_TAG_REGEX, "").trim()
+            if (stripped.isNotEmpty()) {
+                kept.add(stripped)
+            }
+            i++
+        }
+        if (kept.isEmpty()) return null
+        return kept.joinToString("\n") to parsedDurationMs
     }
 
     private fun maybeInflateZlib(bytes: ByteArray, offset: Int, length: Int): ByteArray? {
@@ -209,8 +290,11 @@ internal class TtsEmbeddedCueBridge(
     fun registerTrackFormat(rawTrackId: Int, format: Format): String {
         val bridgeKey = "emb:${rawTrackId}:${format.id.orEmpty()}"
         var flushToCoordinator: List<SubtitleSyncCue>? = null
-        synchronized(lock) {
-            val existing = tracks.getOrPut(bridgeKey) {
+        val resolvedKeyForTrack = synchronized(lock) {
+            val matchedExisting = tracks.values.firstOrNull { buf ->
+                (!format.id.isNullOrEmpty() && buf.formatId == format.id) || buf.rawTrackId == rawTrackId
+            }
+            val existing = matchedExisting ?: tracks.getOrPut(bridgeKey) {
                 TrackBuffer(
                     key = bridgeKey,
                     rawTrackId = rawTrackId,
@@ -219,9 +303,9 @@ internal class TtsEmbeddedCueBridge(
                     label = format.label
                 )
             }
-            existing.formatId = format.id
-            existing.language = format.language
-            existing.label = format.label
+            existing.formatId = format.id ?: existing.formatId
+            existing.language = format.language ?: existing.language
+            existing.label = format.label ?: existing.label
 
             val newlyResolved = resolveMatchingTrackKeyLocked()
             if (newlyResolved != null && newlyResolved != lastSyncedKey) {
@@ -229,13 +313,44 @@ internal class TtsEmbeddedCueBridge(
                 resolvedBridgeKey = newlyResolved
                 flushToCoordinator = tracks[newlyResolved]?.cues?.toList()
             }
+            existing.key
         }
         flushToCoordinator?.let { cues ->
             if (cues.isNotEmpty()) {
                 ttsCoordinator.updateTimelineCues(cues)
             }
         }
-        return bridgeKey
+        return resolvedKeyForTrack
+    }
+
+    fun onLibassDialogueExtracted(rawTrackIdStr: String?, cue: SubtitleSyncCue) {
+        val targetKey: String
+        synchronized(lock) {
+            val matched = if (!rawTrackIdStr.isNullOrEmpty()) {
+                tracks.values.firstOrNull { buf ->
+                    buf.formatId == rawTrackIdStr || buf.rawTrackId.toString() == rawTrackIdStr
+                }
+            } else {
+                tracks.values.firstOrNull()
+            }
+            if (matched != null) {
+                targetKey = matched.key
+            } else {
+                val numericId = rawTrackIdStr?.toIntOrNull() ?: -1
+                val synthKey = if (numericId >= 0) "emb:$numericId:${rawTrackIdStr.orEmpty()}" else "ass:${rawTrackIdStr.orEmpty()}"
+                tracks.getOrPut(synthKey) {
+                    TrackBuffer(
+                        key = synthKey,
+                        rawTrackId = numericId,
+                        formatId = rawTrackIdStr,
+                        language = null,
+                        label = null
+                    )
+                }
+                targetKey = synthKey
+            }
+        }
+        onCueDemuxed(targetKey, cue)
     }
 
     fun onCueDemuxed(bridgeKey: String, cue: SubtitleSyncCue) {

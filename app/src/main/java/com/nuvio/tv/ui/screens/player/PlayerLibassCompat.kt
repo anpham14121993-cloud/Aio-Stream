@@ -51,7 +51,7 @@ internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
     renderersFactory: RenderersFactory = DefaultRenderersFactory(context),
     autoSyncSourceKey: String? = null,
     subtitleTimeShiftUs: () -> Long = { 0L },
-    onAssDialogueExtracted: ((SubtitleSyncCue) -> Unit)? = null,
+    onAssDialogueExtracted: ((String?, SubtitleSyncCue) -> Unit)? = null,
     onAssScriptParsed: ((List<SubtitleSyncCue>) -> Unit)? = null,
     ttsEmbeddedCueBridge: TtsEmbeddedCueBridge? = null
 ): ExoPlayer {
@@ -61,7 +61,7 @@ internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
     val swappedExtractorsFactory = extractorsFactory.withAssMkvSupportCompat(
         subtitleParserFactory = RenderTimeSubtitles.extractionParsers(
             assSubtitleParserFactory,
-            autoSyncObservesText = autoSyncSourceKey != null || ttsEmbeddedCueBridge != null
+            autoSyncObservesText = autoSyncSourceKey != null
         ),
         assHandler = assHandler,
         onAssDialogueExtracted = onAssDialogueExtracted
@@ -205,7 +205,7 @@ private class CompatAssSubtitleParserFactory(
 internal fun ExtractorsFactory.withAssMkvSupportCompat(
     subtitleParserFactory: SubtitleParser.Factory,
     assHandler: AssHandler,
-    onAssDialogueExtracted: ((SubtitleSyncCue) -> Unit)? = null
+    onAssDialogueExtracted: ((String?, SubtitleSyncCue) -> Unit)? = null
 ): ExtractorsFactory {
     val delegate = this
     fun replace(extractor: Extractor): Extractor = when (extractor) {

@@ -464,18 +464,11 @@ class TtsSubtitleCoordinator(
                     ) ?: continue
 
                     if (preferences.current.enabled && (isPlayerPlaying || nextItem.force)) {
-                        val afterPosMs = (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
-                        val enqueueLagMs = (afterPosMs - nextItem.positionMs).coerceAtLeast(0L)
-                        val enqueueDepth = synchronized(liveQueueLock) { livePendingQueue.size } + playerQueue.queueDepth()
                         playerQueue.enqueue(
                             TtsPlaybackItem(
                                 cueKey = nextItem.cueKey,
                                 audioFile = file,
-                                baseSpeed = computePlaybackCatchupSpeed(
-                                    preferences.current.speechSpeed,
-                                    enqueueLagMs,
-                                    enqueueDepth
-                                ),
+                                baseSpeed = preferences.current.speechSpeed,
                                 cueStartMs = nextItem.positionMs,
                                 cueEndMs = nextItem.positionMs + 2200L
                             )
@@ -592,13 +585,14 @@ class TtsSubtitleCoordinator(
             }
         }
 
-        // 2. Prefetch upcoming cues deeply (45s lookahead, including while buffering/paused).
+        // 2. Prefetch upcoming cues (28s lookahead, capped so Piper mutex is never starved behind far-future cues).
+        val activePrefetchCap = if (triggerPlayback) MAX_ACTIVE_PREFETCHES else 1
         val horizonMs = posMs + PREFETCH_LOOKAHEAD_MS
         val firstScanIdx = max(0, findActiveCueIndex(cues, posMs - 200L).let {
             if (it >= 0) it else findInsertionPointByStart(cues, posMs)
         })
         for (i in firstScanIdx until cues.size) {
-            if (inFlightPrefetches.size >= MAX_ACTIVE_PREFETCHES) break
+            if (inFlightPrefetches.size >= activePrefetchCap) break
             if (prefetchedClips.size + inFlightPrefetches.size >= MAX_PREFETCH_CACHE_CLIPS) break
             val cue = cues[i]
             if (cue.startTimeMs > horizonMs) break
@@ -640,13 +634,11 @@ class TtsSubtitleCoordinator(
     ) {
         val ready = prefetchedClips.remove(key)
         if (ready != null && ready.file.exists()) {
-            val nowPos = (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
-            val lagMs = (nowPos - cue.startTimeMs).coerceAtLeast(0L)
             playerQueue.enqueue(
                 TtsPlaybackItem(
                     cueKey = key,
                     audioFile = ready.file,
-                    baseSpeed = computePlaybackCatchupSpeed(settings.speechSpeed, lagMs, playerQueue.queueDepth()),
+                    baseSpeed = settings.speechSpeed,
                     cueStartMs = cue.startTimeMs,
                     cueEndMs = cue.endTimeMs
                 )
@@ -669,7 +661,6 @@ class TtsSubtitleCoordinator(
             val latestSettings = preferences.current
             if (latestSettings.enabled && isPlayerPlaying) {
                 val nowPos = (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
-                val lagMs = (nowPos - cue.startTimeMs).coerceAtLeast(0L)
                 if (nowPos <= cue.endTimeMs + PLAY_LATE_TOLERANCE_MS &&
                     playerQueue.queueDepth() < MAX_PLAYER_QUEUE_DEPTH
                 ) {
@@ -677,7 +668,7 @@ class TtsSubtitleCoordinator(
                         TtsPlaybackItem(
                             cueKey = key,
                             audioFile = file,
-                            baseSpeed = computePlaybackCatchupSpeed(latestSettings.speechSpeed, lagMs, playerQueue.queueDepth()),
+                            baseSpeed = latestSettings.speechSpeed,
                             cueStartMs = cue.startTimeMs,
                             cueEndMs = cue.endTimeMs
                         )
@@ -1033,14 +1024,14 @@ class TtsSubtitleCoordinator(
 
     companion object {
         private const val LOOKAHEAD_TICK_MS = 55L
-        private const val PREFETCH_LOOKAHEAD_MS = 45_000L
-        private const val MAX_ACTIVE_PREFETCHES = 6
-        private const val MAX_PREFETCH_CACHE_CLIPS = 28
-        private const val TRIGGER_LEAD_MS = 280L
-        private const val MAX_LATE_TRIGGER_MS = 6_000L
-        private const val PLAY_LATE_TOLERANCE_MS = 10_000L
-        private const val MAX_PLAYER_QUEUE_DEPTH = 10
-        private const val MAX_PENDING_LIVE_CUES = 10
+        private const val PREFETCH_LOOKAHEAD_MS = 28_000L
+        private const val MAX_ACTIVE_PREFETCHES = 2
+        private const val MAX_PREFETCH_CACHE_CLIPS = 18
+        private const val TRIGGER_LEAD_MS = 240L
+        private const val MAX_LATE_TRIGGER_MS = 3_200L
+        private const val PLAY_LATE_TOLERANCE_MS = 4_500L
+        private const val MAX_PLAYER_QUEUE_DEPTH = 4
+        private const val MAX_PENDING_LIVE_CUES = 4
         private const val MAX_TRIGGERED_KEYS = 512
         private const val LIVE_DEDUP_MS = 350L
         private const val LIVE_DELTA_WINDOW_MS = 8000L
@@ -1064,27 +1055,12 @@ class TtsSubtitleCoordinator(
             backlogDepth: Int
         ): Float {
             return when {
-                lagMs > 1800L || backlogDepth >= 3 -> 1.32f
-                lagMs > 700L || backlogDepth >= 2 -> 1.22f
-                backlogDepth >= 1 || lagMs > 300L -> 1.12f
-                emaSynthMs > 1400L && leadRemainingMs in -300L..(emaSynthMs + 500L) -> 1.22f
-                slotMs != null && slotMs < 2100L && textLength > 30 -> 1.12f
+                lagMs > 1200L || backlogDepth >= 2 -> 1.22f
+                backlogDepth >= 1 || lagMs > 400L -> 1.12f
+                emaSynthMs > 1400L && leadRemainingMs in -300L..(emaSynthMs + 500L) -> 1.15f
+                slotMs != null && slotMs < 2100L && textLength > 34 -> 1.12f
                 else -> 1.0f
             }
-        }
-
-        internal fun computePlaybackCatchupSpeed(
-            userBaseSpeed: Float,
-            lagMs: Long,
-            backlogDepth: Int
-        ): Float {
-            val lagFloor = when {
-                lagMs > 2600L || backlogDepth >= 3 -> maxOf(userBaseSpeed * 1.48f, 1.56f)
-                lagMs > 1300L || backlogDepth == 2 -> maxOf(userBaseSpeed * 1.32f, 1.40f)
-                lagMs > 500L || backlogDepth == 1 -> maxOf(userBaseSpeed * 1.16f, 1.22f)
-                else -> userBaseSpeed
-            }
-            return lagFloor.coerceIn(0.6f, 1.85f)
         }
 
         internal fun extractDeltaLiveText(
