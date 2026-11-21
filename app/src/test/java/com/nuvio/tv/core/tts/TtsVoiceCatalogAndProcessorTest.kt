@@ -8,6 +8,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
 class TtsVoiceCatalogAndProcessorTest {
 
     @Test
@@ -120,37 +123,84 @@ class TtsVoiceCatalogAndProcessorTest {
 
     @Test
     fun piperChunkingAndHardwareBudgetProtectLowRam32BitTv() {
-        val (constrained32, maxSess32, threads32) = PiperOnnxEngine.runtimeBudgetFor(
+        val budget32MultiCore = PiperOnnxEngine.computeBudget(
             is64Bit = false,
-            totalMemMb = 4096L,
-            isLowRamDevice = false
-        )
-        assertTrue(constrained32)
-        assertEquals(1, maxSess32)
-        assertEquals(1, threads32)
-
-        val (constrainedTv, maxSessTv, threadsTv) = PiperOnnxEngine.runtimeBudgetFor(
-            is64Bit = true,
             totalMemMb = 2048L,
-            isLowRamDevice = false
+            isLowRamDevice = false,
+            cpuCores = 4
         )
-        assertTrue(constrainedTv)
-        assertEquals(1, maxSessTv)
-        assertEquals(1, threadsTv)
+        assertTrue(budget32MultiCore.isConstrainedHardware)
+        assertEquals(1, budget32MultiCore.maxCachedSessions)
+        assertEquals(2, budget32MultiCore.intraOpThreads)
+        assertTrue(budget32MultiCore.enableMemoryArena)
 
-        val (unconstrained, maxSess64, threads64) = PiperOnnxEngine.runtimeBudgetFor(
+        val budgetVeryLowRam = PiperOnnxEngine.computeBudget(
+            is64Bit = false,
+            totalMemMb = 1024L,
+            isLowRamDevice = true,
+            cpuCores = 4
+        )
+        assertTrue(budgetVeryLowRam.isConstrainedHardware)
+        assertEquals(1, budgetVeryLowRam.maxCachedSessions)
+        assertEquals(1, budgetVeryLowRam.intraOpThreads)
+        assertFalse(budgetVeryLowRam.enableMemoryArena)
+
+        val budget64 = PiperOnnxEngine.computeBudget(
             is64Bit = true,
             totalMemMb = 6144L,
-            isLowRamDevice = false
+            isLowRamDevice = false,
+            cpuCores = 8
         )
-        assertFalse(unconstrained)
-        assertEquals(2, maxSess64)
-        assertEquals(2, threads64)
+        assertFalse(budget64.isConstrainedHardware)
+        assertEquals(2, budget64.maxCachedSessions)
+        assertEquals(3, budget64.intraOpThreads)
+        assertTrue(budget64.enableMemoryArena)
 
         val longCue = "Đây là một đoạn phụ đề rất dài để kiểm tra việc chia nhỏ câu thoại trước khi chạy mô hình Piper ONNX. " +
             "Khi chia câu tại dấu câu hoặc khoảng trắng thì thiết bị TV cấu hình thấp không bị tràn bộ nhớ."
         val chunks = PiperOnnxEngine.splitIntoSpeakableChunks(longCue, maxChars = 90)
         assertTrue(chunks.size >= 2)
         assertTrue(chunks.all { it.isNotBlank() && it.length <= 90 })
+    }
+
+    @Test
+    fun wavPcmHeaderParserAndResamplerHandle22050HzMonoAndExtraChunks() {
+        val sampleCount = 441
+        val dataSize = sampleCount * 2
+        val junkPayload = ByteArray(10) { 0x55 }
+        val totalBytes = 12 + 8 + 16 + 8 + junkPayload.size + 8 + dataSize
+        val wav = ByteArray(totalBytes)
+        val bb = ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN)
+        bb.put("RIFF".toByteArray(Charsets.US_ASCII))
+        bb.putInt(totalBytes - 8)
+        bb.put("WAVE".toByteArray(Charsets.US_ASCII))
+        bb.put("fmt ".toByteArray(Charsets.US_ASCII))
+        bb.putInt(16)
+        bb.putShort(1) // PCM
+        bb.putShort(1) // mono
+        bb.putInt(22050)
+        bb.putInt(22050 * 2)
+        bb.putShort(2)
+        bb.putShort(16)
+        bb.put("JUNK".toByteArray(Charsets.US_ASCII))
+        bb.putInt(junkPayload.size)
+        bb.put(junkPayload)
+        bb.put("data".toByteArray(Charsets.US_ASCII))
+        bb.putInt(dataSize)
+        for (i in 0 until sampleCount) {
+            bb.putShort(((i % 100) * 150).toShort())
+        }
+
+        val parsed = TtsWavPcmHelper.parseWavHeader(wav)
+        assertNotNull(parsed)
+        assertEquals(22050, parsed!!.sampleRate)
+        assertEquals(1, parsed.channelCount)
+        assertEquals(16, parsed.bitsPerSample)
+        assertEquals(dataSize, parsed.dataLength)
+
+        val stereo48k = TtsWavPcmHelper.resamplePcm16To48kStereo(wav, parsed)
+        val expectedFrames = ((sampleCount.toLong() * 48000L) / 22050L).toInt()
+        assertEquals(expectedFrames * 4, stereo48k.size)
+        assertNull(TtsWavPcmHelper.parseWavHeader("ID3\u0003\u0000".toByteArray()))
     }
 }

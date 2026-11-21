@@ -32,7 +32,8 @@ data class TtsPlaybackItem(
  */
 class TtsAudioPlayerQueue(
     context: Context,
-    private val onSpeakingStateChanged: (Boolean) -> Unit
+    private val onSpeakingStateChanged: (Boolean) -> Unit,
+    private val onPlaybackError: (String) -> Unit = {}
 ) {
     private val queue = ConcurrentLinkedQueue<TtsPlaybackItem>()
     private val released = AtomicBoolean(false)
@@ -44,6 +45,7 @@ class TtsAudioPlayerQueue(
 
     // Accessed strictly from handlerThread (or after quit on release)
     private var activePlayer: MediaPlayer? = null
+    private var activeWavTrack: ActiveWavAudioTrack? = null
     private var activeEnhancer: LoudnessEnhancer? = null
     private var pausedByMovie = false
 
@@ -62,15 +64,18 @@ class TtsAudioPlayerQueue(
         if (released.get() || !item.audioFile.exists() || item.audioFile.length() <= 64L) return
         queue.add(item)
         postOnPlayerThread {
-            if (!released.get() && activePlayer == null && !pausedByMovie) {
+            if (!released.get() && activePlayer == null && activeWavTrack == null && !pausedByMovie) {
                 playNextOnPlayerThread()
             }
         }
     }
 
+    fun pendingCount(): Int = queue.size
+
     fun updateVolumePercent(percent: Int) {
         ttsVolumePercent = percent.coerceIn(0, 150)
         postOnPlayerThread {
+            activeWavTrack?.updateVolumePercent(ttsVolumePercent)
             val mp = activePlayer ?: return@postOnPlayerThread
             applyVolumeOnPlayerThread(mp, ttsVolumePercent)
         }
@@ -80,6 +85,12 @@ class TtsAudioPlayerQueue(
         postOnPlayerThread {
             if (released.get()) return@postOnPlayerThread
             pausedByMovie = paused
+            val wav = activeWavTrack
+            if (wav != null) {
+                wav.setPaused(paused)
+                notifySpeaking(!paused)
+                return@postOnPlayerThread
+            }
             val mp = activePlayer
             if (paused) {
                 if (mp != null) {
@@ -167,6 +178,49 @@ class TtsAudioPlayerQueue(
                 else -> next.baseSpeed.coerceIn(0.6f, 2.0f)
             }
 
+            // Prefer direct AudioTrack for uncompressed 16-bit PCM WAV (Piper / System TTS) to bypass
+            // Android TV OEM NuPlayer/MediaPlayer 22050 Hz mono WAV quirks; fall back to MediaPlayer on
+            // non-PCM formats (.mp3 Google Translate) or if AudioTrack cannot initialize.
+            if (next.audioFile.name.endsWith(".wav", ignoreCase = true)) {
+                var startedTrack: ActiveWavAudioTrack? = null
+                val wavAttempt = runCatching {
+                    lateinit var trackRef: ActiveWavAudioTrack
+                    trackRef = ActiveWavAudioTrack(
+                        handler = playerHandler,
+                        audioAttributes = speechAttributes,
+                        file = next.audioFile,
+                        effectiveSpeed = effectiveSpeed,
+                        volumePercent = ttsVolumePercent,
+                        onCompleted = {
+                            postOnPlayerThread {
+                                if (activeWavTrack === trackRef) {
+                                    activeWavTrack = null
+                                    playNextOnPlayerThread()
+                                }
+                            }
+                        },
+                        onError = { err ->
+                            postOnPlayerThread {
+                                if (activeWavTrack === trackRef) {
+                                    activeWavTrack = null
+                                    runCatching { onPlaybackError("AudioTrack WAV: $err") }
+                                    playNextOnPlayerThread()
+                                }
+                            }
+                        }
+                    )
+                    startedTrack = trackRef
+                    activeWavTrack = trackRef
+                    trackRef.start()
+                }
+                if (wavAttempt.isSuccess) {
+                    notifySpeaking(true)
+                    return
+                }
+                runCatching { startedTrack?.release() }
+                if (activeWavTrack === startedTrack) activeWavTrack = null
+            }
+
             val mp = MediaPlayer()
             try {
                 mp.setAudioAttributes(speechAttributes)
@@ -183,9 +237,10 @@ class TtsAudioPlayerQueue(
                         }
                     }
                 }
-                mp.setOnErrorListener { errored, _, _ ->
+                mp.setOnErrorListener { errored, what, extra ->
                     postOnPlayerThread {
                         if (activePlayer === errored) {
+                            runCatching { onPlaybackError("MediaPlayer($what/$extra)") }
                             releaseActiveOnPlayerThread()
                             playNextOnPlayerThread()
                         } else {
@@ -208,7 +263,8 @@ class TtsAudioPlayerQueue(
                 }
                 notifySpeaking(true)
                 return
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                runCatching { onPlaybackError("MediaPlayer: ${t.javaClass.simpleName}: ${t.message}") }
                 runCatching { mp.release() }
                 if (activePlayer === mp) activePlayer = null
             }
@@ -237,6 +293,10 @@ class TtsAudioPlayerQueue(
     }
 
     private fun releaseActiveOnPlayerThread() {
+        activeWavTrack?.let { wav ->
+            runCatching { wav.release() }
+        }
+        activeWavTrack = null
         runCatching { activeEnhancer?.release() }
         activeEnhancer = null
         activePlayer?.let { mp ->

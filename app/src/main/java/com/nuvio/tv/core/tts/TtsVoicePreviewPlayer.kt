@@ -7,6 +7,7 @@ import android.media.PlaybackParams
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +22,7 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 
 data class TtsVoicePreviewState(
     val activeVoiceId: String? = null,
@@ -73,6 +75,9 @@ object TtsVoicePreviewPlayer {
     private var activePlayer: MediaPlayer? = null
 
     @Volatile
+    private var activeWavTrack: ActiveWavAudioTrack? = null
+
+    @Volatile
     private var playbackGeneration = 0L
 
     fun togglePreview(
@@ -103,15 +108,18 @@ object TtsVoicePreviewPlayer {
         )
 
         activeJob = scope.launch {
-            val file = resolvePreviewAudioFile(appContext, voiceId, speechSpeed, previewText)
+            val resolved = resolvePreviewAudioFile(appContext, voiceId, speechSpeed, previewText)
             if (playbackGeneration != generation) return@launch
 
+            val file = resolved.file
             if (file == null || !file.exists() || file.length() <= 64L) {
+                val errMsg = resolved.errorMessage ?: "Chưa tải được mẫu nghe thử cho giọng này"
+                TtsDiagnosticsState.statusMessage.value = errMsg
                 _state.value = TtsVoicePreviewState(
                     activeVoiceId = null,
                     isLoading = false,
                     isPlaying = false,
-                    errorMessage = "Chưa tải được mẫu nghe thử cho giọng này"
+                    errorMessage = errMsg
                 )
                 return@launch
             }
@@ -130,28 +138,35 @@ object TtsVoicePreviewPlayer {
         _state.value = TtsVoicePreviewState()
     }
 
+    private data class PreviewResolveResult(
+        val file: File?,
+        val errorMessage: String? = null
+    )
+
     private suspend fun resolvePreviewAudioFile(
         appContext: Context,
         voiceId: String,
         speechSpeed: Float,
         previewText: String
-    ): File? {
+    ): PreviewResolveResult {
         val option = TtsVoiceCatalog.findVoice(voiceId)
         val previewCacheDir = File(appContext.cacheDir, "tts_preview_cache").apply { mkdirs() }
 
         when (option.backend) {
             TtsBackendType.GOOGLE_TRANSLATE -> {
                 val google = GoogleTranslateTtsEngine(appContext)
-                return google.synthesizeToMp3(previewText, "preview_${option.id}")
+                return PreviewResolveResult(google.synthesizeToMp3(previewText, "preview_${option.id}"))
             }
             TtsBackendType.SYSTEM_TTS -> {
                 val system = SystemTtsEngine(appContext)
                 return try {
-                    system.synthesizeToWav(
-                        text = previewText,
-                        gender = option.gender,
-                        speechRate = speechSpeed,
-                        cacheKey = "preview_sys_${(speechSpeed * 100).toInt()}"
+                    PreviewResolveResult(
+                        system.synthesizeToWav(
+                            text = previewText,
+                            gender = option.gender,
+                            speechRate = speechSpeed,
+                            cacheKey = "preview_sys_${(speechSpeed * 100).toInt()}"
+                        )
                     )
                 } finally {
                     system.release()
@@ -160,7 +175,7 @@ object TtsVoicePreviewPlayer {
             TtsBackendType.PIPER_ONNX -> {
                 if (TtsVoiceCatalog.isVoiceReady(appContext, option.id)) {
                     val outWav = File(previewCacheDir, "live_${option.id}_${(speechSpeed * 100).toInt()}.wav")
-                    if (outWav.exists() && outWav.length() > 256L) return outWav
+                    if (outWav.exists() && outWav.length() > 256L) return PreviewResolveResult(outWav)
                     val piper = PiperOnnxEngine(appContext)
                     try {
                         val speakable = VietnameseTextNormalizer.parseAndCleanCue(previewText).speakableText
@@ -168,9 +183,16 @@ object TtsVoicePreviewPlayer {
                         if (synth != null) {
                             val trimmed = TtsAudioPostProcessor.trimSilence(synth.samples, synth.sampleRate)
                             if (TtsAudioPostProcessor.writeNormalizedWav(trimmed, synth.sampleRate, 100, outWav)) {
-                                return outWav
+                                return PreviewResolveResult(outWav)
                             }
+                            return PreviewResolveResult(null, "Không ghi được file WAV nghe thử Piper")
                         }
+                        return PreviewResolveResult(
+                            null,
+                            piper.lastErrorMessage() ?: "Piper không tổng hợp được giọng ${option.displayName}"
+                        )
+                    } catch (ce: CancellationException) {
+                        throw ce
                     } finally {
                         piper.release()
                     }
@@ -179,12 +201,12 @@ object TtsVoicePreviewPlayer {
                 // Voice NOT downloaded yet: play lightweight bundled sample or remote mirror clip
                 val cachedSample = File(previewCacheDir, "sample_${option.id}.m4a")
                 if (cachedSample.exists() && cachedSample.length() > 512L) {
-                    return cachedSample
+                    return PreviewResolveResult(cachedSample)
                 }
 
-                extractBundledSample(appContext, option.id, cachedSample)?.let { return it }
-                downloadRemoteSample(option.id, cachedSample)?.let { return it }
-                return null
+                extractBundledSample(appContext, option.id, cachedSample)?.let { return PreviewResolveResult(it) }
+                downloadRemoteSample(option.id, cachedSample)?.let { return PreviewResolveResult(it) }
+                return PreviewResolveResult(null)
             }
         }
     }
@@ -254,19 +276,60 @@ object TtsVoicePreviewPlayer {
             if (playbackGeneration != generation) return@post
             releaseActiveOnPlayerThread()
 
+            val clampedSpeed = speechSpeed.coerceIn(0.7f, 1.5f)
+            if (file.name.endsWith(".wav", ignoreCase = true)) {
+                var startedTrack: ActiveWavAudioTrack? = null
+                val wavAttempt = runCatching {
+                    lateinit var trackRef: ActiveWavAudioTrack
+                    trackRef = ActiveWavAudioTrack(
+                        handler = playerHandler,
+                        audioAttributes = previewAttributes,
+                        file = file,
+                        effectiveSpeed = clampedSpeed,
+                        volumePercent = 100,
+                        onCompleted = {
+                            playerHandler.post {
+                                if (activeWavTrack === trackRef) {
+                                    activeWavTrack = null
+                                }
+                                if (playbackGeneration == generation) {
+                                    _state.value = TtsVoicePreviewState()
+                                }
+                            }
+                        },
+                        onError = { err ->
+                            playerHandler.post {
+                                if (activeWavTrack === trackRef) {
+                                    activeWavTrack = null
+                                }
+                                if (playbackGeneration == generation) {
+                                    _state.value = TtsVoicePreviewState(errorMessage = "Không thể phát mẫu WAV: $err")
+                                }
+                            }
+                        }
+                    )
+                    startedTrack = trackRef
+                    activeWavTrack = trackRef
+                    trackRef.start()
+                }
+                if (wavAttempt.isSuccess) {
+                    _state.value = TtsVoicePreviewState(
+                        activeVoiceId = voiceId,
+                        isLoading = false,
+                        isPlaying = true,
+                        errorMessage = null
+                    )
+                    return@post
+                }
+                runCatching { startedTrack?.release() }
+                if (activeWavTrack === startedTrack) activeWavTrack = null
+            }
+
             val mp = MediaPlayer()
             try {
                 mp.setAudioAttributes(previewAttributes)
                 mp.setDataSource(file.absolutePath)
                 mp.prepare()
-                runCatching {
-                    val speed = speechSpeed.coerceIn(0.7f, 1.5f)
-                    if (kotlin.math.abs(speed - 1.0f) > 0.02f) {
-                        val params = mp.playbackParams ?: PlaybackParams()
-                        params.speed = speed
-                        mp.playbackParams = params
-                    }
-                }
                 mp.setOnCompletionListener { finished ->
                     playerHandler.post {
                         if (activePlayer === finished) {
@@ -298,17 +361,24 @@ object TtsVoicePreviewPlayer {
                 }
                 activePlayer = mp
                 mp.start()
+                if (abs(clampedSpeed - 1.0f) > 0.02f) {
+                    runCatching {
+                        mp.playbackParams = PlaybackParams()
+                            .setSpeed(clampedSpeed)
+                            .setPitch(1.0f)
+                    }
+                }
                 _state.value = TtsVoicePreviewState(
                     activeVoiceId = voiceId,
                     isLoading = false,
                     isPlaying = true,
                     errorMessage = null
                 )
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
                 runCatching { mp.release() }
                 if (activePlayer === mp) activePlayer = null
                 if (playbackGeneration == generation) {
-                    _state.value = TtsVoicePreviewState(errorMessage = "Lỗi phát mẫu giọng đọc")
+                    _state.value = TtsVoicePreviewState(errorMessage = "Lỗi phát mẫu giọng đọc (${t.javaClass.simpleName})")
                 }
             }
         }
@@ -321,6 +391,10 @@ object TtsVoicePreviewPlayer {
     }
 
     private fun releaseActiveOnPlayerThread() {
+        activeWavTrack?.let { wav ->
+            runCatching { wav.release() }
+        }
+        activeWavTrack = null
         activePlayer?.let { mp ->
             runCatching { if (mp.isPlaying) mp.stop() }
             runCatching { mp.release() }
