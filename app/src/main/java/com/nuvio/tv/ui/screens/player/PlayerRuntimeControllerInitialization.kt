@@ -1299,12 +1299,13 @@ internal fun PlayerRuntimeController.initializePlayer(
 
             // ── Extractors & DV Hook ──
             val autoSyncObservesText = com.nuvio.tv.ui.screens.player.autosync.AutoSyncPreferences.isEnabled(context)
+            val parseSubtitlesDuringExtraction = autoSyncObservesText || ttsPreferences.current.enabled
             val extractorsFactory: ExtractorsFactory = AviTrackFormatExtractorsFactory(
                 DefaultExtractorsFactory()
                     .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)
                     .setTsExtractorTimestampSearchBytes(1500 * TsExtractor.TS_PACKET_SIZE)
                     .setSubtitleParserFactory(
-                        RenderTimeSubtitles.extractionParsers(DefaultSubtitleParserFactory(), autoSyncObservesText)
+                        RenderTimeSubtitles.extractionParsers(DefaultSubtitleParserFactory(), parseSubtitlesDuringExtraction)
                     )
             )
 
@@ -1611,14 +1612,18 @@ internal fun PlayerRuntimeController.initializePlayer(
                         stripDvRpu = stripDvRpuEnabled,
                         stripHdr10PlusSei = stripHdr10PlusSei,
                         injectHdr10Sei = playerSettings.injectHdr10MetadataOnStrip,
-                        autoSyncObservesText = autoSyncObservesText
+                        autoSyncObservesText = parseSubtitlesDuringExtraction
                     ).let { MkvFrameTimingExtractorsFactory(it, startMkvFrameTiming()) }
                         .let { TsFieldPairsExtractorsFactory(it) }
             // The thumbnail tap wraps the outermost factory. The libass path takes the unwrapped one and wraps
             // after its own Matroska swap.
+            ttsEmbeddedCueBridge.onStreamReset()
             val effectiveExtractorsFactory: ExtractorsFactory =
                 com.nuvio.tv.core.player.thumbnail.PlaybackTap.wrap(
-                    autoSyncExtractorsFactory(dolbyVisionExtractorsFactory, url, headers) // AutoSync hook
+                    TtsSubtitlePrefetchExtractorsFactory(
+                        delegate = autoSyncExtractorsFactory(dolbyVisionExtractorsFactory, url, headers), // AutoSync hook
+                        bridge = ttsEmbeddedCueBridge
+                    )
                 )
 
             setLoadingStatus(
@@ -1772,12 +1777,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                         autoSyncSourceKey = url.takeIf {
                             com.nuvio.tv.ui.screens.player.autosync.AutoSyncPreferences.isEnabled(context)
                         },
-                        onAssDialogueExtracted = { cue ->
-                            ttsCoordinator.appendStreamingTimelineCue(cue)
-                        },
+                        onAssDialogueExtracted = null,
                         onAssScriptParsed = { cues ->
                             ttsCoordinator.updateTimelineCues(cues)
-                        }
+                        },
+                        ttsEmbeddedCueBridge = ttsEmbeddedCueBridge
                     )
             } else {
                 buildDefaultPlayer()

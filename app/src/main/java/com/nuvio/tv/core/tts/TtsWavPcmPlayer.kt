@@ -133,6 +133,24 @@ internal object TtsWavPcmHelper {
         }
         return out
     }
+
+    /**
+     * Appends a short silent PCM16 zero tail after real speech frames so vendor Android TV Audio
+     * HALs flush every spoken syllable cleanly while [ActiveWavAudioTrack] monitors drain without
+     * calling `AudioTrack.stop()` prematurely.
+     */
+    internal fun appendSilenceTail(
+        pcmBytes: ByteArray,
+        sampleRate: Int,
+        channelCount: Int,
+        tailMs: Long = 64L
+    ): ByteArray {
+        val frameSize = channelCount.coerceIn(1, 2) * 2
+        val safeRate = sampleRate.coerceAtLeast(8_000)
+        val tailFrames = ((safeRate * tailMs.coerceIn(0L, 250L)) / 1_000L).toInt()
+        if (tailFrames <= 0) return pcmBytes
+        return pcmBytes.copyOf(pcmBytes.size + tailFrames * frameSize)
+    }
 }
 
 /**
@@ -150,6 +168,7 @@ internal class ActiveWavAudioTrack(
 ) {
     private val track: AudioTrack
     private val pcmData: ByteArray
+    private val audioFrames: Int
     private val totalFrames: Int
     private val sampleRate: Int
     private val bufferSizeBytes: Int
@@ -219,10 +238,17 @@ internal class ActiveWavAudioTrack(
         val pair = builtResult ?: throw IllegalStateException("AudioTrack init failed (${header.sampleRate}Hz ${header.channelCount}ch)")
         track = pair.first
         bufferSizeBytes = pair.second
-        pcmData = chosenPcm
+        val paddedPcm = TtsWavPcmHelper.appendSilenceTail(
+            pcmBytes = chosenPcm,
+            sampleRate = chosenRate,
+            channelCount = chosenChannels,
+            tailMs = 64L
+        )
+        pcmData = paddedPcm
         sampleRate = chosenRate
-        totalFrames = pcmData.size / (chosenChannels * 2)
-        totalClipMs = ((totalFrames * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong()
+        audioFrames = chosenPcm.size / (chosenChannels * 2)
+        totalFrames = paddedPcm.size / (chosenChannels * 2)
+        totalClipMs = ((audioFrames * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong()
 
         updateVolumePercent(volumePercent)
     }
@@ -342,10 +368,12 @@ internal class ActiveWavAudioTrack(
     }
 
     private fun markWrittenComplete() {
-        runCatching { track.stop() }
+        // Never call track.stop() immediately after play(): vendor Android TV Audio HALs cancel
+        // or mute short MODE_STREAM buffers in STATE_STOPPING before MixerThread drains them.
+        // We keep PLAYSTATE_PLAYING while trailing silence drains and stop() only in release().
         val headNow = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
         val remainingFrames = (totalFrames - headNow).coerceAtLeast(0L)
-        drainBudgetMs = ((remainingFrames * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong() + 260L
+        drainBudgetMs = ((remainingFrames * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong() + 180L
         drainStartMs = android.os.SystemClock.elapsedRealtime()
     }
 
@@ -375,19 +403,19 @@ internal class ActiveWavAudioTrack(
             val now = android.os.SystemClock.elapsedRealtime()
             if (drainStartMs < 0L) {
                 val remNow = (totalFrames - head).coerceAtLeast(0L)
-                drainBudgetMs = ((remNow * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong() + 260L
+                drainBudgetMs = ((remNow * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong() + 180L
                 drainStartMs = now
             }
-            val remainingFrames = (totalFrames - head).coerceAtLeast(0L)
+            val remainingAudioFrames = (audioFrames - head).coerceAtLeast(0L)
             val totalActiveMs = activePlayedMs + if (activeResumeUptimeMs >= 0L) {
                 (now - activeResumeUptimeMs).coerceAtLeast(0L)
             } else {
                 0L
             }
 
-            if (remainingFrames <= 48L ||
+            if (remainingAudioFrames <= 0L ||
                 (now - drainStartMs) >= drainBudgetMs ||
-                totalActiveMs >= totalClipMs + 320L
+                totalActiveMs >= totalClipMs + 140L
             ) {
                 release()
                 onCompleted()

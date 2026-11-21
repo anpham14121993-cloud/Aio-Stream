@@ -349,6 +349,13 @@ internal fun PlayerRuntimeController.updateAvailableTracks(tracks: Tracks) {
             selectedSubtitleTrackIndex = finalSubtitleIndex
         )
     }
+    val activeState = _uiState.value
+    val activeInternalSub = if (activeState.selectedAddonSubtitle == null && activeState.selectedSubtitleTrackIndex >= 0) {
+        subtitleTracks.getOrNull(activeState.selectedSubtitleTrackIndex)
+    } else {
+        null
+    }
+    ttsEmbeddedCueBridge.selectInternalTrack(activeInternalSub)
     updateAudioControlAvailability(audioTracks, selectedAudioIndex)
     logSwitchTrace(
         stage = "exo-tracks-update-end",

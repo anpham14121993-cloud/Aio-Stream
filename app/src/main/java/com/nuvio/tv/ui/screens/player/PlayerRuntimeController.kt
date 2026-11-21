@@ -395,6 +395,7 @@ class PlayerRuntimeController(
         mediaSourceFactory.evictCachedSession()
         releasePlayer(flushPlaybackState = true, trimBufferInBackground = true)
         ttsCoordinator.onPlaybackStateChanged(false)
+        ttsEmbeddedCueBridge.onStreamReset()
         ttsCoordinator.clearStreamingTimelineCues()
         playerSession.close()
     }
@@ -953,6 +954,7 @@ class PlayerRuntimeController(
     internal var mpvStartupStallTicks: Int = 0
     internal var mpvStartupAbsoluteTicks: Int = 0
     internal var mpvStartupCacheGrowthTicks: Int = 0
+    internal val ttsEmbeddedCueBridge = TtsEmbeddedCueBridge(ttsCoordinator)
     internal var mpvLastDemuxerCacheSec: Double = 0.0
     internal var mpvActivePlaylistEntryId: Long? = null
     internal var mpvLastFileError: String? = null

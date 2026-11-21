@@ -283,6 +283,7 @@ internal fun PlayerRuntimeController.selectSubtitleTrack(trackIndex: Int) {
                                 selectedAddonSubtitle = null
                             )
                         }
+                        ttsEmbeddedCueBridge.selectInternalTrack(_uiState.value.subtitleTracks.getOrNull(trackIndex))
                         return
                     }
                     currentSubIndex++
@@ -374,6 +375,7 @@ internal fun subtitleLanguagesAfterPlayerChoice(style: SubtitleStyleSettings, ch
 
 internal fun PlayerRuntimeController.disableSubtitles() {
     resetSubtitleAutoSyncState()
+    ttsEmbeddedCueBridge.selectInternalTrack(null)
     ttsCoordinator.clearStreamingTimelineCues()
     logSwitchTrace(
         stage = "disable-subtitles",
@@ -553,6 +555,7 @@ internal fun PlayerRuntimeController.toSubtitleConfiguration(subtitle: Subtitle)
 internal fun PlayerRuntimeController.selectAddonSubtitle(subtitle: Subtitle) {
     // Any actual selection supersedes a parked auto-restore.
     deferredAutoAddonSubtitle = null
+    ttsEmbeddedCueBridge.selectInternalTrack(null)
     logSwitchTrace(
         stage = "select-addon-subtitle",
         message = "usingMpv=${isUsingMpvEngine()} addonId=${subtitle.id} addonLang=${subtitle.lang} addonName=${subtitle.addonName}"

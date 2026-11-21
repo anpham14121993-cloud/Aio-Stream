@@ -74,6 +74,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     private var directDecodeMode: MpvDirectDecodeMode = MpvDirectDecodeMode.AUTOMATIC
     private var directRefusedOnThisBox = false
     private var directRequestedFrom: String? = null
+    /** Called when MPV's `sub-text` property changes (dispatched immediately instead of polling). */
+    @Volatile
+    var onSubtitleTextObserved: ((String?) -> Unit)? = null
+    @Volatile
+    private var lastDispatchedSubText: String? = null
     /** Records a refusal of the direct decoder for a file; returns true once the box counts as refusing it. */
     var onDirectDecodeRefused: ((String?) -> Boolean)? = null
     var onDirectDecodeWorked: (() -> Unit)? = null
@@ -94,6 +99,14 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
 
     private fun cacheProperty(name: String, value: Any?) {
         if (name in MpvCachedProperty.all) propertyCache.put(name, value)
+        if (name == MpvCachedProperty.SUB_TEXT) {
+            val nextText = value as? String
+            if (nextText != lastDispatchedSubText) {
+                lastDispatchedSubText = nextText
+                val callback = onSubtitleTextObserved ?: return
+                post { callback(nextText) }
+            }
+        }
     }
 
     fun ensureInitialized() {

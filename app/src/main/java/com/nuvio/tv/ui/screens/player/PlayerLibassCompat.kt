@@ -52,7 +52,8 @@ internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
     autoSyncSourceKey: String? = null,
     subtitleTimeShiftUs: () -> Long = { 0L },
     onAssDialogueExtracted: ((SubtitleSyncCue) -> Unit)? = null,
-    onAssScriptParsed: ((List<SubtitleSyncCue>) -> Unit)? = null
+    onAssScriptParsed: ((List<SubtitleSyncCue>) -> Unit)? = null,
+    ttsEmbeddedCueBridge: TtsEmbeddedCueBridge? = null
 ): ExoPlayer {
     val assHandler = AssHandler(assCacheConfig(smallBox = BufferSizing.isSmallBox(totalRamBytes(context))))
     val assSubtitleParserFactory = CompatAssSubtitleParserFactory(assHandler, onAssScriptParsed)
@@ -60,16 +61,18 @@ internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
     val swappedExtractorsFactory = extractorsFactory.withAssMkvSupportCompat(
         subtitleParserFactory = RenderTimeSubtitles.extractionParsers(
             assSubtitleParserFactory,
-            autoSyncObservesText = autoSyncSourceKey != null
+            autoSyncObservesText = autoSyncSourceKey != null || ttsEmbeddedCueBridge != null
         ),
         assHandler = assHandler,
         onAssDialogueExtracted = onAssDialogueExtracted
     )
-    val assExtractorsFactory = com.nuvio.tv.core.player.thumbnail.PlaybackTap.wrap(
-        autoSyncSourceKey?.let {
-            com.nuvio.tv.ui.screens.player.autosync.AutoSyncExtractorsFactory(swappedExtractorsFactory, it)
-        } ?: swappedExtractorsFactory
-    )
+    val observedExtractorsFactory = autoSyncSourceKey?.let {
+        com.nuvio.tv.ui.screens.player.autosync.AutoSyncExtractorsFactory(swappedExtractorsFactory, it)
+    } ?: swappedExtractorsFactory
+    val ttsWrappedExtractorsFactory = ttsEmbeddedCueBridge?.let {
+        TtsSubtitlePrefetchExtractorsFactory(observedExtractorsFactory, it)
+    } ?: observedExtractorsFactory
+    val assExtractorsFactory = com.nuvio.tv.core.player.thumbnail.PlaybackTap.wrap(ttsWrappedExtractorsFactory)
     playerMediaSourceFactory?.configureSubtitleParsing(
         extractorsFactory = assExtractorsFactory,
         subtitleParserFactory = assSubtitleParserFactory

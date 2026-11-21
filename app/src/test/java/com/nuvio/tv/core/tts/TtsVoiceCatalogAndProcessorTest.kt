@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.tts
 
 import com.nuvio.tv.ui.screens.player.SubtitleSyncCue
+import com.nuvio.tv.ui.screens.player.TtsSubtitleTextDecoder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -262,5 +263,119 @@ class TtsVoiceCatalogAndProcessorTest {
             hasPrefetchedClip = { true }
         )
         assertEquals(listOf(1), secondDue)
+
+        // Streaming cue index shifts must not invalidate prefetched/triggered cue keys
+        assertEquals(
+            TtsSubtitleCoordinator.cueKeyFor(rapidB, 1),
+            TtsSubtitleCoordinator.cueKeyFor(rapidB, 4)
+        )
+    }
+
+    @Test
+    fun silenceTailAdaptiveSpeedAndEmbeddedDecodingWork() {
+        val rawPcm = ByteArray(100) { 0x12 }
+        val padded = TtsWavPcmHelper.appendSilenceTail(
+            pcmBytes = rawPcm,
+            sampleRate = 22_050,
+            channelCount = 1,
+            tailMs = 64L
+        )
+        val expectedTailBytes = ((22_050L * 64L) / 1_000L).toInt() * 2
+        assertEquals(rawPcm.size + expectedTailBytes, padded.size)
+        for (i in rawPcm.size until padded.size) {
+            assertEquals(0.toByte(), padded[i])
+        }
+
+        // Catch-up boosts inference and playback speed when lagging or on slow CPU EMA
+        assertEquals(
+            1.0f,
+            TtsSubtitleCoordinator.computeNativeSpeedBoost(
+                slotMs = 3000L,
+                textLength = 20,
+                lagMs = 0L,
+                leadRemainingMs = 5000L,
+                emaSynthMs = 800L,
+                backlogDepth = 0
+            )
+        )
+        assertTrue(
+            TtsSubtitleCoordinator.computeNativeSpeedBoost(
+                slotMs = 3000L,
+                textLength = 35,
+                lagMs = 950L,
+                leadRemainingMs = 0L,
+                emaSynthMs = 2500L,
+                backlogDepth = 2
+            ) >= 1.22f
+        )
+        assertTrue(
+            TtsSubtitleCoordinator.computePlaybackCatchupSpeed(
+                userBaseSpeed = 1.0f,
+                lagMs = 1800L,
+                backlogDepth = 2
+            ) >= 1.38f
+        )
+
+        // Embedded SubRip, VTT, ASS, TX3G decode cleanly while PGS image subs are skipped
+        val srtBytes = "<i>Xin chào</i>\nHẹn gặp lại!".toByteArray(Charsets.UTF_8)
+        val srtCue = TtsSubtitleTextDecoder.decodeRawSample(
+            mimeType = androidx.media3.common.MimeTypes.APPLICATION_SUBRIP,
+            codecs = null,
+            bytes = srtBytes,
+            offset = 0,
+            length = srtBytes.size,
+            startTimeUs = 12_500_000L
+        )
+        assertNotNull(srtCue)
+        assertEquals(12_500L, srtCue!!.startTimeMs)
+        assertEquals("Xin chào\nHẹn gặp lại!", srtCue.text)
+
+        val vttBytes = "WEBVTT\n\n00:00:12.000 --> 00:00:14.000\n<c.cyan>Tất cả ổn chứ?</c>".toByteArray(Charsets.UTF_8)
+        val vttCue = TtsSubtitleTextDecoder.decodeRawSample(
+            mimeType = androidx.media3.common.MimeTypes.TEXT_VTT,
+            codecs = null,
+            bytes = vttBytes,
+            offset = 0,
+            length = vttBytes.size,
+            startTimeUs = 12_000_000L
+        )
+        assertEquals("Tất cả ổn chứ?", vttCue?.text)
+
+        val assDiag = "Dialogue: 0,0:00:10.00,0:00:13.00,Default,,0,0,0,,{\\an8}Không sao đâu\\NCố lên!".toByteArray(Charsets.UTF_8)
+        val assCue = TtsSubtitleTextDecoder.decodeRawSample(
+            mimeType = androidx.media3.common.MimeTypes.TEXT_SSA,
+            codecs = null,
+            bytes = assDiag,
+            offset = 0,
+            length = assDiag.size,
+            startTimeUs = 10_000_000L
+        )
+        assertEquals("Không sao đâu Cố lên!", assCue?.text)
+
+        val txText = "Chào buổi tối".toByteArray(Charsets.UTF_8)
+        val tx3g = ByteArray(2 + txText.size + 4)
+        tx3g[0] = ((txText.size ushr 8) and 0xFF).toByte()
+        tx3g[1] = (txText.size and 0xFF).toByte()
+        System.arraycopy(txText, 0, tx3g, 2, txText.size)
+        val txCue = TtsSubtitleTextDecoder.decodeRawSample(
+            mimeType = androidx.media3.common.MimeTypes.APPLICATION_TX3G,
+            codecs = null,
+            bytes = tx3g,
+            offset = 0,
+            length = tx3g.size,
+            startTimeUs = 5_000_000L
+        )
+        assertEquals("Chào buổi tối", txCue?.text)
+
+        assertNull(
+            TtsSubtitleTextDecoder.decodeRawSample(
+                mimeType = androidx.media3.common.MimeTypes.APPLICATION_PGS,
+                codecs = null,
+                bytes = byteArrayOf(1, 2, 3, 4),
+                offset = 0,
+                length = 4,
+                startTimeUs = 1_000_000L
+            )
+        )
     }
 }

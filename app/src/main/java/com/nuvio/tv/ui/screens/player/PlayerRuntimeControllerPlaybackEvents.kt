@@ -528,7 +528,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     }
                 }
                 reportServerPlayback()
-                delay(500)
+                delay(if (ttsPreferences.current.enabled) 120L else 500L)
                 continue
             }
 
@@ -663,7 +663,7 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                 }
             }
             reportServerPlayback()
-            delay(500)
+            delay(if (ttsPreferences.current.enabled) 120L else 500L)
         }
     }
 }

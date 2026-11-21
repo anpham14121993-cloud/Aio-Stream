@@ -183,25 +183,25 @@ class TtsAudioPlayerQueue(
                 0L
             }
             val pendingCount = queue.size
-            // Skip severely behind head items ONLY if newer items are already waiting in queue so
-            // continuous dialogue stays synchronized without ever dropping the final active line.
-            if (latenessMs > 4500L && pendingCount > 0) {
+            // Only discard an item when it is severely obsolete (>12s behind playback) and newer
+            // synthesized dialogue is already queued; shorter bursts catch up smoothly via speed scaling.
+            if (latenessMs > 12_000L && pendingCount > 0) {
                 continue
             }
 
             val backlogSpeed = when {
-                pendingCount >= 3 -> max(next.baseSpeed * 1.45f, 1.55f)
-                pendingCount == 2 -> max(next.baseSpeed * 1.32f, 1.40f)
-                pendingCount == 1 -> max(next.baseSpeed * 1.18f, 1.25f)
+                pendingCount >= 3 -> max(next.baseSpeed * 1.50f, 1.62f)
+                pendingCount == 2 -> max(next.baseSpeed * 1.35f, 1.45f)
+                pendingCount == 1 -> max(next.baseSpeed * 1.20f, 1.26f)
                 else -> next.baseSpeed
             }
             val latenessSpeed = when {
-                latenessMs > 2400L -> max(next.baseSpeed * 1.45f, 1.55f)
-                latenessMs > 1200L -> max(next.baseSpeed * 1.30f, 1.38f)
-                latenessMs > 450L -> max(next.baseSpeed * 1.15f, 1.20f)
+                latenessMs > 3000L -> max(next.baseSpeed * 1.55f, 1.68f)
+                latenessMs > 1600L -> max(next.baseSpeed * 1.38f, 1.48f)
+                latenessMs > 600L -> max(next.baseSpeed * 1.20f, 1.28f)
                 else -> next.baseSpeed
             }
-            val effectiveSpeed = max(backlogSpeed, latenessSpeed).coerceIn(0.6f, 1.75f)
+            val effectiveSpeed = max(backlogSpeed, latenessSpeed).coerceIn(0.6f, 1.85f)
 
             // Prefer direct AudioTrack for uncompressed 16-bit PCM WAV (Piper / System TTS) to bypass
             // Android TV OEM NuPlayer/MediaPlayer 22050 Hz mono WAV quirks; fall back to MediaPlayer on

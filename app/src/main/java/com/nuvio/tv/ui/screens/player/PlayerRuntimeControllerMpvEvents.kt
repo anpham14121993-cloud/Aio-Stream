@@ -134,6 +134,15 @@ internal fun PlayerRuntimeController.registerMpvEventRelay(view: NuvioMpvSurface
     markMpvTracksStale()
     val relay = MpvEventRelay(this, mpvEventRelayEpoch)
     mpvEventRelay = relay
+    view.onSubtitleTextObserved = { rawText ->
+        subtitleCueTracker.updateText(rawText)
+        val sub = rawText?.trim()
+        if (!sub.isNullOrEmpty()) {
+            val posMs = view.currentPositionMs().takeIf { it >= 0L } ?: currentTtsPlaybackPositionMs()
+            updateTtsPlaybackClock(mediaMs = posMs, isPlaying = view.isPlayingNow(), speed = _uiState.value.playbackSpeed)
+            ttsCoordinator.onLiveCueText(sub, posMs)
+        }
+    }
     runCatching { view.mpv.addObserver(relay) }
     runCatching { view.mpv.addLogObserver(relay) }
 }
@@ -143,6 +152,7 @@ internal fun PlayerRuntimeController.unregisterMpvEventRelay() {
     mpvEventRelay = null
     relay.active.set(false)
     mpvView?.let { view ->
+        view.onSubtitleTextObserved = null
         runCatching { view.mpv.removeObserver(relay) }
         runCatching { view.mpv.removeLogObserver(relay) }
     }
