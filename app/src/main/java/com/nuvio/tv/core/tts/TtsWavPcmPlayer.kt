@@ -701,8 +701,7 @@ internal class PersistentTtsAudioStream(
     }
 
     private fun playClipOnTrack(clip: QueuedPcmClip, silenceChunk: ByteArray) {
-        var activeTrack = ensureTrack()
-        if (activeTrack == null) {
+        var activeTrack: AudioTrack = ensureTrack() ?: run {
             clip.onError("AudioTrack 48k stereo init failed")
             return
         }
@@ -746,8 +745,9 @@ internal class PersistentTtsAudioStream(
                 if (!retriedDead && !released && clip.generation == generation.get()) {
                     retriedDead = true
                     releaseTrackResources()
-                    activeTrack = ensureTrack()
-                    if (activeTrack != null) {
+                    val rebuilt = ensureTrack()
+                    if (rebuilt != null) {
+                        activeTrack = rebuilt
                         runCatching { activeTrack.play() }
                         continue
                     }
