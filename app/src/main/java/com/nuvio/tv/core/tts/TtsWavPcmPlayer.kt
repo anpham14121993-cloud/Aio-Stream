@@ -152,10 +152,15 @@ internal class ActiveWavAudioTrack(
     private val pcmData: ByteArray
     private val totalFrames: Int
     private val sampleRate: Int
+    private val bufferSizeBytes: Int
+    private val totalClipMs: Long
     private var enhancer: LoudnessEnhancer? = null
 
     private var writtenBytes = 0
     private var drainStartMs = -1L
+    private var drainBudgetMs = -1L
+    private var activePlayedMs = 0L
+    private var activeResumeUptimeMs = -1L
     private var paused = false
     private var stoppedOrReleased = false
 
@@ -186,14 +191,14 @@ internal class ActiveWavAudioTrack(
         var chosenMask = nativeMask
         var chosenPcm = rawBytes.copyOfRange(header.dataOffset, header.dataOffset + header.dataLength)
 
-        var builtTrack = tryBuildTrack(
+        var builtResult = tryBuildTrack(
             rate = chosenRate,
             mask = chosenMask,
             minBuf = nativeMinBuf,
             frameSize = chosenChannels * 2
         )
 
-        if (builtTrack == null) {
+        if (builtResult == null) {
             chosenRate = 48_000
             chosenChannels = 2
             chosenMask = AudioFormat.CHANNEL_OUT_STEREO
@@ -203,7 +208,7 @@ internal class ActiveWavAudioTrack(
                 chosenMask,
                 AudioFormat.ENCODING_PCM_16BIT
             )
-            builtTrack = tryBuildTrack(
+            builtResult = tryBuildTrack(
                 rate = chosenRate,
                 mask = chosenMask,
                 minBuf = fallbackMinBuf,
@@ -211,10 +216,13 @@ internal class ActiveWavAudioTrack(
             )
         }
 
-        track = builtTrack ?: throw IllegalStateException("AudioTrack init failed (${header.sampleRate}Hz ${header.channelCount}ch)")
+        val pair = builtResult ?: throw IllegalStateException("AudioTrack init failed (${header.sampleRate}Hz ${header.channelCount}ch)")
+        track = pair.first
+        bufferSizeBytes = pair.second
         pcmData = chosenPcm
         sampleRate = chosenRate
         totalFrames = pcmData.size / (chosenChannels * 2)
+        totalClipMs = ((totalFrames * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong()
 
         updateVolumePercent(volumePercent)
     }
@@ -224,9 +232,9 @@ internal class ActiveWavAudioTrack(
         mask: Int,
         minBuf: Int,
         frameSize: Int
-    ): AudioTrack? {
+    ): Pair<AudioTrack, Int>? {
         if (minBuf <= 0) return null
-        val targetBuf = max(minBuf * 2, (rate / 4) * frameSize)
+        val targetBuf = max(minBuf, (rate / 8) * frameSize)
         val audioFormat = AudioFormat.Builder()
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
             .setSampleRate(rate)
@@ -243,7 +251,7 @@ internal class ActiveWavAudioTrack(
                 runCatching { candidate.release() }
                 null
             } else {
-                candidate
+                candidate to targetBuf
             }
         } catch (_: Throwable) {
             null
@@ -253,6 +261,15 @@ internal class ActiveWavAudioTrack(
     fun start() {
         if (stoppedOrReleased) return
         paused = false
+        // Prefill up to the hardware buffer before play() to eliminate initial startup silence/underrun.
+        val initialChunk = min(bufferSizeBytes, pcmData.size)
+        if (initialChunk > 0) {
+            val prewrote = track.write(pcmData, 0, initialChunk, AudioTrack.WRITE_NON_BLOCKING)
+            if (prewrote > 0) {
+                writtenBytes += prewrote
+            }
+        }
+        activeResumeUptimeMs = android.os.SystemClock.elapsedRealtime()
         track.play()
         if (abs(effectiveSpeed - 1.0f) > 0.02f) {
             runCatching {
@@ -260,6 +277,9 @@ internal class ActiveWavAudioTrack(
                     .setSpeed(effectiveSpeed.coerceIn(0.6f, 2.0f))
                     .setPitch(1.0f)
             }
+        }
+        if (writtenBytes >= pcmData.size) {
+            markWrittenComplete()
         }
         pumpOnHandlerThread()
     }
@@ -270,6 +290,10 @@ internal class ActiveWavAudioTrack(
         paused = pausePlayback
         handler.removeCallbacks(pumpRunnable)
         if (pausePlayback) {
+            if (activeResumeUptimeMs >= 0L) {
+                activePlayedMs += (android.os.SystemClock.elapsedRealtime() - activeResumeUptimeMs).coerceAtLeast(0L)
+                activeResumeUptimeMs = -1L
+            }
             runCatching {
                 if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
                     track.pause()
@@ -277,6 +301,7 @@ internal class ActiveWavAudioTrack(
             }
             drainStartMs = -1L
         } else {
+            activeResumeUptimeMs = android.os.SystemClock.elapsedRealtime()
             runCatching { track.play() }
             pumpOnHandlerThread()
         }
@@ -316,6 +341,14 @@ internal class ActiveWavAudioTrack(
         runCatching { track.release() }
     }
 
+    private fun markWrittenComplete() {
+        runCatching { track.stop() }
+        val headNow = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
+        val remainingFrames = (totalFrames - headNow).coerceAtLeast(0L)
+        drainBudgetMs = ((remainingFrames * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong() + 260L
+        drainStartMs = android.os.SystemClock.elapsedRealtime()
+    }
+
     private fun pumpOnHandlerThread() {
         if (stoppedOrReleased || paused) return
         try {
@@ -332,8 +365,7 @@ internal class ActiveWavAudioTrack(
                     writtenBytes += wrote
                 }
                 if (writtenBytes >= pcmData.size) {
-                    runCatching { track.stop() }
-                    drainStartMs = android.os.SystemClock.elapsedRealtime()
+                    markWrittenComplete()
                 }
                 handler.postDelayed(pumpRunnable, if (wrote > 0 && writtenBytes < pcmData.size) 8L else 20L)
                 return
@@ -341,12 +373,22 @@ internal class ActiveWavAudioTrack(
 
             val head = track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL
             val now = android.os.SystemClock.elapsedRealtime()
-            if (drainStartMs < 0L) drainStartMs = now
+            if (drainStartMs < 0L) {
+                val remNow = (totalFrames - head).coerceAtLeast(0L)
+                drainBudgetMs = ((remNow * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong() + 260L
+                drainStartMs = now
+            }
             val remainingFrames = (totalFrames - head).coerceAtLeast(0L)
-            val totalClipMs = ((totalFrames * 1000.0) / (sampleRate * effectiveSpeed.coerceIn(0.6f, 2.0f))).toLong()
-            val tailBudgetMs = totalClipMs + 450L
+            val totalActiveMs = activePlayedMs + if (activeResumeUptimeMs >= 0L) {
+                (now - activeResumeUptimeMs).coerceAtLeast(0L)
+            } else {
+                0L
+            }
 
-            if (remainingFrames <= 48L || (now - drainStartMs) >= tailBudgetMs) {
+            if (remainingFrames <= 48L ||
+                (now - drainStartMs) >= drainBudgetMs ||
+                totalActiveMs >= totalClipMs + 320L
+            ) {
                 release()
                 onCompleted()
             } else {

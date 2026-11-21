@@ -203,4 +203,64 @@ class TtsVoiceCatalogAndProcessorTest {
         assertEquals(expectedFrames * 4, stereo48k.size)
         assertNull(TtsWavPcmHelper.parseWavHeader("ID3\u0003\u0000".toByteArray()))
     }
+
+    @Test
+    fun rapidDialogueDeltaSlotAndCueScanPreventSkipsAndDrift() {
+        // Incremental / rolling live caption diffing prevents reading the first line twice.
+        assertEquals(
+            "Tôi ra siêu thị.",
+            TtsSubtitleCoordinator.extractDeltaLiveText(
+                previousRawText = "Anh đi đâu vậy?",
+                newRawText = "Anh đi đâu vậy?\nTôi ra siêu thị.",
+                withinWindow = true
+            )
+        )
+        assertEquals(
+            "Mua ít đồ.",
+            TtsSubtitleCoordinator.extractDeltaLiveText(
+                previousRawText = "Anh đi đâu vậy?\nTôi ra siêu thị.",
+                newRawText = "Tôi ra siêu thị.\nMua ít đồ.",
+                withinWindow = true
+            )
+        )
+        assertEquals(
+            "",
+            TtsSubtitleCoordinator.extractDeltaLiveText(
+                previousRawText = "Anh đi đâu vậy?",
+                newRawText = "Anh đi đâu vậy?",
+                withinWindow = true
+            )
+        )
+
+        val rapidA = SubtitleSyncCue(10_000L, 11_400L, "Câu 1")
+        val rapidB = SubtitleSyncCue(11_400L, 12_600L, "Câu 2")
+        val isolated = SubtitleSyncCue(15_000L, 16_200L, "Câu 3")
+        assertEquals(1400L, TtsSubtitleCoordinator.computeTimelineSlotWindowMs(rapidA, rapidB.startTimeMs))
+        assertEquals(1950L, TtsSubtitleCoordinator.computeTimelineSlotWindowMs(isolated, 25_000L))
+
+        val cues = listOf(rapidA, rapidB, isolated)
+        val triggered = mutableSetOf<String>()
+        // Overlapping / pre-cached lead triggers rapidA 150ms ahead when cache is ready
+        val firstDue = TtsSubtitleCoordinator.findDueTimelineIndices(
+            cues = cues,
+            posMs = 9_850L,
+            leadMs = 180L,
+            lateWindowMs = 2400L,
+            triggeredKeys = triggered,
+            hasPrefetchedClip = { it == TtsSubtitleCoordinator.cueKeyFor(rapidA, 0) }
+        )
+        assertEquals(listOf(0), firstDue)
+        triggered += TtsSubtitleCoordinator.cueKeyFor(rapidA, 0)
+
+        // When tick arrives right at rapidB while queue wasn't triggered earlier, chronological scan catches rapidB
+        val secondDue = TtsSubtitleCoordinator.findDueTimelineIndices(
+            cues = cues,
+            posMs = 11_420L,
+            leadMs = 180L,
+            lateWindowMs = 2400L,
+            triggeredKeys = triggered,
+            hasPrefetchedClip = { true }
+        )
+        assertEquals(listOf(1), secondDue)
+    }
 }

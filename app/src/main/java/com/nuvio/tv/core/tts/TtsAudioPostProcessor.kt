@@ -51,12 +51,12 @@ object TtsAudioPostProcessor {
             return samples
         }
 
-        val padSamples = (sampleRate * 45) / 1000
+        val padSamples = (sampleRate * 22) / 1000
         val start = max(0, firstActiveIdx - padSamples)
         val end = min(samples.size, lastActiveIdx + padSamples)
         val trimmed = samples.copyOfRange(start, end)
 
-        val fadeSamples = min((sampleRate * 12) / 1000, trimmed.size / 3)
+        val fadeSamples = min((sampleRate * 8) / 1000, trimmed.size / 3)
         if (fadeSamples > 1) {
             for (i in 0 until fadeSamples) {
                 val fadeIn = 0.5f * (1.0f - cos(PI * i / fadeSamples).toFloat())
@@ -120,7 +120,6 @@ object TtsAudioPostProcessor {
             FileOutputStream(tmpFile).use { fos ->
                 fos.write(header)
                 fos.write(pcmBytes)
-                fos.fd.sync()
             }
             if (outFile.exists()) outFile.delete()
             if (!tmpFile.renameTo(outFile)) {

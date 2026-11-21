@@ -76,10 +76,25 @@ class TtsSubtitleCoordinator(
         val usedPitchHint: Boolean
     )
 
+    private data class PendingLiveCue(
+        val cueKey: String,
+        val text: String,
+        val positionMs: Long,
+        val gender: SpeakerGender,
+        val voiceId: String,
+        val speechSpeed: Float,
+        val ttsVolumePercent: Int,
+        val force: Boolean
+    )
+
     private val prefetchedClips = ConcurrentHashMap<String, PrefetchedClip>()
     private val inFlightPrefetches = ConcurrentHashMap<String, Deferred<File?>>()
     private val timelineLock = Any()
     private val lookaheadLock = Any()
+    private val triggeredLock = Any()
+    private val triggeredCueKeys = LinkedHashSet<String>(128)
+    private val liveQueueLock = Any()
+    private val livePendingQueue = ArrayDeque<PendingLiveCue>()
     private val streamingTimelineBuffer = ArrayList<SubtitleSyncCue>(256)
     private var streamingTimelineDirty = false
     private val released = AtomicBoolean(false)
@@ -88,16 +103,16 @@ class TtsSubtitleCoordinator(
     private var timelineCues: List<SubtitleSyncCue> = emptyList()
 
     @Volatile
-    private var lastTriggeredCueKey: String? = null
+    private var lastTimelinePosMs: Long = -1L
+
+    @Volatile
+    private var lastLiveRawText: String? = null
 
     @Volatile
     private var lastLiveCueText: String? = null
 
     @Volatile
     private var lastLiveTriggerAtMs: Long = 0L
-
-    @Volatile
-    private var latestLiveGeneration: Long = 0L
 
     @Volatile
     private var lastSynthesisSignature: String? = null
@@ -112,6 +127,7 @@ class TtsSubtitleCoordinator(
     private var isSpeaking = false
 
     private var lookaheadJob: Job? = null
+    private var liveWorkerJob: Job? = null
     private var warmupJob: Job? = null
     private var duckAnimJob: Job? = null
     private var currentDuckFactor = 1.0f
@@ -124,6 +140,9 @@ class TtsSubtitleCoordinator(
         },
         onPlaybackError = { err ->
             publishRuntimeStatus("Lỗi phát âm thanh TTS ($err)")
+        },
+        currentPositionMsProvider = {
+            (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
         }
     )
 
@@ -146,10 +165,11 @@ class TtsSubtitleCoordinator(
             warmupJob?.cancel()
             warmupJob = null
             lastPrewarmedSignature = null
-            latestLiveGeneration += 1L
+            clearLiveQueue()
             stopLookahead()
             playerQueue.clearAndStop()
             cancelAllPrefetches()
+            clearTriggeredKeys()
             pitchAnalyzer.reset()
             publishRuntimeStatus(null)
         } else {
@@ -158,8 +178,9 @@ class TtsSubtitleCoordinator(
             lastSynthesisSignature = sig
             if (prevSig != null && prevSig != sig) {
                 cancelAllPrefetches()
-                lastTriggeredCueKey = null
+                clearTriggeredKeys()
                 lastLiveCueText = null
+                lastLiveRawText = null
             }
             schedulePiperWarmup(settings, sig)
             ensureLookaheadRunningIfNeeded()
@@ -215,7 +236,8 @@ class TtsSubtitleCoordinator(
             streamingTimelineDirty = false
             timelineCues = merged
         }
-        lastTriggeredCueKey = null
+        clearTriggeredKeys()
+        lastTimelinePosMs = -1L
         cancelAllPrefetches()
         ensureLookaheadRunningIfNeeded()
     }
@@ -270,7 +292,8 @@ class TtsSubtitleCoordinator(
             nonEmpty
         }
         if (hadCues) {
-            lastTriggeredCueKey = null
+            clearTriggeredKeys()
+            lastTimelinePosMs = -1L
             cancelAllPrefetches()
             stopLookahead()
         }
@@ -318,24 +341,28 @@ class TtsSubtitleCoordinator(
 
     fun onSeek(newPosMs: Long) {
         playerQueue.clearAndStop()
-        lastTriggeredCueKey = null
+        clearTriggeredKeys()
+        clearLiveQueue()
+        lastLiveRawText = null
         lastLiveCueText = null
-        latestLiveGeneration += 1L
         cancelAllPrefetches()
         pitchAnalyzer.reset()
 
         val effectivePosMs = (newPosMs + subtitleOffsetMsProvider()).coerceAtLeast(0L)
+        lastTimelinePosMs = effectivePosMs
         val cues = refreshStreamingTimelineSnapshot()
         if (cues.isNotEmpty()) {
             val idx = findActiveCueIndex(cues, effectivePosMs - 600L)
             if (idx >= 0) {
-                lastTriggeredCueKey = cueKey(cues[idx], idx)
+                markCueTriggered(cueKey(cues[idx], idx))
             }
         }
     }
 
     /**
      * Live cue entry point for embedded ExoPlayer / MPV subtitle text (or immediate trigger when toggling TTS ON).
+     * Diffs incremental multi-line updates and preserves rapid back-to-back dialogue via a bounded FIFO worker
+     * instead of dropping sentences mid-synthesis.
      */
     fun onLiveCueText(rawText: String, positionMs: Long, force: Boolean = false) {
         val settings = preferences.current
@@ -343,50 +370,131 @@ class TtsSubtitleCoordinator(
         if (!isPlayerPlaying && !force) return
         if (timelineCues.isNotEmpty() && !force) return
 
-        val parsed = VietnameseTextNormalizer.parseAndCleanCue(rawText)
+        val now = System.currentTimeMillis()
+        val prevRaw = lastLiveRawText
+        val deltaText = if (force) {
+            rawText
+        } else {
+            extractDeltaLiveText(
+                previousRawText = prevRaw,
+                newRawText = rawText,
+                withinWindow = prevRaw != null && (now - lastLiveTriggerAtMs) <= LIVE_DELTA_WINDOW_MS
+            )
+        }
+        lastLiveRawText = rawText
+        if (deltaText.isBlank()) return
+
+        val parsed = VietnameseTextNormalizer.parseAndCleanCue(deltaText)
         if (parsed.speakableText.isBlank()) return
 
-        val now = System.currentTimeMillis()
         if (!force && parsed.speakableText == lastLiveCueText && (now - lastLiveTriggerAtMs) < LIVE_DEDUP_MS) {
             return
         }
         lastLiveCueText = parsed.speakableText
         lastLiveTriggerAtMs = now
-        val generation = ++latestLiveGeneration
 
         val cueKey = "live_${positionMs}_${sha256Short(parsed.speakableText)}"
         val targetGender = resolveGenderForSpan(settings, parsed.tagGender, positionMs - 800L, positionMs + 800L)
         val voiceId = resolveVoiceId(settings, targetGender)
 
-        scope.launch {
-            val shouldAbortLive = {
-                released.get() ||
-                    !preferences.current.enabled ||
-                    (!isPlayerPlaying && !force) ||
-                    generation != latestLiveGeneration
-            }
-            if (shouldAbortLive()) return@launch
+        val item = PendingLiveCue(
+            cueKey = cueKey,
+            text = parsed.speakableText,
+            positionMs = positionMs,
+            gender = targetGender,
+            voiceId = voiceId,
+            speechSpeed = settings.speechSpeed,
+            ttsVolumePercent = settings.ttsVolumePercent,
+            force = force
+        )
 
-            val file = synthesizeClipWithFallback(
-                cueKey = cueKey,
-                text = parsed.speakableText,
-                voiceId = voiceId,
-                gender = targetGender,
-                speechSpeed = settings.speechSpeed,
-                ttsVolumePercent = settings.ttsVolumePercent,
-                targetWindowMs = null,
-                shouldAbort = shouldAbortLive
-            ) ?: return@launch
-
-            if (preferences.current.enabled && (isPlayerPlaying || force) && generation == latestLiveGeneration) {
-                playerQueue.enqueue(
-                    TtsPlaybackItem(
-                        cueKey = cueKey,
-                        audioFile = file,
-                        baseSpeed = settings.speechSpeed
-                    )
-                )
+        synchronized(liveQueueLock) {
+            if (livePendingQueue.lastOrNull()?.text == item.text) return
+            while (livePendingQueue.size >= MAX_PENDING_LIVE_CUES) {
+                livePendingQueue.removeFirst()
             }
+            livePendingQueue.addLast(item)
+        }
+        ensureLiveWorkerRunning()
+    }
+
+    private fun ensureLiveWorkerRunning() {
+        synchronized(liveQueueLock) {
+            if (released.get() || liveWorkerJob?.isActive == true) return
+            liveWorkerJob = scope.launch {
+                while (isActive && !released.get()) {
+                    val nextItem = synchronized(liveQueueLock) {
+                        if (livePendingQueue.isEmpty()) null else livePendingQueue.removeFirst()
+                    } ?: break
+
+                    val currentSettings = preferences.current
+                    if (!currentSettings.enabled) continue
+                    if (!isPlayerPlaying && !nextItem.force) continue
+
+                    val livePendingRemaining = synchronized(liveQueueLock) { livePendingQueue.size }
+                    val backlogDepth = livePendingRemaining + playerQueue.queueDepth()
+                    val nativeBoost = if (backlogDepth >= 2) 1.15f else if (backlogDepth == 1) 1.08f else 1.0f
+
+                    val file = synthesizeClipWithFallback(
+                        cueKey = nextItem.cueKey,
+                        text = nextItem.text,
+                        voiceId = nextItem.voiceId,
+                        gender = nextItem.gender,
+                        speechSpeed = nextItem.speechSpeed,
+                        ttsVolumePercent = nextItem.ttsVolumePercent,
+                        targetWindowMs = null,
+                        nativeSpeedBoost = nativeBoost,
+                        shouldAbort = {
+                            released.get() ||
+                                !preferences.current.enabled ||
+                                (!isPlayerPlaying && !nextItem.force)
+                        }
+                    ) ?: continue
+
+                    if (preferences.current.enabled && (isPlayerPlaying || nextItem.force)) {
+                        playerQueue.enqueue(
+                            TtsPlaybackItem(
+                                cueKey = nextItem.cueKey,
+                                audioFile = file,
+                                baseSpeed = preferences.current.speechSpeed,
+                                cueStartMs = nextItem.positionMs,
+                                cueEndMs = nextItem.positionMs + 2200L
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun clearLiveQueue() {
+        synchronized(liveQueueLock) {
+            livePendingQueue.clear()
+            liveWorkerJob?.cancel()
+            liveWorkerJob = null
+        }
+    }
+
+    private fun markCueTriggered(key: String) {
+        synchronized(triggeredLock) {
+            if (triggeredCueKeys.size >= MAX_TRIGGERED_KEYS) {
+                val it = triggeredCueKeys.iterator()
+                if (it.hasNext()) {
+                    it.next()
+                    it.remove()
+                }
+            }
+            triggeredCueKeys.add(key)
+        }
+    }
+
+    private fun isCueTriggered(key: String): Boolean = synchronized(triggeredLock) {
+        key in triggeredCueKeys
+    }
+
+    private fun clearTriggeredKeys() {
+        synchronized(triggeredLock) {
+            triggeredCueKeys.clear()
         }
     }
 
@@ -424,6 +532,11 @@ class TtsSubtitleCoordinator(
         val cues = refreshStreamingTimelineSnapshot()
         if (cues.isEmpty()) return
 
+        if (lastTimelinePosMs >= 0L && posMs + 1500L < lastTimelinePosMs) {
+            clearTriggeredKeys()
+        }
+        lastTimelinePosMs = posMs
+
         if (settings.dualVoiceEnabled && !settings.preserveTvPassthrough) {
             pitchAnalyzer.refreshEstimation()
         }
@@ -437,21 +550,33 @@ class TtsSubtitleCoordinator(
             }
         }
 
-        // 1. Trigger due cue
-        val currentIdx = findActiveCueIndex(cues, posMs)
-        if (currentIdx >= 0) {
-            val cue = cues[currentIdx]
-            val key = cueKey(cue, currentIdx)
-            if (key != lastTriggeredCueKey && posMs <= cue.startTimeMs + MAX_LATE_TRIGGER_MS) {
-                lastTriggeredCueKey = key
-                triggerTimelineCue(cue, key, settings)
-            }
+        // 1. Trigger all due chronological cues (including overlapping lines and pre-cached lead cues)
+        val triggeredSnapshot = synchronized(triggeredLock) { triggeredCueKeys.toSet() }
+        val dueIndices = findDueTimelineIndices(
+            cues = cues,
+            posMs = posMs,
+            leadMs = if (playerQueue.queueDepth() == 0) TRIGGER_LEAD_MS else 0L,
+            lateWindowMs = MAX_LATE_TRIGGER_MS,
+            triggeredKeys = triggeredSnapshot,
+            hasPrefetchedClip = { key -> prefetchedClips.containsKey(key) },
+            maxResults = 2
+        )
+        for (idx in dueIndices) {
+            val cue = cues[idx]
+            val key = cueKey(cue, idx)
+            markCueTriggered(key)
+            val nextCueStartMs = cues.getOrNull(idx + 1)?.startTimeMs
+            triggerTimelineCue(cue, key, nextCueStartMs, settings)
         }
 
-        // 2. Prefetch upcoming cues within lookahead window (bounded so slow TVs don't clog mutex)
+        // 2. Prefetch upcoming cues deeply (20s lookahead) during pauses so rapid dialogue is pre-cached
         val horizonMs = posMs + PREFETCH_LOOKAHEAD_MS
-        for (i in max(0, currentIdx) until cues.size) {
+        val firstScanIdx = max(0, findActiveCueIndex(cues, posMs - 200L).let {
+            if (it >= 0) it else findInsertionPointByStart(cues, posMs)
+        })
+        for (i in firstScanIdx until cues.size) {
             if (inFlightPrefetches.size >= MAX_ACTIVE_PREFETCHES) break
+            if (prefetchedClips.size + inFlightPrefetches.size >= MAX_PREFETCH_CACHE_CLIPS) break
             val cue = cues[i]
             if (cue.startTimeMs > horizonMs) break
             if (cue.endTimeMs < posMs) continue
@@ -462,6 +587,7 @@ class TtsSubtitleCoordinator(
 
             val desiredGender = resolveGenderForSpan(settings, parsed.tagGender, cue.startTimeMs, cue.endTimeMs)
             val desiredVoiceId = resolveVoiceId(settings, desiredGender)
+            val nextCueStartMs = cues.getOrNull(i + 1)?.startTimeMs
 
             val existing = prefetchedClips[key]
             if (existing != null) {
@@ -472,14 +598,13 @@ class TtsSubtitleCoordinator(
                     posMs < cue.startTimeMs - 150L
                 ) {
                     prefetchedClips.remove(key)
-                    getOrStartPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, settings)
+                    getOrStartPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, nextCueStartMs, settings)
                 }
                 continue
             }
 
-            // Skip starting duplicate prefetch if triggerTimelineCue is already synthesizing or done for currentIdx
-            if (!inFlightPrefetches.containsKey(key) && key != lastTriggeredCueKey) {
-                getOrStartPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, settings)
+            if (!inFlightPrefetches.containsKey(key) && !isCueTriggered(key)) {
+                getOrStartPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, nextCueStartMs, settings)
             }
         }
     }
@@ -487,6 +612,7 @@ class TtsSubtitleCoordinator(
     private fun triggerTimelineCue(
         cue: SubtitleSyncCue,
         key: String,
+        nextCueStartMs: Long?,
         settings: TtsSettingsState
     ) {
         val ready = prefetchedClips.remove(key)
@@ -495,7 +621,9 @@ class TtsSubtitleCoordinator(
                 TtsPlaybackItem(
                     cueKey = key,
                     audioFile = ready.file,
-                    baseSpeed = settings.speechSpeed
+                    baseSpeed = settings.speechSpeed,
+                    cueStartMs = cue.startTimeMs,
+                    cueEndMs = cue.endTimeMs
                 )
             )
             return
@@ -507,7 +635,7 @@ class TtsSubtitleCoordinator(
         val voiceId = resolveVoiceId(settings, gender)
 
         // Reuse any already-in-flight prefetch Deferred instead of launching a conflicting second writer
-        val deferred = getOrStartPrefetch(cue, key, parsed.speakableText, voiceId, gender, settings)
+        val deferred = getOrStartPrefetch(cue, key, parsed.speakableText, voiceId, gender, nextCueStartMs, settings)
 
         scope.launch {
             val file = deferred.await() ?: return@launch
@@ -515,17 +643,20 @@ class TtsSubtitleCoordinator(
 
             if (preferences.current.enabled && isPlayerPlaying) {
                 val nowPos = (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
-                val toleranceMs = if (playerQueue.pendingCount() == 0) PLAY_LATE_TOLERANCE_MS else 1500L
-                if (nowPos <= cue.endTimeMs + toleranceMs) {
+                if (nowPos <= cue.endTimeMs + PLAY_LATE_TOLERANCE_MS &&
+                    playerQueue.queueDepth() < MAX_PLAYER_QUEUE_DEPTH
+                ) {
                     playerQueue.enqueue(
                         TtsPlaybackItem(
                             cueKey = key,
                             audioFile = file,
-                            baseSpeed = settings.speechSpeed
+                            baseSpeed = settings.speechSpeed,
+                            cueStartMs = cue.startTimeMs,
+                            cueEndMs = cue.endTimeMs
                         )
                     )
                 } else if (_runtimeStatus.value == null || _runtimeStatus.value?.startsWith("Đang đọc offline") == true) {
-                    publishRuntimeStatus("Piper xử lý chậm hơn phụ đề (${nowPos - cue.endTimeMs}ms)")
+                    publishRuntimeStatus("Piper xử lý chậm hơn phụ đề (${(nowPos - cue.endTimeMs).coerceAtLeast(0L)}ms)")
                 }
             }
         }
@@ -537,6 +668,7 @@ class TtsSubtitleCoordinator(
         text: String,
         voiceId: String,
         gender: SpeakerGender,
+        nextCueStartMs: Long?,
         settings: TtsSettingsState
     ): Deferred<File?> {
         inFlightPrefetches[key]?.let { existing ->
@@ -554,7 +686,12 @@ class TtsSubtitleCoordinator(
                 }
                 if (shouldAbortPrefetch()) return@async null
 
-                val windowMs = (cue.endTimeMs - cue.startTimeMs).takeIf { it > 350L }
+                val slotMs = computeTimelineSlotWindowMs(cue, nextCueStartMs)
+                val nativeBoost = if (slotMs != null && slotMs < 2100L && text.length > 34) {
+                    1.15f
+                } else {
+                    1.0f
+                }
                 val file = synthesizeClipWithFallback(
                     cueKey = key,
                     text = text,
@@ -562,7 +699,8 @@ class TtsSubtitleCoordinator(
                     gender = gender,
                     speechSpeed = settings.speechSpeed,
                     ttsVolumePercent = settings.ttsVolumePercent,
-                    targetWindowMs = windowMs,
+                    targetWindowMs = slotMs,
+                    nativeSpeedBoost = nativeBoost,
                     shouldAbort = shouldAbortPrefetch
                 )
                 if (file != null) {
@@ -603,6 +741,7 @@ class TtsSubtitleCoordinator(
         speechSpeed: Float,
         ttsVolumePercent: Int,
         targetWindowMs: Long?,
+        nativeSpeedBoost: Float = 1.0f,
         shouldAbort: () -> Boolean = { false }
     ): File? {
         if (shouldAbort()) return null
@@ -642,6 +781,7 @@ class TtsSubtitleCoordinator(
                 speechSpeed = speechSpeed,
                 ttsVolumePercent = ttsVolumePercent,
                 targetWindowMs = targetWindowMs,
+                nativeSpeedBoost = nativeSpeedBoost,
                 shouldAbort = shouldAbort
             )
             if (result != null && result.exists() && result.length() > 64L) {
@@ -682,9 +822,11 @@ class TtsSubtitleCoordinator(
         speechSpeed: Float,
         ttsVolumePercent: Int,
         targetWindowMs: Long?,
+        nativeSpeedBoost: Float,
         shouldAbort: () -> Boolean
     ): File? {
-        val hash = sha256Short("${voice.id}|$backend|$gender|$speechSpeed|$ttsVolumePercent|$targetWindowMs|$text")
+        val piperSpeechSpeed = (speechSpeed * nativeSpeedBoost).coerceIn(0.6f, 2.0f)
+        val hash = sha256Short("${voice.id}|$backend|$gender|$piperSpeechSpeed|$ttsVolumePercent|$targetWindowMs|$text")
         return try {
             when (backend) {
                 TtsBackendType.PIPER_ONNX -> {
@@ -694,17 +836,17 @@ class TtsSubtitleCoordinator(
                     val synth = piperEngine.synthesize(
                         voiceId = voice.id,
                         normalizedText = text,
-                        speechSpeed = speechSpeed,
+                        speechSpeed = piperSpeechSpeed,
                         shouldAbort = shouldAbort
                     ) ?: return null
                     if (shouldAbort()) return null
                     val trimmed = TtsAudioPostProcessor.trimSilence(synth.samples, synth.sampleRate)
 
-                    val stretched = if (targetWindowMs != null && targetWindowMs >= 450L) {
+                    val stretched = if (targetWindowMs != null && targetWindowMs >= 420L) {
                         val audioDurationMs = (trimmed.size * 1000.0) / synth.sampleRate.toDouble()
-                        val availableMs = targetWindowMs.toDouble() + 180.0
+                        val availableMs = targetWindowMs.toDouble() + 80.0
                         if (audioDurationMs > availableMs) {
-                            val fitRatio = (audioDurationMs / availableMs).toFloat().coerceIn(0.8f, 1.65f)
+                            val fitRatio = (audioDurationMs / availableMs).toFloat().coerceIn(0.8f, 1.85f)
                             WsolaTimeStretcher.timeStretch(trimmed, synth.sampleRate, fitRatio)
                         } else {
                             trimmed
@@ -807,8 +949,22 @@ class TtsSubtitleCoordinator(
         return if (candidate >= 0 && posMs <= cues[candidate].endTimeMs) candidate else -1
     }
 
+    private fun findInsertionPointByStart(cues: List<SubtitleSyncCue>, posMs: Long): Int {
+        var lo = 0
+        var hi = cues.lastIndex
+        while (lo <= hi) {
+            val mid = (lo + hi) ushr 1
+            if (cues[mid].startTimeMs < posMs) {
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+        return lo
+    }
+
     private fun cueKey(cue: SubtitleSyncCue, index: Int): String =
-        "${index}_${cue.startTimeMs}_${cue.endTimeMs}_${cue.text.hashCode()}"
+        cueKeyFor(cue, index)
 
     private fun cancelAllPrefetches() {
         inFlightPrefetches.values.forEach { it.cancel() }
@@ -825,9 +981,11 @@ class TtsSubtitleCoordinator(
         if (!released.compareAndSet(false, true)) return
         warmupJob?.cancel()
         warmupJob = null
+        clearLiveQueue()
         stopLookahead()
         duckAnimJob?.cancel()
         cancelAllPrefetches()
+        clearTriggeredKeys()
         playerQueue.release()
         piperEngine.release()
         systemEngine.release()
@@ -838,14 +996,103 @@ class TtsSubtitleCoordinator(
 
     companion object {
         private const val LOOKAHEAD_TICK_MS = 55L
-        private const val PREFETCH_LOOKAHEAD_MS = 8500L
-        private const val MAX_ACTIVE_PREFETCHES = 3
-        private const val MAX_LATE_TRIGGER_MS = 2200L
-        private const val PLAY_LATE_TOLERANCE_MS = 2800L
+        private const val PREFETCH_LOOKAHEAD_MS = 20_000L
+        private const val MAX_ACTIVE_PREFETCHES = 4
+        private const val MAX_PREFETCH_CACHE_CLIPS = 12
+        private const val TRIGGER_LEAD_MS = 180L
+        private const val MAX_LATE_TRIGGER_MS = 2400L
+        private const val PLAY_LATE_TOLERANCE_MS = 3800L
+        private const val MAX_PLAYER_QUEUE_DEPTH = 5
+        private const val MAX_PENDING_LIVE_CUES = 4
+        private const val MAX_TRIGGERED_KEYS = 256
         private const val LIVE_DEDUP_MS = 350L
+        private const val LIVE_DELTA_WINDOW_MS = 8000L
         private const val DUCK_DOWN_MS = 180L
         private const val DUCK_RESTORE_MS = 900L
         private const val MAX_STREAMING_TIMELINE_CUES = 12_000
+
+        internal fun cueKeyFor(cue: SubtitleSyncCue, index: Int): String =
+            "${index}_${cue.startTimeMs}_${cue.endTimeMs}_${cue.text.hashCode()}"
+
+        internal fun extractDeltaLiveText(
+            previousRawText: String?,
+            newRawText: String,
+            withinWindow: Boolean
+        ): String {
+            if (!withinWindow || previousRawText.isNullOrBlank()) return newRawText
+            val prevLines = previousRawText.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+            val currLines = newRawText.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+            if (prevLines.isEmpty() || currLines.isEmpty()) return newRawText
+            if (prevLines == currLines) return ""
+
+            val maxOverlap = min(prevLines.size, currLines.size)
+            for (k in maxOverlap downTo 1) {
+                if (prevLines.subList(prevLines.size - k, prevLines.size) == currLines.subList(0, k)) {
+                    val delta = currLines.subList(k, currLines.size)
+                    return delta.joinToString("\n")
+                }
+            }
+            return newRawText
+        }
+
+        internal fun computeTimelineSlotWindowMs(
+            cue: SubtitleSyncCue,
+            nextCueStartMs: Long?
+        ): Long? {
+            val cueDur = (cue.endTimeMs - cue.startTimeMs).takeIf { it > 350L } ?: return null
+            if (nextCueStartMs == null) return cueDur
+            val gapToNext = (nextCueStartMs - cue.startTimeMs).coerceAtLeast(350L)
+            return if (gapToNext <= cueDur + 250L) {
+                min(cueDur, gapToNext)
+            } else {
+                // Idle pause after this cue: allow slightly more breathing room without rushing speech.
+                val extra = min(750L, (gapToNext - cueDur) / 2L)
+                cueDur + extra
+            }
+        }
+
+        internal fun findDueTimelineIndices(
+            cues: List<SubtitleSyncCue>,
+            posMs: Long,
+            leadMs: Long,
+            lateWindowMs: Long,
+            triggeredKeys: Set<String>,
+            hasPrefetchedClip: (String) -> Boolean,
+            maxResults: Int = 2
+        ): List<Int> {
+            if (cues.isEmpty()) return emptyList()
+            var lo = 0
+            var hi = cues.lastIndex
+            var firstCandidate = cues.size
+            val earliestStartBound = posMs - 12_000L
+            while (lo <= hi) {
+                val mid = (lo + hi) ushr 1
+                if (cues[mid].startTimeMs >= earliestStartBound) {
+                    firstCandidate = mid
+                    hi = mid - 1
+                } else {
+                    lo = mid + 1
+                }
+            }
+            if (firstCandidate >= cues.size) return emptyList()
+
+            val result = ArrayList<Int>(maxResults)
+            for (i in firstCandidate until cues.size) {
+                val cue = cues[i]
+                if (cue.startTimeMs > posMs + leadMs) break
+                val key = cueKeyFor(cue, i)
+                if (key in triggeredKeys) continue
+                val effectiveLead = if (leadMs > 0L && hasPrefetchedClip(key)) leadMs else 0L
+                val isDue = cue.startTimeMs <= posMs + effectiveLead &&
+                    posMs <= cue.startTimeMs + lateWindowMs &&
+                    posMs <= cue.endTimeMs + lateWindowMs
+                if (isDue) {
+                    result.add(i)
+                    if (result.size >= maxResults) break
+                }
+            }
+            return result
+        }
     }
 }
 

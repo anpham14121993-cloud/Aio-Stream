@@ -23,7 +23,7 @@ object WsolaTimeStretcher {
         val speed = speedRatio.coerceIn(0.65f, 2.0f)
         val winSize = max((sampleRate * 24) / 1000, 128).let { if (it % 2 == 0) it else it + 1 }
         val halfWin = winSize / 2
-        val searchRadius = max((sampleRate * 8) / 1000, 32)
+        val searchRadius = max((sampleRate * 6) / 1000, 24)
 
         if (samples.size < winSize + halfWin) {
             return samples
@@ -38,7 +38,7 @@ object WsolaTimeStretcher {
         var outPos = 0
         var inExpected = 0.0
         val anaHop = halfWin * speed.toDouble()
-        val corrStride = if (sampleRate >= 44100) 4 else 2
+        val corrStride = if (sampleRate >= 44100) 4 else 3
 
         while (true) {
             val naturalIdx = (inExpected + anaHop).roundToInt()

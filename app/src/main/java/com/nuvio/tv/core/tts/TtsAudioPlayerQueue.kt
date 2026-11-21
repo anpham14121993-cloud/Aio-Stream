@@ -20,20 +20,23 @@ import kotlin.math.roundToInt
 data class TtsPlaybackItem(
     val cueKey: String,
     val audioFile: File,
-    val baseSpeed: Float = 1.0f
+    val baseSpeed: Float = 1.0f,
+    val cueStartMs: Long = -1L,
+    val cueEndMs: Long = -1L
 )
 
 /**
- * FIFO [MediaPlayer] queue (`Lk26` + `Li26` parity) with backlog catch-up speed scaling,
+ * FIFO [MediaPlayer] / [AudioTrack] queue with timestamp- & backlog-aware catch-up speed scaling,
  * [LoudnessEnhancer] gain boost above 100%, and speaking-state callbacks for movie ducking.
  *
- * All [MediaPlayer] work executes on a dedicated [HandlerThread] with an active [android.os.Looper]
+ * All playback work executes on a dedicated [HandlerThread] with an active [android.os.Looper]
  * so Android completion/error callbacks fire reliably without blocking Main or coroutine pools.
  */
 class TtsAudioPlayerQueue(
     context: Context,
     private val onSpeakingStateChanged: (Boolean) -> Unit,
-    private val onPlaybackError: (String) -> Unit = {}
+    private val onPlaybackError: (String) -> Unit = {},
+    private val currentPositionMsProvider: () -> Long = { -1L }
 ) {
     private val queue = ConcurrentLinkedQueue<TtsPlaybackItem>()
     private val released = AtomicBoolean(false)
@@ -71,6 +74,8 @@ class TtsAudioPlayerQueue(
     }
 
     fun pendingCount(): Int = queue.size
+
+    fun queueDepth(): Int = queue.size + if (activePlayer != null || activeWavTrack != null) 1 else 0
 
     fun updateVolumePercent(percent: Int) {
         ttsVolumePercent = percent.coerceIn(0, 150)
@@ -171,12 +176,32 @@ class TtsAudioPlayerQueue(
                 continue
             }
 
-            val pendingCount = queue.size
-            val effectiveSpeed = when {
-                pendingCount >= 2 -> max(next.baseSpeed * (1.0f + (pendingCount - 1) * 0.1f), 1.3f).coerceAtMost(1.6f)
-                pendingCount == 1 -> (next.baseSpeed * 1.08f).coerceAtMost(1.5f)
-                else -> next.baseSpeed.coerceIn(0.6f, 2.0f)
+            val nowPosMs = currentPositionMsProvider()
+            val latenessMs = if (next.cueStartMs >= 0L && nowPosMs >= 0L) {
+                (nowPosMs - next.cueStartMs).coerceAtLeast(0L)
+            } else {
+                0L
             }
+            val pendingCount = queue.size
+            // Skip severely behind head items ONLY if newer items are already waiting in queue so
+            // continuous dialogue stays synchronized without ever dropping the final active line.
+            if (latenessMs > 4500L && pendingCount > 0) {
+                continue
+            }
+
+            val backlogSpeed = when {
+                pendingCount >= 3 -> max(next.baseSpeed * 1.45f, 1.55f)
+                pendingCount == 2 -> max(next.baseSpeed * 1.32f, 1.40f)
+                pendingCount == 1 -> max(next.baseSpeed * 1.18f, 1.25f)
+                else -> next.baseSpeed
+            }
+            val latenessSpeed = when {
+                latenessMs > 2400L -> max(next.baseSpeed * 1.45f, 1.55f)
+                latenessMs > 1200L -> max(next.baseSpeed * 1.30f, 1.38f)
+                latenessMs > 450L -> max(next.baseSpeed * 1.15f, 1.20f)
+                else -> next.baseSpeed
+            }
+            val effectiveSpeed = max(backlogSpeed, latenessSpeed).coerceIn(0.6f, 1.75f)
 
             // Prefer direct AudioTrack for uncompressed 16-bit PCM WAV (Piper / System TTS) to bypass
             // Android TV OEM NuPlayer/MediaPlayer 22050 Hz mono WAV quirks; fall back to MediaPlayer on
