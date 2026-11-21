@@ -135,6 +135,10 @@ class TtsSubtitleCoordinator(
     @Volatile
     private var emaPiperSynthMs: Long = 0L
 
+    private val urgentSynthWaiters = java.util.concurrent.atomic.AtomicInteger(0)
+    private val playedCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private val skippedLateCount = java.util.concurrent.atomic.AtomicInteger(0)
+
     private val playerQueue = TtsAudioPlayerQueue(
         context = appContext,
         onSpeakingStateChanged = { speaking ->
@@ -146,6 +150,12 @@ class TtsSubtitleCoordinator(
         },
         currentPositionMsProvider = {
             (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
+        },
+        onItemSkipped = { _ ->
+            skippedLateCount.incrementAndGet()
+        },
+        onItemPlayed = {
+            playedCount.incrementAndGet()
         }
     )
 
@@ -585,43 +595,46 @@ class TtsSubtitleCoordinator(
             }
         }
 
-        // 2. Prefetch upcoming cues (28s lookahead, capped so Piper mutex is never starved behind far-future cues).
-        val activePrefetchCap = if (triggerPlayback) MAX_ACTIVE_PREFETCHES else 1
-        val horizonMs = posMs + PREFETCH_LOOKAHEAD_MS
-        val firstScanIdx = max(0, findActiveCueIndex(cues, posMs - 200L).let {
-            if (it >= 0) it else findInsertionPointByStart(cues, posMs)
-        })
-        for (i in firstScanIdx until cues.size) {
-            if (inFlightPrefetches.size >= activePrefetchCap) break
-            if (prefetchedClips.size + inFlightPrefetches.size >= MAX_PREFETCH_CACHE_CLIPS) break
-            val cue = cues[i]
-            if (cue.startTimeMs > horizonMs) break
-            if (cue.endTimeMs < posMs) continue
+        // 2. Prefetch upcoming cues (60s lookahead) ONLY when no urgent due/live dialogue is waiting for Piper mutex.
+        if (urgentSynthWaiters.get() == 0) {
+            val activePrefetchCap = MAX_ACTIVE_PREFETCHES
+            val horizonMs = posMs + PREFETCH_LOOKAHEAD_MS
+            val firstScanIdx = max(0, findActiveCueIndex(cues, posMs - 200L).let {
+                if (it >= 0) it else findInsertionPointByStart(cues, posMs)
+            })
+            for (i in firstScanIdx until cues.size) {
+                if (urgentSynthWaiters.get() > 0) break
+                if (inFlightPrefetches.size >= activePrefetchCap) break
+                if (prefetchedClips.size + inFlightPrefetches.size >= MAX_PREFETCH_CACHE_CLIPS) break
+                val cue = cues[i]
+                if (cue.startTimeMs > horizonMs) break
+                if (cue.endTimeMs < posMs) continue
 
-            val key = cueKey(cue, i)
-            val parsed = VietnameseTextNormalizer.parseAndCleanCue(cue.text)
-            if (parsed.speakableText.isBlank()) continue
+                val key = cueKey(cue, i)
+                val parsed = VietnameseTextNormalizer.parseAndCleanCue(cue.text)
+                if (parsed.speakableText.isBlank()) continue
 
-            val desiredGender = resolveGenderForSpan(settings, parsed.tagGender, cue.startTimeMs, cue.endTimeMs)
-            val desiredVoiceId = resolveVoiceId(settings, desiredGender)
-            val nextCueStartMs = cues.getOrNull(i + 1)?.startTimeMs
+                val desiredGender = resolveGenderForSpan(settings, parsed.tagGender, cue.startTimeMs, cue.endTimeMs)
+                val desiredVoiceId = resolveVoiceId(settings, desiredGender)
+                val nextCueStartMs = cues.getOrNull(i + 1)?.startTimeMs
 
-            val existing = prefetchedClips[key]
-            if (existing != null) {
-                if (settings.dualVoiceEnabled &&
-                    parsed.tagGender == SpeakerGender.UNSPECIFIED &&
-                    desiredGender != SpeakerGender.UNSPECIFIED &&
-                    existing.voiceId != desiredVoiceId &&
-                    posMs < cue.startTimeMs - 150L
-                ) {
-                    prefetchedClips.remove(key)
+                val existing = prefetchedClips[key]
+                if (existing != null) {
+                    if (settings.dualVoiceEnabled &&
+                        parsed.tagGender == SpeakerGender.UNSPECIFIED &&
+                        desiredGender != SpeakerGender.UNSPECIFIED &&
+                        existing.voiceId != desiredVoiceId &&
+                        posMs < cue.startTimeMs - 150L
+                    ) {
+                        prefetchedClips.remove(key)
+                        getOrStartPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, nextCueStartMs, settings)
+                    }
+                    continue
+                }
+
+                if (!inFlightPrefetches.containsKey(key) && !isCueTriggered(key)) {
                     getOrStartPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, nextCueStartMs, settings)
                 }
-                continue
-            }
-
-            if (!inFlightPrefetches.containsKey(key) && !isCueTriggered(key)) {
-                getOrStartPrefetch(cue, key, parsed.speakableText, desiredVoiceId, desiredGender, nextCueStartMs, settings)
             }
         }
     }
@@ -651,19 +664,24 @@ class TtsSubtitleCoordinator(
         val gender = resolveGenderForSpan(settings, parsed.tagGender, cue.startTimeMs, cue.endTimeMs)
         val voiceId = resolveVoiceId(settings, gender)
 
-        // Reuse any already-in-flight prefetch Deferred instead of launching a conflicting second writer
+        urgentSynthWaiters.incrementAndGet()
         val deferred = getOrStartPrefetch(cue, key, parsed.speakableText, voiceId, gender, nextCueStartMs, settings)
 
         scope.launch {
-            val file = deferred.await() ?: return@launch
+            val file = try {
+                deferred.await()
+            } finally {
+                urgentSynthWaiters.decrementAndGet()
+            } ?: return@launch
             prefetchedClips.remove(key)
 
             val latestSettings = preferences.current
             if (latestSettings.enabled && isPlayerPlaying) {
                 val nowPos = (positionProviderMs() + subtitleOffsetMsProvider()).coerceAtLeast(0L)
-                if (nowPos <= cue.endTimeMs + PLAY_LATE_TOLERANCE_MS &&
-                    playerQueue.queueDepth() < MAX_PLAYER_QUEUE_DEPTH
-                ) {
+                val queueDepth = playerQueue.queueDepth()
+                // Never discard a completed utterance if the audio queue is empty or only playing 1 item.
+                val withinWindow = nowPos <= cue.endTimeMs + PLAY_LATE_TOLERANCE_MS || queueDepth <= 1
+                if (withinWindow && queueDepth < MAX_PLAYER_QUEUE_DEPTH) {
                     playerQueue.enqueue(
                         TtsPlaybackItem(
                             cueKey = key,
@@ -673,8 +691,11 @@ class TtsSubtitleCoordinator(
                             cueEndMs = cue.endTimeMs
                         )
                     )
-                } else if (_runtimeStatus.value == null || _runtimeStatus.value?.startsWith("Đang đọc offline") == true) {
-                    publishRuntimeStatus("Piper xử lý chậm hơn phụ đề (${(nowPos - cue.endTimeMs).coerceAtLeast(0L)}ms)")
+                } else {
+                    skippedLateCount.incrementAndGet()
+                    publishRuntimeStatus(
+                        "Piper xử lý chậm hơn phụ đề (${(nowPos - cue.endTimeMs).coerceAtLeast(0L)}ms • Đọc:${playedCount.get()} Bỏ:${skippedLateCount.get()})"
+                    )
                 }
             }
         }
@@ -806,9 +827,16 @@ class TtsSubtitleCoordinator(
                 shouldAbort = shouldAbort
             )
             if (result != null && result.exists() && result.length() > 64L) {
+                val tlCount = timelineCues.size
+                val modeTag = if (tlCount > 0) "TL:$tlCount" else "Live"
+                val statsSuffix = if (emaPiperSynthMs > 0L || playedCount.get() > 0 || skippedLateCount.get() > 0) {
+                    " • $modeTag • ${emaPiperSynthMs}ms • Đọc:${playedCount.get()} Bỏ:${skippedLateCount.get()}"
+                } else {
+                    ""
+                }
                 publishRuntimeStatus(
                     when {
-                        backend == TtsBackendType.PIPER_ONNX -> "Đang đọc offline • ${voice.displayName}"
+                        backend == TtsBackendType.PIPER_ONNX -> "Đang đọc offline • ${voice.displayName}$statsSuffix"
                         backend == TtsBackendType.GOOGLE_TRANSLATE && piperReady ->
                             "Piper lỗi (${piperFailureReason ?: "chưa đọc được"}) • Dùng Google Dịch"
                         backend == TtsBackendType.GOOGLE_TRANSLATE && voice.backend == TtsBackendType.PIPER_ONNX ->
@@ -1024,14 +1052,14 @@ class TtsSubtitleCoordinator(
 
     companion object {
         private const val LOOKAHEAD_TICK_MS = 55L
-        private const val PREFETCH_LOOKAHEAD_MS = 28_000L
-        private const val MAX_ACTIVE_PREFETCHES = 2
-        private const val MAX_PREFETCH_CACHE_CLIPS = 18
+        private const val PREFETCH_LOOKAHEAD_MS = 60_000L
+        private const val MAX_ACTIVE_PREFETCHES = 1
+        private const val MAX_PREFETCH_CACHE_CLIPS = 45
         private const val TRIGGER_LEAD_MS = 240L
-        private const val MAX_LATE_TRIGGER_MS = 3_200L
-        private const val PLAY_LATE_TOLERANCE_MS = 4_500L
-        private const val MAX_PLAYER_QUEUE_DEPTH = 4
-        private const val MAX_PENDING_LIVE_CUES = 4
+        private const val MAX_LATE_TRIGGER_MS = 7_000L
+        private const val PLAY_LATE_TOLERANCE_MS = 8_000L
+        private const val MAX_PLAYER_QUEUE_DEPTH = 6
+        private const val MAX_PENDING_LIVE_CUES = 6
         private const val MAX_TRIGGERED_KEYS = 512
         private const val LIVE_DEDUP_MS = 350L
         private const val LIVE_DELTA_WINDOW_MS = 8000L
@@ -1055,9 +1083,9 @@ class TtsSubtitleCoordinator(
             backlogDepth: Int
         ): Float {
             return when {
-                lagMs > 1200L || backlogDepth >= 2 -> 1.22f
-                backlogDepth >= 1 || lagMs > 400L -> 1.12f
-                emaSynthMs > 1400L && leadRemainingMs in -300L..(emaSynthMs + 500L) -> 1.15f
+                lagMs > 1200L || backlogDepth >= 2 -> 1.24f
+                backlogDepth >= 1 || lagMs > 400L -> 1.15f
+                emaSynthMs > 1100L -> 1.12f
                 slotMs != null && slotMs < 2100L && textLength > 34 -> 1.12f
                 else -> 1.0f
             }

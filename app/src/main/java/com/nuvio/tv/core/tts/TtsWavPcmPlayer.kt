@@ -151,6 +151,58 @@ internal object TtsWavPcmHelper {
         if (tailFrames <= 0) return pcmBytes
         return pcmBytes.copyOf(pcmBytes.size + tailFrames * frameSize)
     }
+
+    /**
+     * Decodes a PCM16 WAV payload, applies pure-Kotlin WSOLA speed scaling when `speedRatio != 1.0f`
+     * (bypassing flaky OEM TV `AudioTrack.playbackParams` speed), and resamples to 48 kHz stereo PCM16.
+     */
+    internal fun decodeWavTo48kStereoPcm16(
+        wavBytes: ByteArray,
+        speedRatio: Float = 1.0f
+    ): ByteArray? {
+        val header = parseWavHeader(wavBytes) ?: return null
+        val srcFrames = header.dataLength / (header.channelCount * 2)
+        if (srcFrames <= 0) return null
+
+        if (abs(speedRatio - 1.0f) <= 0.03f) {
+            return resamplePcm16To48kStereo(wavBytes, header)
+        }
+
+        val inBb = ByteBuffer.wrap(wavBytes).order(ByteOrder.LITTLE_ENDIAN)
+        val monoFloat = FloatArray(srcFrames)
+        if (header.channelCount == 1) {
+            for (i in 0 until srcFrames) {
+                monoFloat[i] = inBb.getShort(header.dataOffset + i * 2) / 32768.0f
+            }
+        } else {
+            for (i in 0 until srcFrames) {
+                val off = header.dataOffset + i * 4
+                val l = inBb.getShort(off).toFloat()
+                val r = inBb.getShort(off + 2).toFloat()
+                monoFloat[i] = ((l + r) * 0.5f) / 32768.0f
+            }
+        }
+
+        val stretched = WsolaTimeStretcher.timeStretch(monoFloat, header.sampleRate, speedRatio)
+        if (stretched.isEmpty()) return ByteArray(0)
+
+        val dstFrames = ((stretched.size.toLong() * TARGET_FALLBACK_RATE) / header.sampleRate.toLong())
+            .toInt()
+            .coerceAtLeast(1)
+        val out = ByteArray(dstFrames * 4)
+        val outBb = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+        for (i in 0 until dstFrames) {
+            val srcPos = (i.toDouble() * header.sampleRate.toDouble()) / TARGET_FALLBACK_RATE.toDouble()
+            val idx0 = srcPos.toInt().coerceIn(0, stretched.lastIndex)
+            val idx1 = min(idx0 + 1, stretched.lastIndex)
+            val frac = (srcPos - idx0).toFloat()
+            val sampleFloat = stretched[idx0] + (stretched[idx1] - stretched[idx0]) * frac
+            val pcm16 = (sampleFloat * 32767.0f).roundToInt().coerceIn(-32768, 32767).toShort()
+            outBb.putShort(pcm16)
+            outBb.putShort(pcm16)
+        }
+        return out
+    }
 }
 
 /**
@@ -433,5 +485,327 @@ internal class ActiveWavAudioTrack(
             release()
             onError(t.message ?: t.javaClass.simpleName)
         }
+    }
+}
+
+/**
+ * Persistent single-stream 48 kHz stereo PCM16 [AudioTrack] writer for consecutive movie TTS playback.
+ *
+ * Unlike [ActiveWavAudioTrack], which creates and destroys an `AudioTrack` on every sentence (used
+ * for one-shot voice previews), this stream keeps one 48 kHz stereo AudioFlinger sink open for the
+ * duration of playback so Android TV Audio HALs never drop alternating sentences or trigger HDMI
+ * re-lock mutes between consecutive dialogue lines.
+ */
+internal class PersistentTtsAudioStream(
+    private val audioAttributes: AudioAttributes,
+    initialVolumePercent: Int,
+    private val hasQueuedNext: () -> Boolean
+) {
+    private data class QueuedPcmClip(
+        val pcm48kStereo: ByteArray,
+        val generation: Long,
+        val onCompleted: () -> Unit,
+        val onError: (String) -> Unit
+    )
+
+    private val lock = Object()
+    private val trackLock = Object()
+    private val generation = java.util.concurrent.atomic.AtomicLong(0L)
+
+    @Volatile
+    private var volumePercent: Int = initialVolumePercent.coerceIn(0, 150)
+
+    @Volatile
+    private var paused = false
+
+    @Volatile
+    private var released = false
+
+    private var pendingClip: QueuedPcmClip? = null
+    private var track: AudioTrack? = null
+    private var enhancer: LoudnessEnhancer? = null
+
+    private val writerThread = Thread({ writerLoop() }, "TtsPcmStreamWriter").apply {
+        isDaemon = true
+        start()
+    }
+
+    fun submitWav(
+        file: File,
+        speedRatio: Float,
+        onCompleted: () -> Unit,
+        onError: (String) -> Unit
+    ): Boolean {
+        if (released || !file.exists() || file.length() < 44L) return false
+        val wavBytes = runCatching { file.readBytes() }.getOrNull() ?: return false
+        val pcm48k = TtsWavPcmHelper.decodeWavTo48kStereoPcm16(wavBytes, speedRatio) ?: return false
+        if (pcm48k.isEmpty()) return false
+
+        // Pre-verify AudioTrack can initialize on this device before committing away from MediaPlayer fallback.
+        if (ensureTrack() == null) return false
+
+        synchronized(lock) {
+            if (released) return false
+            pendingClip = QueuedPcmClip(
+                pcm48kStereo = pcm48k,
+                generation = generation.get(),
+                onCompleted = onCompleted,
+                onError = onError
+            )
+            lock.notifyAll()
+        }
+        return true
+    }
+
+    fun updateVolumePercent(percent: Int) {
+        volumePercent = percent.coerceIn(0, 150)
+        synchronized(trackLock) {
+            track?.let { applyVolumeToTrack(it, volumePercent) }
+        }
+    }
+
+    fun setPaused(pausePlayback: Boolean) {
+        synchronized(lock) {
+            if (released || paused == pausePlayback) return
+            paused = pausePlayback
+            lock.notifyAll()
+        }
+        synchronized(trackLock) {
+            val activeTrack = track ?: return
+            runCatching {
+                if (pausePlayback) {
+                    if (activeTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                        activeTrack.pause()
+                    }
+                } else {
+                    if (activeTrack.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                        activeTrack.play()
+                    }
+                }
+            }
+        }
+    }
+
+    fun flushAndCancel() {
+        generation.incrementAndGet()
+        synchronized(lock) {
+            pendingClip = null
+            lock.notifyAll()
+        }
+        synchronized(trackLock) {
+            val activeTrack = track ?: return
+            runCatching {
+                if (activeTrack.playState != AudioTrack.PLAYSTATE_STOPPED) {
+                    activeTrack.pause()
+                    activeTrack.flush()
+                }
+            }
+        }
+    }
+
+    fun release() {
+        generation.incrementAndGet()
+        synchronized(lock) {
+            if (released) return
+            released = true
+            pendingClip = null
+            lock.notifyAll()
+        }
+        releaseTrackResources()
+        runCatching { writerThread.join(250L) }
+    }
+
+    private fun ensureTrack(): AudioTrack? {
+        synchronized(trackLock) {
+            track?.takeIf { it.state == AudioTrack.STATE_INITIALIZED }?.let { return it }
+            releaseTrackLocked()
+            val minBuf = AudioTrack.getMinBufferSize(
+                TARGET_RATE,
+                AudioFormat.CHANNEL_OUT_STEREO,
+                AudioFormat.ENCODING_PCM_16BIT
+            )
+            if (minBuf <= 0) return null
+            val targetBuf = max(minBuf, (TARGET_RATE / 5) * 4)
+            val audioFormat = AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(TARGET_RATE)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                .build()
+            val built = runCatching {
+                AudioTrack.Builder()
+                    .setAudioAttributes(audioAttributes)
+                    .setAudioFormat(audioFormat)
+                    .setBufferSizeInBytes(targetBuf)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+            }.getOrNull()?.takeIf { it.state == AudioTrack.STATE_INITIALIZED } ?: return null
+            track = built
+            applyVolumeToTrack(built, volumePercent)
+            return built
+        }
+    }
+
+    private fun releaseTrackResources() {
+        synchronized(trackLock) {
+            releaseTrackLocked()
+        }
+    }
+
+    private fun releaseTrackLocked() {
+        runCatching { enhancer?.release() }
+        enhancer = null
+        val old = track
+        track = null
+        if (old != null) {
+            runCatching {
+                if (old.playState != AudioTrack.PLAYSTATE_STOPPED) {
+                    old.pause()
+                    old.flush()
+                    old.stop()
+                }
+            }
+            runCatching { old.release() }
+        }
+    }
+
+    private fun applyVolumeToTrack(target: AudioTrack, percent: Int) {
+        val ratio = (percent / 100.0f).coerceIn(0.0f, 1.5f)
+        runCatching { target.setVolume(ratio.coerceAtMost(1.0f)) }
+        if (ratio > 1.01f) {
+            val gainMb = ((ratio - 1.0f) * 2800.0f).roundToInt().coerceIn(0, 1400)
+            runCatching {
+                val active = enhancer ?: LoudnessEnhancer(target.audioSessionId).also { enhancer = it }
+                active.setTargetGain(gainMb)
+                active.enabled = true
+            }
+        } else {
+            runCatching { enhancer?.enabled = false }
+        }
+    }
+
+    private fun writerLoop() {
+        runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO) }
+        val silenceChunk = ByteArray(WRITE_CHUNK_BYTES)
+        while (true) {
+            val clip: QueuedPcmClip? = synchronized(lock) {
+                while (!released && (paused || pendingClip == null)) {
+                    lock.wait(500L)
+                }
+                if (released) null else pendingClip?.also { pendingClip = null }
+            }
+            if (clip == null) break
+            if (clip.generation != generation.get()) continue
+
+            playClipOnTrack(clip, silenceChunk)
+        }
+    }
+
+    private fun playClipOnTrack(clip: QueuedPcmClip, silenceChunk: ByteArray) {
+        var activeTrack = ensureTrack()
+        if (activeTrack == null) {
+            clip.onError("AudioTrack 48k stereo init failed")
+            return
+        }
+        runCatching {
+            if (activeTrack.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                activeTrack.play()
+            }
+        }.onFailure {
+            clip.onError(it.message ?: it.javaClass.simpleName)
+            return
+        }
+
+        val data = clip.pcm48kStereo
+        var offset = 0
+        var retriedDead = false
+        while (offset < data.size) {
+            if (released || clip.generation != generation.get()) return
+            if (paused) {
+                synchronized(lock) {
+                    while (!released && paused && clip.generation == generation.get()) {
+                        lock.wait(250L)
+                    }
+                }
+                if (released || clip.generation != generation.get()) return
+                activeTrack = ensureTrack() ?: return
+                runCatching {
+                    if (activeTrack.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                        activeTrack.play()
+                    }
+                }
+            }
+
+            val len = min(WRITE_CHUNK_BYTES, data.size - offset)
+            val wrote = try {
+                activeTrack.write(data, offset, len, AudioTrack.WRITE_BLOCKING)
+            } catch (t: Throwable) {
+                clip.onError(t.message ?: t.javaClass.simpleName)
+                return
+            }
+            if (wrote < 0) {
+                if (!retriedDead && !released && clip.generation == generation.get()) {
+                    retriedDead = true
+                    releaseTrackResources()
+                    activeTrack = ensureTrack()
+                    if (activeTrack != null) {
+                        runCatching { activeTrack.play() }
+                        continue
+                    }
+                }
+                clip.onError("AudioTrack write error=$wrote")
+                return
+            }
+            if (wrote == 0) {
+                Thread.sleep(8L)
+            } else {
+                offset += wrote
+            }
+        }
+
+        if (released || clip.generation != generation.get()) return
+
+        // Write a crisp 48ms silence separator before waking the next clip.
+        writeSilenceBytes(activeTrack, silenceChunk, INTER_CLIP_SILENCE_BYTES, clip.generation, interruptOnPending = false)
+
+        // Dispatch completion on owner queue BEFORE writing the longer HDMI drain tail if idle.
+        clip.onCompleted()
+
+        if (released || clip.generation != generation.get()) return
+        val moreSoon = synchronized(lock) {
+            if (pendingClip == null && !hasQueuedNext() && !released && !paused) {
+                lock.wait(30L)
+            }
+            pendingClip != null || hasQueuedNext()
+        }
+        if (!moreSoon && !released && !paused && clip.generation == generation.get()) {
+            writeSilenceBytes(activeTrack, silenceChunk, IDLE_TAIL_SILENCE_BYTES, clip.generation, interruptOnPending = true)
+        }
+    }
+
+    private fun writeSilenceBytes(
+        activeTrack: AudioTrack,
+        zeros: ByteArray,
+        totalBytes: Int,
+        clipGen: Long,
+        interruptOnPending: Boolean
+    ) {
+        var remaining = totalBytes
+        while (remaining > 0 && !released && !paused && clipGen == generation.get()) {
+            if (interruptOnPending) {
+                val hasNext = synchronized(lock) { pendingClip != null } || hasQueuedNext()
+                if (hasNext) break
+            }
+            val n = min(zeros.size, remaining)
+            val w = runCatching { activeTrack.write(zeros, 0, n, AudioTrack.WRITE_BLOCKING) }.getOrDefault(-1)
+            if (w <= 0) break
+            remaining -= w
+        }
+    }
+
+    private companion object {
+        const val TARGET_RATE = 48_000
+        const val WRITE_CHUNK_BYTES = 4_096
+        const val INTER_CLIP_SILENCE_BYTES = 9_216 // ~48ms @ 48kHz stereo
+        const val IDLE_TAIL_SILENCE_BYTES = 46_080 // ~240ms @ 48kHz stereo
     }
 }

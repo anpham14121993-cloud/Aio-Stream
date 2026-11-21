@@ -286,6 +286,33 @@ class TtsVoiceCatalogAndProcessorTest {
             assertEquals(0.toByte(), padded[i])
         }
 
+        // Persistent 48kHz stereo decoder handles both 1.0x direct resample and WSOLA stretched WAVs
+        val wav22kSampleCount = 4410 // 200ms @ 22050Hz mono
+        val wav22kDataSize = wav22kSampleCount * 2
+        val wav22k = ByteArray(44 + wav22kDataSize)
+        val wbb = ByteBuffer.wrap(wav22k).order(ByteOrder.LITTLE_ENDIAN)
+        wbb.put("RIFF".toByteArray(Charsets.US_ASCII))
+        wbb.putInt(36 + wav22kDataSize)
+        wbb.put("WAVEfmt ".toByteArray(Charsets.US_ASCII))
+        wbb.putInt(16)
+        wbb.putShort(1)
+        wbb.putShort(1)
+        wbb.putInt(22050)
+        wbb.putInt(22050 * 2)
+        wbb.putShort(2)
+        wbb.putShort(16)
+        wbb.put("data".toByteArray(Charsets.US_ASCII))
+        wbb.putInt(wav22kDataSize)
+        for (i in 0 until wav22kSampleCount) {
+            wbb.putShort((kotlin.math.sin(i * 0.15) * 12000).toInt().toShort())
+        }
+        val decodedNormal = TtsWavPcmHelper.decodeWavTo48kStereoPcm16(wav22k, speedRatio = 1.0f)
+        assertNotNull(decodedNormal)
+        assertEquals(((wav22kSampleCount.toLong() * 48_000L) / 22_050L).toInt() * 4, decodedNormal!!.size)
+        val decodedFast = TtsWavPcmHelper.decodeWavTo48kStereoPcm16(wav22k, speedRatio = 1.30f)
+        assertNotNull(decodedFast)
+        assertTrue(decodedFast!!.size < decodedNormal.size)
+
         // Catch-up boosts native Piper speed moderately without starving or double-multiplying
         assertEquals(
             1.0f,

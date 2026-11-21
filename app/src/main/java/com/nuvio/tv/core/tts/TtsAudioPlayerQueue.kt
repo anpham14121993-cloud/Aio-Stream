@@ -36,7 +36,9 @@ class TtsAudioPlayerQueue(
     context: Context,
     private val onSpeakingStateChanged: (Boolean) -> Unit,
     private val onPlaybackError: (String) -> Unit = {},
-    private val currentPositionMsProvider: () -> Long = { -1L }
+    private val currentPositionMsProvider: () -> Long = { -1L },
+    private val onItemSkipped: ((Long) -> Unit)? = null,
+    private val onItemPlayed: (() -> Unit)? = null
 ) {
     private val queue = ConcurrentLinkedQueue<TtsPlaybackItem>()
     private val released = AtomicBoolean(false)
@@ -48,7 +50,7 @@ class TtsAudioPlayerQueue(
 
     // Accessed strictly from handlerThread (or after quit on release)
     private var activePlayer: MediaPlayer? = null
-    private var activeWavTrack: ActiveWavAudioTrack? = null
+    private var activeWavToken: Any? = null
     private var activeEnhancer: LoudnessEnhancer? = null
     private var pausedByMovie = false
 
@@ -63,11 +65,17 @@ class TtsAudioPlayerQueue(
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
         .build()
 
+    private val persistentWavStream = PersistentTtsAudioStream(
+        audioAttributes = speechAttributes,
+        initialVolumePercent = ttsVolumePercent,
+        hasQueuedNext = { !queue.isEmpty() }
+    )
+
     fun enqueue(item: TtsPlaybackItem) {
         if (released.get() || !item.audioFile.exists() || item.audioFile.length() <= 64L) return
         queue.add(item)
         postOnPlayerThread {
-            if (!released.get() && activePlayer == null && activeWavTrack == null && !pausedByMovie) {
+            if (!released.get() && activePlayer == null && activeWavToken == null && !pausedByMovie) {
                 playNextOnPlayerThread()
             }
         }
@@ -75,24 +83,23 @@ class TtsAudioPlayerQueue(
 
     fun pendingCount(): Int = queue.size
 
-    fun queueDepth(): Int = queue.size + if (activePlayer != null || activeWavTrack != null) 1 else 0
+    fun queueDepth(): Int = queue.size + if (activePlayer != null || activeWavToken != null) 1 else 0
 
     fun updateVolumePercent(percent: Int) {
         ttsVolumePercent = percent.coerceIn(0, 150)
+        persistentWavStream.updateVolumePercent(ttsVolumePercent)
         postOnPlayerThread {
-            activeWavTrack?.updateVolumePercent(ttsVolumePercent)
             val mp = activePlayer ?: return@postOnPlayerThread
             applyVolumeOnPlayerThread(mp, ttsVolumePercent)
         }
     }
 
     fun setMoviePaused(paused: Boolean) {
+        persistentWavStream.setPaused(paused)
         postOnPlayerThread {
             if (released.get()) return@postOnPlayerThread
             pausedByMovie = paused
-            val wav = activeWavTrack
-            if (wav != null) {
-                wav.setPaused(paused)
+            if (activeWavToken != null) {
                 notifySpeaking(!paused)
                 return@postOnPlayerThread
             }
@@ -122,6 +129,7 @@ class TtsAudioPlayerQueue(
 
     fun clearAndStop() {
         queue.clear()
+        persistentWavStream.flushAndCancel()
         postOnPlayerThread {
             releaseActiveOnPlayerThread()
             notifySpeaking(false)
@@ -131,6 +139,7 @@ class TtsAudioPlayerQueue(
     fun release() {
         if (!released.compareAndSet(false, true)) return
         queue.clear()
+        persistentWavStream.release()
         val latch = CountDownLatch(1)
         val posted = runCatching {
             playerHandler.post {
@@ -183,67 +192,62 @@ class TtsAudioPlayerQueue(
                 0L
             }
             val pendingCount = queue.size
-            // Skip obsolete head items (>5s behind playback) when newer dialogue is queued so
-            // slow TV CPUs stay synchronized with the current scene instead of drifting 10s+ behind.
-            if (latenessMs > 5_000L && pendingCount > 0) {
+            // Only discard a stale item when severely behind (>7.5s) AND at least 2 newer sentences are
+            // ready in queue; never skip the sole active/next sentence so dialogue never alternates silent.
+            if (latenessMs > 7_500L && pendingCount >= 2) {
+                onItemSkipped?.invoke(latenessMs)
                 continue
             }
 
             val backlogSpeed = when {
-                pendingCount >= 3 -> max(next.baseSpeed * 1.30f, 1.36f)
-                pendingCount == 2 -> max(next.baseSpeed * 1.22f, 1.26f)
+                pendingCount >= 3 -> max(next.baseSpeed * 1.30f, 1.35f)
+                pendingCount == 2 -> max(next.baseSpeed * 1.20f, 1.24f)
                 pendingCount == 1 -> max(next.baseSpeed * 1.12f, 1.15f)
                 else -> next.baseSpeed
             }
             val latenessSpeed = when {
-                latenessMs > 2600L -> max(next.baseSpeed * 1.32f, 1.38f)
-                latenessMs > 1400L -> max(next.baseSpeed * 1.20f, 1.25f)
-                latenessMs > 550L -> max(next.baseSpeed * 1.10f, 1.14f)
+                latenessMs > 2800L -> max(next.baseSpeed * 1.30f, 1.36f)
+                latenessMs > 1500L -> max(next.baseSpeed * 1.20f, 1.24f)
+                latenessMs > 600L -> max(next.baseSpeed * 1.10f, 1.14f)
                 else -> next.baseSpeed
             }
-            val effectiveSpeed = max(backlogSpeed, latenessSpeed).coerceIn(0.6f, 1.45f)
+            val effectiveSpeed = max(backlogSpeed, latenessSpeed).coerceIn(0.6f, 1.42f)
 
-            // Prefer direct AudioTrack for uncompressed 16-bit PCM WAV (Piper / System TTS) to bypass
-            // Android TV OEM NuPlayer/MediaPlayer 22050 Hz mono WAV quirks; fall back to MediaPlayer on
-            // non-PCM formats (.mp3 Google Translate) or if AudioTrack cannot initialize.
+            // Prefer persistent 48 kHz stereo AudioTrack for PCM WAV (Piper / System TTS) to bypass
+            // Android TV OEM HAL track-reopen mutes and 22050 Hz mono NuPlayer quirks; fall back to
+            // MediaPlayer on non-PCM formats (.mp3 Google Translate) or if AudioTrack init fails.
             if (next.audioFile.name.endsWith(".wav", ignoreCase = true)) {
-                var startedTrack: ActiveWavAudioTrack? = null
-                val wavAttempt = runCatching {
-                    lateinit var trackRef: ActiveWavAudioTrack
-                    trackRef = ActiveWavAudioTrack(
-                        handler = playerHandler,
-                        audioAttributes = speechAttributes,
-                        file = next.audioFile,
-                        effectiveSpeed = effectiveSpeed,
-                        volumePercent = ttsVolumePercent,
-                        onCompleted = {
-                            postOnPlayerThread {
-                                if (activeWavTrack === trackRef) {
-                                    activeWavTrack = null
-                                    playNextOnPlayerThread()
-                                }
-                            }
-                        },
-                        onError = { err ->
-                            postOnPlayerThread {
-                                if (activeWavTrack === trackRef) {
-                                    activeWavTrack = null
-                                    runCatching { onPlaybackError("AudioTrack WAV: $err") }
-                                    playNextOnPlayerThread()
-                                }
+                val wavToken = Any()
+                activeWavToken = wavToken
+                val accepted = persistentWavStream.submitWav(
+                    file = next.audioFile,
+                    speedRatio = effectiveSpeed,
+                    onCompleted = {
+                        postOnPlayerThread {
+                            if (activeWavToken === wavToken) {
+                                activeWavToken = null
+                                onItemPlayed?.invoke()
+                                playNextOnPlayerThread()
                             }
                         }
-                    )
-                    startedTrack = trackRef
-                    activeWavTrack = trackRef
-                    trackRef.start()
-                }
-                if (wavAttempt.isSuccess) {
+                    },
+                    onError = { err ->
+                        postOnPlayerThread {
+                            if (activeWavToken === wavToken) {
+                                activeWavToken = null
+                                runCatching { onPlaybackError("AudioTrack WAV: $err") }
+                                playNextOnPlayerThread()
+                            }
+                        }
+                    }
+                )
+                if (accepted) {
                     notifySpeaking(true)
                     return
                 }
-                runCatching { startedTrack?.release() }
-                if (activeWavTrack === startedTrack) activeWavTrack = null
+                if (activeWavToken === wavToken) {
+                    activeWavToken = null
+                }
             }
 
             val mp = MediaPlayer()
@@ -318,10 +322,7 @@ class TtsAudioPlayerQueue(
     }
 
     private fun releaseActiveOnPlayerThread() {
-        activeWavTrack?.let { wav ->
-            runCatching { wav.release() }
-        }
-        activeWavTrack = null
+        activeWavToken = null
         runCatching { activeEnhancer?.release() }
         activeEnhancer = null
         activePlayer?.let { mp ->
