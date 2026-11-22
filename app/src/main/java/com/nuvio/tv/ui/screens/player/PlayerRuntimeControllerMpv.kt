@@ -49,7 +49,13 @@ private fun PlayerRuntimeController.startMpvOnAttachedView(view: NuvioMpvSurface
         view.applyHardwareDecodeMode(mpvHardwareDecodeModeSetting)
         applyMpvDirectDecodeMode(view)
         registerMpvEventRelay(view)
-        view.setMedia(currentStreamUrl, currentHeaders)
+        val mpvPrepared = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.prepareStreamForPlayback(
+            url = currentStreamUrl,
+            headers = currentHeaders,
+            mimeType = currentStreamMimeType,
+            forExternalPlayer = false
+        )
+        view.setMedia(mpvPrepared.playUrl, mpvPrepared.playHeaders)
         val playerInitLine =
             "PLAYER_INIT: engine=MPV host=${currentStreamUrl.safeMpvTraceHost()} " +
                 "playbackSpeed=${_uiState.value.playbackSpeed} surface=attached"

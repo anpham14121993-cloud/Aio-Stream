@@ -770,6 +770,11 @@ private fun PlayerRuntimeController.applySelectedStreamState(
     url: String,
     headers: Map<String, String>
 ) {
+    val localProxyHints = stream.behaviorHints?.localProxy
+    if (localProxyHints != null) {
+        com.nuvio.tv.core.proxy.LocalStreamProxy.shared.rememberHints(stream.getStreamUrl(), localProxyHints)
+        com.nuvio.tv.core.proxy.LocalStreamProxy.shared.rememberHints(url, localProxyHints)
+    }
     val playbackRequest = PlayerMediaSourceFactory.normalizePlaybackRequest(url, headers)
     currentStreamUrl = playbackRequest.url
     SlowStartServer.noteStream(playbackRequest.url, stream.name, stream.description, stream.addonName)
@@ -1217,16 +1222,24 @@ internal fun PlayerRuntimeController.switchToSourceStream(
                 afrTrackSwitchInFlight = false
                 afrModeAppliedPreStart = false
                 afrSeededRateRaw = 0f
-                runAfrCachePreflightIfEnabled(
+                val sourcePrepared = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.prepareStreamForPlayback(
                     url = playbackUrl,
                     headers = playbackHeaders,
+                    mimeType = currentStreamMimeType,
+                    forExternalPlayer = false
+                )
+                val engineUrl = sourcePrepared.playUrl
+                val engineHeaders = sourcePrepared.playHeaders
+                runAfrCachePreflightIfEnabled(
+                    url = engineUrl,
+                    headers = engineHeaders,
                     frameRateMatchingMode = playerSettings.frameRateMatchingMode,
                     resolutionMatchingEnabled = playerSettings.resolutionMatchingEnabled
                 )
-                noteSpeedupHint(playbackUrl)
-                armStartCushion(playbackUrl)
+                noteSpeedupHint(engineUrl)
+                armStartCushion(engineUrl)
                 mediaSourceFactory.prepareVodCache(
-                    url = playbackUrl,
+                    url = engineUrl,
                     cacheKey = currentStreamCacheKey,
                     knownContentLength = currentVideoSize,
                     filename = currentFilename,
@@ -1236,8 +1249,8 @@ internal fun PlayerRuntimeController.switchToSourceStream(
                 player.setMediaSource(
                     mediaSourceFactory.createMediaSource(
                         context = context,
-                        url = playbackUrl,
-                        headers = playbackHeaders,
+                        url = engineUrl,
+                        headers = engineHeaders,
                         filename = currentFilename,
                         responseHeaders = currentStreamResponseHeaders,
                         mimeTypeOverride = currentStreamMimeType,
@@ -1894,9 +1907,21 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     lastAppliedPlayerSettings?.let { cachedSettings ->
         applyMediaSourceFactorySettings(cachedSettings)
         runCatching {
-            mediaSourceFactory.prestartChunk0(
+            val episodeHints = stream.behaviorHints?.localProxy
+            if (episodeHints != null) {
+                com.nuvio.tv.core.proxy.LocalStreamProxy.shared.rememberHints(stream.getStreamUrl(), episodeHints)
+                com.nuvio.tv.core.proxy.LocalStreamProxy.shared.rememberHints(url, episodeHints)
+            }
+            val prestartPrepared = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.prepareStreamForPlayback(
                 url = url,
                 headers = newHeaders,
+                mimeType = episodeHints?.contentType,
+                hints = episodeHints,
+                forExternalPlayer = false
+            )
+            mediaSourceFactory.prestartChunk0(
+                url = prestartPrepared.playUrl,
+                headers = prestartPrepared.playHeaders,
                 filename = stream.behaviorHints?.filename
             )
         }

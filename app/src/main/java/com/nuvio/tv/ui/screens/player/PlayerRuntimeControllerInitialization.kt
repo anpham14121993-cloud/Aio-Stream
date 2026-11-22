@@ -595,14 +595,27 @@ internal fun PlayerRuntimeController.initializePlayer(
             }
 
 
+            com.nuvio.tv.core.proxy.LocalStreamProxy.shared.updateSettings(
+                localProxyEnabled = playerSettings.localProxyEnabled,
+                localProxyHeadersEnabled = playerSettings.localProxyHeadersEnabled
+            )
+            val proxyPrepared = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.prepareStreamForPlayback(
+                url = url,
+                headers = headers,
+                mimeType = currentStreamMimeType,
+                forExternalPlayer = false
+            )
+            val engineUrl = proxyPrepared.playUrl
+            val engineHeaders = proxyPrepared.playHeaders
+
             setLoadingStatus(
                 phase = "detecting_format",
                 message = context.getString(R.string.player_loading_detecting_format)
             )
 
             resolveCurrentStreamMimeType(
-                url = url,
-                headers = headers
+                url = engineUrl,
+                headers = engineHeaders
             )
 
             val afrJob = async {
@@ -611,8 +624,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                     // Thread the resolved mimeType through so the
                     // probe can route extensionless MP4/MKV URLs correctly.
                     runAfrPreflightIfEnabled(
-                        url = url,
-                        headers = headers,
+                        url = engineUrl,
+                        headers = engineHeaders,
                         frameRateMatchingMode = playerSettings.frameRateMatchingMode,
                         resolutionMatchingEnabled = playerSettings.resolutionMatchingEnabled,
                         mimeType = currentStreamMimeType,
@@ -664,7 +677,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     // happens here, in this coroutine, before entry.
                     awaitSavedProgressLoad()
                     if (initializationGeneration != playbackRecoveryGate.generation) return@launch
-                    initializeMpvPlayer(url = url, headers = headers, allowEngineFailover = allowEngineFailover)
+                    initializeMpvPlayer(url = engineUrl, headers = engineHeaders, allowEngineFailover = allowEngineFailover)
                     fetchAddonSubtitles()
                 } finally {
                     mpvInitializationInProgress = false
@@ -1642,7 +1655,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     extractorsFactory = effectiveExtractorsFactory,
                     subtitleParserFactory = null
                 )
-                val playerDataSourceFactory = LoggingDataSourceFactory(PlayerPlaybackNetworking.createDataSourceFactory(context, headers), "BUILDER_DEFAULT")
+                val playerDataSourceFactory = LoggingDataSourceFactory(PlayerPlaybackNetworking.createDataSourceFactory(context, engineHeaders), "BUILDER_DEFAULT")
                 ExoPlayer.Builder(context)
                     .setBandwidthMeter(bandwidthMeter)
                     .setTrackSelector(trackSelector!!)
@@ -1759,7 +1772,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             ttsCoordinator.clearStreamingTimelineCues()
             _exoPlayer = if (useLibass) {
                 com.nuvio.tv.libass.media.AssHandler.setRenderScale(playerSettings.libassRenderScale.scale)
-                val playerDataSourceFactory = LoggingDataSourceFactory(PlayerPlaybackNetworking.createDataSourceFactory(context, headers), "BUILDER_LIBASS")
+                val playerDataSourceFactory = LoggingDataSourceFactory(PlayerPlaybackNetworking.createDataSourceFactory(context, engineHeaders), "BUILDER_LIBASS")
                 ExoPlayer.Builder(context)
                     .setBandwidthMeter(bandwidthMeter)
                     .setLoadControl(loadControl)
@@ -1903,7 +1916,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 armStartCushion(url)
                 ParallelRangeDataSource.noteResumeStart(initialResumePosition > 0L)
                 mediaSourceFactory.prepareVodCache(
-                    url = url,
+                    url = engineUrl,
                     cacheKey = currentStreamCacheKey,
                     knownContentLength = currentVideoSize,
                     filename = currentFilename,
@@ -1912,8 +1925,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                 )
                 val initialMediaSource = mediaSourceFactory.createMediaSource(
                     context = context,
-                    url = url,
-                    headers = headers,
+                    url = engineUrl,
+                    headers = engineHeaders,
                     subtitleConfigurations = startupSubtitleConfigurations,
                     subtitleRoutes = subtitleRoutes(startupSubtitlePreparation.attachedSubtitles),
                     filename = currentFilename,

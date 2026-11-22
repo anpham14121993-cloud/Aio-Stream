@@ -461,7 +461,9 @@ data class PlayerSettings(
     val enableBufferLogs: Boolean = false,
     val resizeMode: Int = 0,
     // Nuvio ExoPlayer Performance Mode
-    val nuvioPerformanceModeEnabled: Boolean = DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED
+    val nuvioPerformanceModeEnabled: Boolean = DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED,
+    val localProxyEnabled: Boolean = DEFAULT_LOCAL_PROXY_ENABLED,
+    val localProxyHeadersEnabled: Boolean = DEFAULT_LOCAL_PROXY_HEADERS_ENABLED
 ) {
     /**
      * Prefetch completion cap in milliseconds, or null to wait for full
@@ -589,6 +591,8 @@ data class PlayerSettings(
             if (nativeMemory) MAX_PARALLEL_CONNECTION_COUNT_NATIVE_MEMORY else MAX_PARALLEL_CONNECTION_COUNT
         const val DEFAULT_ENABLE_HTTP2 = false
         const val DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED = false
+        const val DEFAULT_LOCAL_PROXY_ENABLED = true
+        const val DEFAULT_LOCAL_PROXY_HEADERS_ENABLED = true
     }
 }
 
@@ -978,6 +982,8 @@ class PlayerSettingsDataStore @Inject constructor(
     private val parallelChunkSizeMbKey = intPreferencesKey("parallel_chunk_size_mb")
     private val parallelChunkSizeKbKey = intPreferencesKey("parallel_chunk_size_kb")
     private val enableHttp2Key = booleanPreferencesKey("enable_http2")
+    private val localProxyEnabledKey = booleanPreferencesKey("local_proxy_enabled")
+    private val localProxyHeadersEnabledKey = booleanPreferencesKey("local_proxy_headers_enabled")
     private val lastPlaybackDiagnosticsKey = stringPreferencesKey("last_playback_diagnostics_json")
 
     private val enableBufferLogsKey = booleanPreferencesKey("enable_buffer_logs")
@@ -1566,6 +1572,8 @@ class PlayerSettingsDataStore @Inject constructor(
                 enableBufferLogs = prefs.typed(enableBufferLogsKey) ?: false,
                 resizeMode = (prefs.typed(resizeModeKey) ?: 0).coerceIn(0, 4),
                 enableHttp2 = prefs.typed(enableHttp2Key) ?: PlayerSettings.DEFAULT_ENABLE_HTTP2,
+                localProxyEnabled = prefs.typed(localProxyEnabledKey) ?: PlayerSettings.DEFAULT_LOCAL_PROXY_ENABLED,
+                localProxyHeadersEnabled = prefs.typed(localProxyHeadersEnabledKey) ?: PlayerSettings.DEFAULT_LOCAL_PROXY_HEADERS_ENABLED,
                 nuvioPerformanceModeEnabled = (prefs.typed(nuvioPerformanceModeEnabledKey) ?: PlayerSettings.DEFAULT_NUVIO_PERFORMANCE_MODE_ENABLED) &&
                         android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O,
                 subtitleStyle = run {
@@ -2080,6 +2088,28 @@ class PlayerSettingsDataStore @Inject constructor(
         store().edit { prefs ->
             prefs[enableBufferLogsKey] = enabled
         }
+    }
+
+    suspend fun setLocalProxyEnabled(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[localProxyEnabledKey] = enabled
+        }
+        val currentHeaders = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.currentSettings().localProxyHeadersEnabled
+        com.nuvio.tv.core.proxy.LocalStreamProxy.shared.updateSettings(
+            localProxyEnabled = enabled,
+            localProxyHeadersEnabled = currentHeaders
+        )
+    }
+
+    suspend fun setLocalProxyHeadersEnabled(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[localProxyHeadersEnabledKey] = enabled
+        }
+        val currentEnabled = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.currentSettings().localProxyEnabled
+        com.nuvio.tv.core.proxy.LocalStreamProxy.shared.updateSettings(
+            localProxyEnabled = currentEnabled,
+            localProxyHeadersEnabled = enabled
+        )
     }
 
     suspend fun setResolutionMatchingEnabled(enabled: Boolean) = setResolutionMatchingEnabled(enabled, profileManager.activeProfileId.value)
@@ -2812,7 +2842,13 @@ class PlayerSettingsDataStore @Inject constructor(
             prefs[parallelChunkSizeKbKey] = PlayerSettings.DEFAULT_PARALLEL_CHUNK_SIZE_KB
             prefs.remove(parallelChunkSizeMbKey)
             prefs[enableHttp2Key] = PlayerSettings.DEFAULT_ENABLE_HTTP2
+            prefs[localProxyEnabledKey] = PlayerSettings.DEFAULT_LOCAL_PROXY_ENABLED
+            prefs[localProxyHeadersEnabledKey] = PlayerSettings.DEFAULT_LOCAL_PROXY_HEADERS_ENABLED
         }
+        com.nuvio.tv.core.proxy.LocalStreamProxy.shared.updateSettings(
+            localProxyEnabled = PlayerSettings.DEFAULT_LOCAL_PROXY_ENABLED,
+            localProxyHeadersEnabled = PlayerSettings.DEFAULT_LOCAL_PROXY_HEADERS_ENABLED
+        )
     }
 
     suspend fun setVodCacheEnabled(enabled: Boolean) = setVodCacheEnabled(enabled, profileManager.activeProfileId.value)

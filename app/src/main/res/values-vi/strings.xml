@@ -4671,4 +4671,10 @@
     <string name="exit_confirm_message">Bạn có đồng ý thoát ứng dụng không?</string>
     <string name="exit_confirm_ok">OK</string>
     <string name="exit_confirm_cancel">Hủy</string>
+    <string name="playback_net_local_proxy">Local Proxy nội bộ</string>
+    <string name="playback_net_local_proxy_sub">Tự động xử lý luồng cần proxy, giải mã cục bộ trên thiết bị mà không qua máy chủ trung gian. Luồng phát trực tiếp bình thường không bị ảnh hưởng.</string>
+    <string name="playback_net_local_proxy_headers">Proxy giữ header &amp; HLS/DASH</string>
+    <string name="playback_net_local_proxy_headers_sub">Chuyển tiếp Referer, Origin, Cookie khi phát HLS/DASH hoặc mở trình phát ngoài.</string>
+    <string name="playback_net_local_proxy_active_note">Local Proxy đang chạy nội bộ tại 127.0.0.1:%1$d (cổng động tự cấp).</string>
+    <string name="playback_net_local_proxy_idle_note">Local Proxy dùng cổng động nội bộ 127.0.0.1 và chỉ tự bật khi có luồng cần xử lý.</string>
 </resources>

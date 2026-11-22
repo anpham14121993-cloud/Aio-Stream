@@ -94,6 +94,7 @@ data class BehaviorHintsDto(
     @Json(name = "bingeGroup") val bingeGroup: String? = null,
     @Json(name = "countryWhitelist") val countryWhitelist: List<String>? = null,
     @Json(name = "proxyHeaders") val proxyHeaders: ProxyHeadersDto? = null,
+    @Json(name = "localProxy") val localProxy: com.nuvio.tv.domain.model.LocalProxyHintsDto? = null,
     @Json(name = "videoHash") val videoHash: String? = null,
     @Json(name = "videoSize") val videoSize: Long? = null,
     @Json(name = "filename") val filename: String? = null,

@@ -1669,11 +1669,21 @@ class StreamScreenViewModel @Inject constructor(
 
     suspend fun prewarmSelectedPlayback(playbackInfo: StreamPlaybackInfo) {
         if (playbackInfo.isServerStream) return
+        val prepared = playbackInfo.url?.let { rawUrl ->
+            com.nuvio.tv.core.proxy.LocalStreamProxy.shared.prepareStreamForPlayback(
+                url = rawUrl,
+                headers = playbackInfo.headers.orEmpty(),
+                mimeType = null,
+                forExternalPlayer = false
+            )
+        }
+        val warmUrl = prepared?.playUrl ?: playbackInfo.url
+        val warmHeaders = if (prepared != null) prepared.playHeaders else playbackInfo.headers
         com.nuvio.tv.ui.screens.player.SlowStartServer.noteStream(
             playbackInfo.url, playbackInfo.streamName, playbackInfo.streamDescription, playbackInfo.addonName
         )
         com.nuvio.tv.ui.screens.player.PlayerPlaybackNetworking.prewarmSelectedPlayback(
-            playbackInfo.url, playbackInfo.headers
+            warmUrl, warmHeaders
         )
     }
 
@@ -2074,6 +2084,11 @@ class StreamScreenViewModel @Inject constructor(
             audioDelayMs = stream.behaviorHints?.audioDelayMs,
             audioDelayLanguage = stream.behaviorHints?.audioDelayLanguage
         )
+        val localProxyHints = stream.behaviorHints?.localProxy
+        if (localProxyHints != null) {
+            com.nuvio.tv.core.proxy.LocalStreamProxy.shared.rememberHints(stream.getStreamUrl(), localProxyHints)
+            com.nuvio.tv.core.proxy.LocalStreamProxy.shared.rememberHints(playbackInfo.url, localProxyHints)
+        }
         StreamSidecarSubtitles.set(playbackUrlFor(playbackInfo), stream.subtitles)
 
         val url = playbackInfo.url
@@ -2423,15 +2438,22 @@ class StreamScreenViewModel @Inject constructor(
                 }
             }
 
+            val externalPrepared = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.prepareStreamForPlayback(
+                url = playUrl,
+                headers = playbackInfo.headers.orEmpty(),
+                mimeType = null,
+                forExternalPlayer = true
+            )
+
             // Set timestamp right before actual launch so the 500ms guard
             // protects against spurious ON_RESUME after the player intent is sent.
             externalPlayerLaunchTimeMs = System.currentTimeMillis()
 
             launched = externalPlaybackTracker.launchPlayer(
                 metadata = metadata,
-                url = playUrl,
+                url = externalPrepared.playUrl,
                 title = metadata.buildPlayerTitle(),
-                headers = playbackInfo.headers,
+                headers = externalPrepared.playHeaders.takeIf { it.isNotEmpty() },
                 resumePositionMs = resumePositionMs,
                 startFromBeginning = startFromBeginning,
                 subtitles = subtitleInputs,
@@ -2541,8 +2563,13 @@ class StreamScreenViewModel @Inject constructor(
             } else {
                 Log.d(TAG, "Found ${filtered.size} subtitles for external player, downloading to cache...")
                 val inputs = filtered.map { subtitle ->
-                    com.nuvio.tv.core.player.SubtitleInput(
+                    val (proxiedSubUrl, _) = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.prepareSubtitleForPlayback(
                         url = subtitle.url,
+                        headers = subtitle.headers,
+                        forExternalPlayer = true
+                    )
+                    com.nuvio.tv.core.player.SubtitleInput(
+                        url = proxiedSubUrl,
                         name = "${subtitle.getDisplayLanguage()} - ${subtitle.addonName}",
                         lang = subtitle.lang
                     )

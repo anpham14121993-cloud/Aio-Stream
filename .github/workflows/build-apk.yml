@@ -222,6 +222,7 @@ jobs:
             --tests 'com.nuvio.tv.updater.*' \
             --tests 'com.nuvio.tv.AppRootRoutesTest' \
             --tests 'com.nuvio.tv.core.tts.*' \
+            --tests 'com.nuvio.tv.core.proxy.*' \
             --stacktrace
 
       - name: Build Universal Release APK (armeabi-v7a + arm64-v8a)

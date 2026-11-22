@@ -107,6 +107,28 @@ internal fun PlaybackBufferNetworkSection(
         SettingsNote(text = stringResource(R.string.playback_net_auto_speedup_custom_note))
     }
     ParallelNetworkControls(settings = settings, updateMemory = updateMemory)
+    SettingsToggleRow(
+        title = stringResource(R.string.playback_net_local_proxy),
+        subtitle = stringResource(R.string.playback_net_local_proxy_sub),
+        checked = settings.localProxyEnabled,
+        onToggle = { onUpdate { setLocalProxyEnabled(!settings.localProxyEnabled) } }
+    )
+    if (settings.localProxyEnabled) {
+        SettingsToggleRow(
+            title = stringResource(R.string.playback_net_local_proxy_headers),
+            subtitle = stringResource(R.string.playback_net_local_proxy_headers_sub),
+            checked = settings.localProxyHeadersEnabled,
+            onToggle = { onUpdate { setLocalProxyHeadersEnabled(!settings.localProxyHeadersEnabled) } }
+        )
+        val activePort = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.portOrNull()
+        SettingsNote(
+            text = if (activePort != null) {
+                stringResource(R.string.playback_net_local_proxy_active_note, activePort)
+            } else {
+                stringResource(R.string.playback_net_local_proxy_idle_note)
+            }
+        )
+    }
 }
 
 @androidx.annotation.OptIn(UnstableApi::class)

@@ -564,6 +564,14 @@ class PlaybackSettingsViewModel @Inject constructor(
         playerSettingsDataStore.resetNetworkSettingsToDefaults()
     }
 
+    suspend fun setLocalProxyEnabled(enabled: Boolean) {
+        playerSettingsDataStore.setLocalProxyEnabled(enabled)
+    }
+
+    suspend fun setLocalProxyHeadersEnabled(enabled: Boolean) {
+        playerSettingsDataStore.setLocalProxyHeadersEnabled(enabled)
+    }
+
     suspend fun setVodCacheEnabled(enabled: Boolean) {
         playerSettingsDataStore.setVodCacheEnabled(enabled)
     }

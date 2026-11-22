@@ -185,6 +185,20 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
                 .distinctUntilChanged()
                 .collect { com.nuvio.tv.core.player.FrameRateUtils.allowLowRates = it }
         }
+        com.nuvio.tv.core.proxy.LocalStreamProxy.configureHttpClientProvider {
+            com.nuvio.tv.ui.screens.player.PlayerPlaybackNetworking.playbackHttpClient
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            playerSettingsDataStore.playerSettings
+                .map { it.localProxyEnabled to it.localProxyHeadersEnabled }
+                .distinctUntilChanged()
+                .collect { (enabled, headersEnabled) ->
+                    com.nuvio.tv.core.proxy.LocalStreamProxy.shared.updateSettings(
+                        localProxyEnabled = enabled,
+                        localProxyHeadersEnabled = headersEnabled
+                    )
+                }
+        }
 
         // Expire stored seek thumbnails even when nothing is played.
         com.nuvio.tv.core.player.thumbnail.SeekThumbnails.scheduleStartupHousekeeping(this)
