@@ -1165,7 +1165,7 @@ class LocalProxyHttpServer(
                     }
                 )
                 .protocols(listOf(Protocol.HTTP_1_1))
-                .eventListenerFactory(EventListener.NONE)
+                .eventListener(EventListener.NONE)
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .connectTimeout(15, TimeUnit.SECONDS)
