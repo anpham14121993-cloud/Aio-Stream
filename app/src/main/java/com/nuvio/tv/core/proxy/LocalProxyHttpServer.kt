@@ -1254,6 +1254,8 @@ class LocalProxyHttpServer(
         const val RAMP_CHUNK_BYTES = 2L * 1024L * 1024L
         const val MAX_ADAPTIVE_LANES = 6
         const val TARGET_AGGREGATE_BPS = 150_000_000L
+        const val STREAM_FLUSH_THRESHOLD_BYTES = 32 * 1024
+        const val STREAM_FLUSH_INTERVAL_NS = 25_000_000L
         val moshi: Moshi = Moshi.Builder().build()
     }
 
@@ -1612,10 +1614,5 @@ class LocalProxyHttpServer(
                 lastFlushNs = nowNs
             }
         }
-    }
-
-    companion object {
-        private const val STREAM_FLUSH_THRESHOLD_BYTES = 32 * 1024
-        private const val STREAM_FLUSH_INTERVAL_NS = 25_000_000L
     }
 }
