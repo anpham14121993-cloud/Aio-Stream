@@ -1643,7 +1643,7 @@ class LocalProxyHttpServer(
                     headers["Range"] = if (upEnd != null) "bytes=$upStart-$upEnd" else "bytes=$upStart-"
                 }
                 is RangeParseResult.Unsatisfiable -> {
-                    return sendTextError(output, 416, "Range Not Satisfiable", "Requested range unsatisfiable", wantKeepAlive = false)
+                    return sendTextError(output, 416, "Range Not Satisfiable", "Requested range unsatisfiable", keepAlive = false)
                 }
                 RangeParseResult.NoRange -> Unit
             }
