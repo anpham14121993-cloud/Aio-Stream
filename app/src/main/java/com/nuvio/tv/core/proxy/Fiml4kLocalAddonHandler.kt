@@ -238,8 +238,8 @@ class Fiml4kLocalAddonHandler(
         metaMap["id"] = "fiml4k:$actualSlug"
         metaMap["type"] = stremioType
         metaMap["name"] = preferVi(movie, "title").ifBlank { actualSlug }
-        metaMap["poster"] = preferVi(movie, "poster")
-        metaMap["background"] = movie.str("backdrop").orEmpty()
+        metaMap["poster"] = resolveOptionalUrl(preferVi(movie, "poster"))
+        metaMap["background"] = resolveOptionalUrl(movie.str("backdrop").orEmpty())
         metaMap["description"] = preferVi(movie, "overview")
         metaMap["releaseInfo"] = movie.numStr("year")
         metaMap["imdbRating"] = movie.numStr("score")
@@ -662,9 +662,9 @@ class Fiml4kLocalAddonHandler(
         meta["id"] = "fiml4k:$slug"
         meta["type"] = type
         meta["name"] = preferVi(item, "title").ifBlank { slug }
-        meta["poster"] = preferVi(item, "poster")
+        meta["poster"] = resolveOptionalUrl(preferVi(item, "poster"))
         meta["posterShape"] = "poster"
-        meta["background"] = item.str("backdrop").orEmpty()
+        meta["background"] = resolveOptionalUrl(item.str("backdrop").orEmpty())
         meta["description"] = preferVi(item, "overview")
         meta["releaseInfo"] = item.numStr("year")
         meta["imdbRating"] = item.numStr("score")
@@ -752,6 +752,9 @@ class Fiml4kLocalAddonHandler(
         }
         return ""
     }
+
+    private fun resolveOptionalUrl(raw: String): String =
+        if (raw.isNotBlank()) resolveUpstreamUrl(raw) else ""
 
     private fun resolveUpstreamUrl(path: String): String {
         if (path.startsWith("http://", ignoreCase = true) || path.startsWith("https://", ignoreCase = true)) {
