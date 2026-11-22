@@ -244,14 +244,23 @@ internal class PlayerMediaSourceFactory(
             .build()
     }
 
+    private val chunkSessionLoopbackProxyHttpClient by lazy {
+        chunkSessionHttpClient.newBuilder()
+            .readTimeout(45, TimeUnit.SECONDS)
+            .build()
+    }
+
     private val chunkSessionSlowStartHttpClient by lazy {
         chunkSessionHttpClient.newBuilder()
             .readTimeout(SlowStartServer.FIRST_DATA_WAIT_MS, TimeUnit.MILLISECONDS)
             .build()
     }
 
-    private fun chunkSessionClient(url: String): okhttp3.OkHttpClient =
-        if (SlowStartServer.matches(url)) chunkSessionSlowStartHttpClient else chunkSessionHttpClient
+    private fun chunkSessionClient(url: String): okhttp3.OkHttpClient = when {
+        SlowStartServer.matches(url) -> chunkSessionSlowStartHttpClient
+        com.nuvio.tv.core.proxy.LocalStreamProxy.shared.isProxyUrl(url) -> chunkSessionLoopbackProxyHttpClient
+        else -> chunkSessionHttpClient
+    }
 
     /** Connections playback opens to [url]. */
     fun playbackConnections(url: String?): Int {
@@ -385,6 +394,7 @@ internal class PlayerMediaSourceFactory(
         val isHls = chunkSessionShape.isHls
         val isDash = chunkSessionShape.isDash
         val slowStart = SlowStartServer.matches(url)
+        val isLocalStreamProxy = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.isProxyUrl(url)
         // DefaultDataSource stays in front so data: manifests resolve; loopback engines serve
         // adaptive manifests slowly, so they get the long read timeout as well.
         val httpDataSourceFactory = if (isHls || isDash) {
@@ -399,7 +409,12 @@ internal class PlayerMediaSourceFactory(
             if (isHls) HlsParameterSetInitDataSource.Factory(adaptiveFactory) else adaptiveFactory
         } else {
             RangeContinuationDataSource.Factory(
-                PlayerPlaybackNetworking.createDataSourceFactory(context, sanitizedHeaders, slowStart = slowStart)
+                PlayerPlaybackNetworking.createDataSourceFactory(
+                    context,
+                    sanitizedHeaders,
+                    useLongReadTimeout = isLoopbackUrl(url),
+                    slowStart = slowStart
+                )
             )
         }
 
@@ -482,7 +497,7 @@ internal class PlayerMediaSourceFactory(
                     onResolvedUri = { resolved -> currentVodCacheResolvedUrl = resolved?.toString() }
                 )
             }
-        } else if (isLoopbackUrl(url)) {
+        } else if (isLoopbackUrl(url) && !isLocalStreamProxy) {
             PlayerPlaybackNetworking.createHttpDataSourceFactory(sanitizedHeaders, useLongReadTimeout = true)
         } else if (usesAutoSpeedup(
                 enabled = autoSpeedupEnabled,
@@ -493,6 +508,8 @@ internal class PlayerMediaSourceFactory(
             )
         ) {
             autoSpeedupFactory(context, url, LedgerDataSourceFactory(httpDataSourceFactory), sanitizedHeaders)
+        } else if (isLoopbackUrl(url)) {
+            PlayerPlaybackNetworking.createHttpDataSourceFactory(sanitizedHeaders, useLongReadTimeout = true)
         } else {
             LedgerDataSourceFactory(httpDataSourceFactory)
         }
@@ -625,7 +642,10 @@ internal class PlayerMediaSourceFactory(
         AutoSpeedup.lazyMemory = AutoSpeedup.lazyMemoryFor(limits)
         val heldLimit: (() -> Long)? = if (AutoSpeedup.lazyMemory) AutoSpeedup::heldLimitBytes else null
         // The few long downloads keep the playback receive window, unlike the many piece sockets of Custom network.
-        val client = PlayerPlaybackNetworking.createHttpClient(headers).newBuilder()
+        val client = PlayerPlaybackNetworking.createHttpClient(
+            defaultHeaders = headers,
+            useLongReadTimeout = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.isProxyUrl(url)
+        ).newBuilder()
             .cookieJar(NuvioApplication.extensionCookieJar)
             .let(::withChunkSessionTimeouts)
             .build()

@@ -37,7 +37,8 @@ internal object HostSpeeds {
      * 1-cdn2-ovh-bea), so they are left out and the place stays: nexus, syd, store, cdn-ovh-bea.
      */
     fun keyOf(url: String?): String? {
-        val host = runCatching { URI(url ?: return null).host }.getOrNull()?.lowercase() ?: return null
+        val effectiveUrl = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.effectiveTargetUrlOf(url) ?: url
+        val host = runCatching { URI(effectiveUrl ?: return null).host }.getOrNull()?.lowercase() ?: return null
         val labels = host.split('.')
         if (labels.size <= 2 || ':' in host || labels.last().all(Char::isDigit)) return host
         val first = labels[0].split('-').map { it.filterNot(Char::isDigit) }.filter { it.isNotEmpty() }.joinToString("-")

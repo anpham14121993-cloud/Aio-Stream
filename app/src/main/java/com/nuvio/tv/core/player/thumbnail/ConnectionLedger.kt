@@ -24,8 +24,9 @@ internal object LedgerKey {
     fun knownTotal(key: String?): Int? = if (key == TORBOX) TORBOX_TOTAL else null
 
     fun of(url: String?): String? {
-        val host = url?.let { RateLimitedHosts.hostOf(it) } ?: return null
-        return if (isTorBox(host, url.lowercase())) TORBOX else host
+        val effectiveUrl = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.effectiveTargetUrlOf(url) ?: url
+        val host = effectiveUrl?.let { RateLimitedHosts.hostOf(it) } ?: return null
+        return if (isTorBox(host, effectiveUrl.lowercase())) TORBOX else host
     }
 
     /** TorBox links, and add-on links that resolve through TorBox (only their path shows it before the redirect). */

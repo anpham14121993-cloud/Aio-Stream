@@ -599,11 +599,16 @@ internal fun PlayerRuntimeController.initializePlayer(
                 localProxyEnabled = playerSettings.localProxyEnabled,
                 localProxyHeadersEnabled = playerSettings.localProxyHeadersEnabled
             )
+            val proxyProfile = if (effectiveInternalPlayerEngine == InternalPlayerEngine.MVP_PLAYER) {
+                com.nuvio.tv.core.proxy.ProxyClientProfile.SINGLE_STREAM
+            } else {
+                com.nuvio.tv.core.proxy.ProxyClientProfile.ADAPTIVE_EXOPLAYER
+            }
             val proxyPrepared = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.prepareStreamForPlayback(
                 url = url,
                 headers = headers,
                 mimeType = currentStreamMimeType,
-                forExternalPlayer = false
+                clientProfile = proxyProfile
             )
             val engineUrl = proxyPrepared.playUrl
             val engineHeaders = proxyPrepared.playHeaders

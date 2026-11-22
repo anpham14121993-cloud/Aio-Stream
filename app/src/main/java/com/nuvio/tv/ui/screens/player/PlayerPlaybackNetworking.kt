@@ -297,9 +297,13 @@ internal object PlayerPlaybackNetworking {
     fun createDataSourceFactory(
         context: android.content.Context,
         defaultHeaders: Map<String, String> = emptyMap(),
+        useLongReadTimeout: Boolean = false,
         slowStart: Boolean = false
     ): DataSource.Factory {
-        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, slowStart = slowStart))
+        return DefaultDataSource.Factory(
+            context,
+            createHttpDataSourceFactory(defaultHeaders, useLongReadTimeout = useLongReadTimeout, slowStart = slowStart)
+        )
     }
 
     fun openConnection(

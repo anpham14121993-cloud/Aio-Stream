@@ -294,18 +294,21 @@ class LocalProxyHttpServer(
 
     private fun handleClientSocket(socket: Socket) {
         try {
-            socket.soTimeout = 30_000
+            socket.soTimeout = 60_000
             socket.tcpNoDelay = true
             runCatching { socket.sendBufferSize = 1024 * 1024 }
             val input = BufferedInputStream(socket.getInputStream(), 16 * 1024)
             val output = BufferedOutputStream(socket.getOutputStream(), 256 * 1024)
-            val request = parseHttpRequest(input) ?: return
-            dispatchRequest(request, output)
-            output.flush()
+            while (running && !socket.isClosed) {
+                val request = parseHttpRequest(input) ?: break
+                val canKeepAlive = dispatchRequest(request, output)
+                output.flush()
+                if (!canKeepAlive) break
+            }
         } catch (_: SocketTimeoutException) {
-            // Client stalled before completing HTTP request line
+            // Client idle or stalled on keep-alive / request line
         } catch (_: EOFException) {
-            // Client closed connection
+            // Client closed connection / short upstream read
         } catch (_: IOException) {
             // Client disconnected during streaming
         } catch (_: Throwable) {
@@ -316,57 +319,77 @@ class LocalProxyHttpServer(
         }
     }
 
-    private fun dispatchRequest(req: ParsedHttpRequest, output: OutputStream) {
+    /**
+     * Handles one HTTP request and returns `true` only if HTTP/1.1 Keep-Alive was requested AND
+     * an exact `Content-Length`-framed response completed intact so the socket can safely serve
+     * subsequent chunk requests.
+     */
+    private fun dispatchRequest(req: ParsedHttpRequest, output: OutputStream): Boolean {
+        val wantKeepAlive = req.httpVersion == "HTTP/1.1" &&
+            !req.headers["connection"].orEmpty().contains("close", ignoreCase = true)
+
         val method = req.method.uppercase()
         if (method == "OPTIONS") {
-            sendCorsPreflight(output)
-            return
+            return sendCorsPreflight(output, wantKeepAlive)
         }
         if (method != "GET" && method != "HEAD") {
-            sendTextError(output, 405, "Method Not Allowed", "Only GET, HEAD, and OPTIONS are supported")
-            return
+            return sendTextError(output, 405, "Method Not Allowed", "Only GET, HEAD, and OPTIONS are supported", wantKeepAlive)
         }
 
         val isHead = method == "HEAD"
         val cleanPath = req.path.substringBefore('?')
         if (cleanPath == "/health") {
             val json = "{\"ok\":true,\"port\":$port}"
-            sendBytes(output, 200, "OK", "application/json; charset=utf-8", json.toByteArray(StandardCharsets.UTF_8), isHead)
-            return
+            return sendBytes(output, 200, "OK", "application/json; charset=utf-8", json.toByteArray(StandardCharsets.UTF_8), isHead, wantKeepAlive)
         }
 
         // Expected: /p/<sessionId>/<route>[/...]
         val trimmed = cleanPath.removePrefix("/")
         val segments = trimmed.split('/')
         if (segments.size < 3 || segments[0] != "p") {
-            sendTextError(output, 404, "Not Found", "Unknown proxy endpoint")
-            return
+            return sendTextError(output, 404, "Not Found", "Unknown proxy endpoint", wantKeepAlive)
         }
 
         val sessionId = segments[1]
         val route = segments[2]
         val session = getSession(sessionId) ?: run {
-            sendTextError(output, 404, "Not Found", "Proxy session expired or not found")
-            return
+            return sendTextError(output, 404, "Not Found", "Proxy session expired or not found", wantKeepAlive)
         }
 
         val queryParams = parseQueryParams(req.rawTarget)
         val rangeHeader = req.headers["range"]
 
-        when (route) {
-            "media" -> handleMediaRequest(session, queryParams["u"] ?: session.activeTargetUrl, queryParams["ref"], rangeHeader, isHead, output)
-            "hls" -> handleHlsPlaylistRequest(session, queryParams["u"] ?: session.activeTargetUrl, queryParams["ref"], isHead, output)
+        return when (route) {
+            "media" -> handleMediaRequest(
+                session = session,
+                targetUrl = queryParams["u"] ?: session.activeTargetUrl,
+                refererOverride = queryParams["ref"],
+                rangeHeader = rangeHeader,
+                isHead = isHead,
+                allowAdaptiveMultiLane = false,
+                wantKeepAlive = wantKeepAlive,
+                output = output
+            )
+            "smedia" -> handleMediaRequest(
+                session = session,
+                targetUrl = queryParams["u"] ?: session.activeTargetUrl,
+                refererOverride = queryParams["ref"],
+                rangeHeader = rangeHeader,
+                isHead = isHead,
+                allowAdaptiveMultiLane = true,
+                wantKeepAlive = wantKeepAlive,
+                output = output
+            )
+            "hls" -> handleHlsPlaylistRequest(session, queryParams["u"] ?: session.activeTargetUrl, queryParams["ref"], isHead, wantKeepAlive, output)
             "seg" -> handleHlsSegmentRequest(session, queryParams["u"] ?: session.activeTargetUrl, queryParams["ref"], rangeHeader, isHead, output)
             "key" -> handleRawAssetRequest(session, queryParams["u"] ?: session.activeTargetUrl, queryParams["ref"], rangeHeader, isHead, "application/octet-stream", output)
-            "dash" -> handleDashManifestRequest(session, queryParams["u"] ?: session.activeTargetUrl, queryParams["ref"], isHead, output)
+            "dash" -> handleDashManifestRequest(session, queryParams["u"] ?: session.activeTargetUrl, queryParams["ref"], isHead, wantKeepAlive, output)
             "rel" -> {
                 if (segments.size < 4) {
-                    sendTextError(output, 400, "Bad Request", "Missing relative base token")
-                    return
+                    return sendTextError(output, 400, "Bad Request", "Missing relative base token", wantKeepAlive)
                 }
                 val base = HlsAndDashRewriter.decodeBase64Url(segments[3]) ?: run {
-                    sendTextError(output, 400, "Bad Request", "Invalid relative base token")
-                    return
+                    return sendTextError(output, 400, "Bad Request", "Invalid relative base token", wantKeepAlive)
                 }
                 val suffixPath = segments.drop(4).joinToString("/")
                 val querySuffix = req.rawTarget.substringAfter('?', "")
@@ -380,7 +403,7 @@ class LocalProxyHttpServer(
                 handleRawAssetRequest(session, fullTarget, session.activeTargetUrl, rangeHeader, isHead, null, output)
             }
             "sub" -> handleRawAssetRequest(session, queryParams["u"] ?: session.activeTargetUrl, queryParams["ref"], rangeHeader, isHead, session.hints?.contentType, output)
-            else -> sendTextError(output, 404, "Not Found", "Unsupported proxy route: $route")
+            else -> sendTextError(output, 404, "Not Found", "Unsupported proxy route: $route", wantKeepAlive)
         }
     }
 
@@ -390,12 +413,14 @@ class LocalProxyHttpServer(
         refererOverride: String?,
         rangeHeader: String?,
         isHead: Boolean,
+        allowAdaptiveMultiLane: Boolean,
+        wantKeepAlive: Boolean,
         output: OutputStream
-    ) {
-        when (session.mode) {
-            LocalProxyMode.HLS_REWRITE -> handleHlsPlaylistRequest(session, targetUrl, refererOverride, isHead, output)
-            LocalProxyMode.DASH_REWRITE -> handleDashManifestRequest(session, targetUrl, refererOverride, isHead, output)
-            LocalProxyMode.HF_XOR_256 -> handleHfXorRequest(session, rangeHeader, isHead, output)
+    ): Boolean {
+        return when (session.mode) {
+            LocalProxyMode.HLS_REWRITE -> handleHlsPlaylistRequest(session, targetUrl, refererOverride, isHead, wantKeepAlive, output)
+            LocalProxyMode.DASH_REWRITE -> handleDashManifestRequest(session, targetUrl, refererOverride, isHead, wantKeepAlive, output)
+            LocalProxyMode.HF_XOR_256 -> handleHfXorRequest(session, rangeHeader, isHead, allowAdaptiveMultiLane, wantKeepAlive, output)
             LocalProxyMode.PREFIX_SKIP -> {
                 val skip = (session.hints?.skipBytes ?: 0L).coerceAtLeast(0L)
                 handleTransformedProgressiveRequest(
@@ -403,11 +428,16 @@ class LocalProxyHttpServer(
                     transform = PrefixSkipTransform(skip),
                     rangeHeader = rangeHeader,
                     isHead = isHead,
+                    allowAdaptiveMultiLane = allowAdaptiveMultiLane,
+                    wantKeepAlive = wantKeepAlive,
                     overrideContentType = session.hints?.contentType,
                     output = output
                 )
             }
-            LocalProxyMode.MPEG_TS_UNWRAP -> handleBufferedTsUnwrapRequest(session, targetUrl, refererOverride, rangeHeader, isHead, output)
+            LocalProxyMode.MPEG_TS_UNWRAP -> {
+                handleBufferedTsUnwrapRequest(session, targetUrl, refererOverride, rangeHeader, isHead, output)
+                false
+            }
             LocalProxyMode.HTTP_HEADERS, LocalProxyMode.NONE -> {
                 handleRawAssetRequest(session, targetUrl, refererOverride, rangeHeader, isHead, session.hints?.contentType, output)
             }
@@ -419,20 +449,19 @@ class LocalProxyHttpServer(
         targetUrl: String,
         refererOverride: String?,
         isHead: Boolean,
+        wantKeepAlive: Boolean,
         output: OutputStream
-    ) {
+    ): Boolean {
         val headers = mergeRequestHeaders(session.activeHeaders, refererOverride)
         val (response, finalUrl) = executeWithRedirects(targetUrl, headers, isHead = false)
         response.use { resp ->
             if (!resp.isSuccessful) {
-                relayErrorResponse(resp, isHead, output)
-                return
+                return relayErrorResponse(resp, isHead, wantKeepAlive, output)
             }
             val bodyBytes = resp.body?.bytes() ?: ByteArray(0)
             val text = bodyBytes.toString(StandardCharsets.UTF_8)
             if (HlsAndDashRewriter.containsHlsDrm(text)) {
-                sendTextError(output, 403, "Forbidden", "DRM-protected streams are not supported by local proxy")
-                return
+                return sendTextError(output, 403, "Forbidden", "DRM-protected streams are not supported by local proxy", wantKeepAlive)
             }
             val rewritten = HlsAndDashRewriter.rewriteHlsPlaylist(
                 playlistText = text,
@@ -441,13 +470,14 @@ class LocalProxyHttpServer(
                 buildAssetUrl(session.id, kind, resolvedTarget, playlistRef)
             }
             val bytes = rewritten.toByteArray(StandardCharsets.UTF_8)
-            sendBytes(
+            return sendBytes(
                 output = output,
                 statusCode = 200,
                 reason = "OK",
                 contentType = "application/vnd.apple.mpegurl; charset=utf-8",
                 body = bytes,
-                isHead = isHead
+                isHead = isHead,
+                keepAlive = wantKeepAlive
             )
         }
     }
@@ -459,28 +489,27 @@ class LocalProxyHttpServer(
         rangeHeader: String?,
         isHead: Boolean,
         output: OutputStream
-    ) {
+    ): Boolean {
         val shouldCheckTsUnwrap = !isHead &&
             rangeHeader.isNullOrBlank() &&
             (session.hints?.autoUnwrapTs != false) &&
             !looksLikeInitOrMediaMp4Url(targetUrl)
 
         if (!shouldCheckTsUnwrap) {
-            handleRawAssetRequest(session, targetUrl, refererOverride, rangeHeader, isHead, session.hints?.contentType, output)
-            return
+            return handleRawAssetRequest(session, targetUrl, refererOverride, rangeHeader, isHead, session.hints?.contentType, output)
         }
 
         val headers = mergeRequestHeaders(session.activeHeaders, refererOverride)
         val (response, _) = executeWithRedirects(targetUrl, headers, isHead = false)
         response.use { resp ->
             if (!resp.isSuccessful) {
-                relayErrorResponse(resp, isHead = false, output = output)
-                return
+                relayErrorResponse(resp, isHead = false, wantKeepAlive = false, output = output)
+                return false
             }
             val upstreamType = resp.header("Content-Type")?.trim().orEmpty()
             val stream = resp.body?.byteStream() ?: run {
-                sendBytes(output, 200, "OK", upstreamType.ifEmpty { "video/mp2t" }, ByteArray(0), isHead = false)
-                return
+                sendBytes(output, 200, "OK", upstreamType.ifEmpty { "video/mp2t" }, ByteArray(0), isHead = false, keepAlive = false)
+                return false
             }
             // Peek first 8KB to detect PNG/JPEG/HTML wrapper prefixes around 0x47 stride-188 TS packets.
             val peekBuffer = ByteArray(8192)
@@ -512,7 +541,7 @@ class LocalProxyHttpServer(
             if (adjustedLength != null) {
                 extraHeaders["Content-Length"] = adjustedLength.toString()
             }
-            writeResponseHeader(output, resp.code, statusReason(resp.code), resolvedType, extraHeaders)
+            writeResponseHeader(output, resp.code, statusReason(resp.code), resolvedType, extraHeaders, keepAlive = false)
 
             val skipOffset = if (syncOffset > 0) syncOffset else 0
             val firstPayloadLen = (peekRead - skipOffset).coerceAtLeast(0)
@@ -521,6 +550,7 @@ class LocalProxyHttpServer(
                 bytesServedCounter.addAndGet(firstPayloadLen.toLong())
             }
             copyStreamWithCancelCheck(stream, output, resp)
+            return false
         }
     }
 
@@ -529,31 +559,31 @@ class LocalProxyHttpServer(
         targetUrl: String,
         refererOverride: String?,
         isHead: Boolean,
+        wantKeepAlive: Boolean,
         output: OutputStream
-    ) {
+    ): Boolean {
         val headers = mergeRequestHeaders(session.activeHeaders, refererOverride)
         val (response, finalUrl) = executeWithRedirects(targetUrl, headers, isHead = false)
         response.use { resp ->
             if (!resp.isSuccessful) {
-                relayErrorResponse(resp, isHead, output)
-                return
+                return relayErrorResponse(resp, isHead, wantKeepAlive, output)
             }
             val bodyBytes = resp.body?.bytes() ?: ByteArray(0)
             val text = bodyBytes.toString(StandardCharsets.UTF_8)
             if (HlsAndDashRewriter.containsDashDrm(text)) {
-                sendTextError(output, 403, "Forbidden", "DRM-protected DASH streams are not supported by local proxy")
-                return
+                return sendTextError(output, 403, "Forbidden", "DRM-protected DASH streams are not supported by local proxy", wantKeepAlive)
             }
             val rewritten = HlsAndDashRewriter.rewriteDashManifest(text, finalUrl) { resolvedBase ->
                 buildDashBaseUrlPrefix(session.id, resolvedBase)
             }
-            sendBytes(
+            return sendBytes(
                 output = output,
                 statusCode = 200,
                 reason = "OK",
                 contentType = "application/dash+xml; charset=utf-8",
                 body = rewritten.toByteArray(StandardCharsets.UTF_8),
-                isHead = isHead
+                isHead = isHead,
+                keepAlive = wantKeepAlive
             )
         }
     }
@@ -573,14 +603,18 @@ class LocalProxyHttpServer(
         session: ProxySession,
         rangeHeader: String?,
         isHead: Boolean,
+        allowAdaptiveMultiLane: Boolean,
+        wantKeepAlive: Boolean,
         output: OutputStream
-    ) {
+    ): Boolean {
         val (transform, _) = ensureHfResolved(session)
-        handleTransformedProgressiveRequest(
+        return handleTransformedProgressiveRequest(
             session = session,
             transform = transform,
             rangeHeader = rangeHeader,
             isHead = isHead,
+            allowAdaptiveMultiLane = allowAdaptiveMultiLane,
+            wantKeepAlive = wantKeepAlive,
             overrideContentType = session.hints?.contentType ?: session.resolvedContentType ?: "video/x-matroska",
             output = output
         )
@@ -718,9 +752,11 @@ class LocalProxyHttpServer(
         transform: RangeByteTransform,
         rangeHeader: String?,
         isHead: Boolean,
+        allowAdaptiveMultiLane: Boolean,
+        wantKeepAlive: Boolean,
         overrideContentType: String?,
         output: OutputStream
-    ) {
+    ): Boolean {
         val rawTotalSize = session.resolvedRawTotalSize ?: probeUpstreamTotalLength(session)
         val decodedTotalSize = transform.decodedTotalSize(rawTotalSize)
 
@@ -737,8 +773,8 @@ class LocalProxyHttpServer(
                     headers["Content-Range"] = "bytes */$decodedTotalSize"
                 }
                 headers["Content-Length"] = "0"
-                writeResponseHeader(output, 416, "Range Not Satisfiable", "text/plain; charset=utf-8", headers)
-                return
+                writeResponseHeader(output, 416, "Range Not Satisfiable", "text/plain; charset=utf-8", headers, keepAlive = wantKeepAlive)
+                return wantKeepAlive
             }
         }
 
@@ -750,29 +786,28 @@ class LocalProxyHttpServer(
                 val len = (requestedRange.endInclusive - requestedRange.start + 1L).coerceAtLeast(0L)
                 headers["Content-Range"] = "bytes ${requestedRange.start}-${requestedRange.endInclusive}/$decodedTotalSize"
                 headers["Content-Length"] = len.toString()
-                writeResponseHeader(output, 206, "Partial Content", contentType, headers)
+                writeResponseHeader(output, 206, "Partial Content", contentType, headers, keepAlive = wantKeepAlive)
             } else {
                 if (decodedTotalSize != null) {
                     headers["Content-Length"] = decodedTotalSize.toString()
                 }
-                writeResponseHeader(output, 200, "OK", contentType, headers)
+                writeResponseHeader(output, 200, "OK", contentType, headers, keepAlive = wantKeepAlive)
             }
-            return
+            return wantKeepAlive
         }
 
         val isPartial = rangeHeader != null
         val requestedLen = requestedRange.contentLengthOrNull()
-        val clientRequestedOpenRange = rangeHeader == null ||
-            rangeHeader.trim().endsWith("-") ||
-            (requestedLen != null && requestedLen > 24L * 1024L * 1024L)
+        val isOpenEndedStream = rangeHeader == null || rangeHeader.trim().endsWith("-")
 
-        // Multi-lane concurrent CDN chunk pipeline: saturates multi-connection throughput and prevents
-        // 15s idle-timeout drops when player pauses or buffers fill, without splitting already-chunked
-        // bounded requests from ParallelRangeDataSource.
-        if (decodedTotalSize != null &&
+        // Only single-connection clients (`libmpv`, VLC, MX Player via `/smedia`) use the proxy's
+        // internal adaptive multi-lane chunk scheduler. ExoPlayer (`/media`) manages its own chunking &
+        // parallelism via `AutoSpeedup` and `ParallelRangeDataSource` without any fixed threshold.
+        if (allowAdaptiveMultiLane &&
+            decodedTotalSize != null &&
             requestedLen != null &&
-            requestedLen > MULTI_LANE_MIN_BYTES &&
-            clientRequestedOpenRange
+            requestedLen > ADAPTIVE_SINGLE_CLIENT_MIN_BYTES &&
+            isOpenEndedStream
         ) {
             val contentType = overrideContentType ?: session.resolvedContentType ?: "video/x-matroska"
             val respHeaders = LinkedHashMap<String, String>()
@@ -783,16 +818,16 @@ class LocalProxyHttpServer(
             }
             respHeaders["Content-Length"] = requestedLen.toString()
             val code = if (isPartial) 206 else 200
-            writeResponseHeader(output, code, statusReason(code), contentType, respHeaders)
+            writeResponseHeader(output, code, statusReason(code), contentType, respHeaders, keepAlive = wantKeepAlive)
             output.flush()
-            streamMultiLaneTransformed(
+            streamAdaptiveSingleClient(
                 session = session,
                 transform = transform,
                 decodedStart = requestedRange.start,
                 totalBytesToSend = requestedLen,
                 output = output
             )
-            return
+            return wantKeepAlive
         }
 
         val rawReq = transform.toRawRange(requestedRange.start, requestedRange.endInclusive)
@@ -806,8 +841,7 @@ class LocalProxyHttpServer(
 
         response.use { resp ->
             if (!resp.isSuccessful) {
-                relayErrorResponse(resp, isHead = false, output = output)
-                return
+                return relayErrorResponse(resp, isHead = false, wantKeepAlive = wantKeepAlive, output = output)
             }
             session.updateCdnTarget(finalUrl, filterHeadersForRedirect(session.activeTargetUrl, finalUrl, session.activeHeaders))
 
@@ -845,14 +879,20 @@ class LocalProxyHttpServer(
                     respHeaders["Content-Range"] = "bytes ${requestedRange.start}-$endByte/*"
                 }
             }
+            val keepAliveForThisResponse = wantKeepAlive && effectiveLen != null
             if (effectiveLen != null) {
                 respHeaders["Content-Length"] = effectiveLen.toString()
             }
 
             val code = if (isPartial) 206 else 200
-            writeResponseHeader(output, code, statusReason(code), contentType, respHeaders)
+            writeResponseHeader(output, code, statusReason(code), contentType, respHeaders, keepAlive = keepAliveForThisResponse)
 
-            val stream = resp.body?.byteStream() ?: return
+            val stream = resp.body?.byteStream() ?: run {
+                if (effectiveLen != null && effectiveLen > 0L) {
+                    throw EOFException("Empty upstream body while expecting $effectiveLen bytes")
+                }
+                return keepAliveForThisResponse
+            }
             if (skippedBytes > 0L) {
                 skipFully(stream, skippedBytes)
             }
@@ -860,6 +900,7 @@ class LocalProxyHttpServer(
             val buf = ByteArray(256 * 1024)
             var decodedPos = requestedRange.start
             var remaining = effectiveLen ?: Long.MAX_VALUE
+            var written = 0L
             while (remaining > 0L) {
                 val maxRead = minOf(buf.size.toLong(), remaining).toInt()
                 val n = stream.read(buf, 0, maxRead)
@@ -868,13 +909,23 @@ class LocalProxyHttpServer(
                 output.write(buf, 0, n)
                 decodedPos += n
                 remaining -= n
+                written += n
                 bytesServedCounter.addAndGet(n.toLong())
             }
             output.flush()
+            if (effectiveLen != null && written != effectiveLen) {
+                throw EOFException("Upstream truncated response ($written/$effectiveLen bytes)")
+            }
+            return keepAliveForThisResponse
         }
     }
 
-    private fun streamMultiLaneTransformed(
+    /**
+     * Adaptive multi-lane chunk pipeline for single-connection players (`/smedia`, e.g. MPV/VLC/MX Player).
+     * Dynamically scales lanes (`1..maxHeapLanes`) and chunk sizes based on measured throughput,
+     * upstream throttling feedback, and available JVM heap headroom.
+     */
+    private fun streamAdaptiveSingleClient(
         session: ProxySession,
         transform: RangeByteTransform,
         decodedStart: Long,
@@ -887,56 +938,109 @@ class LocalProxyHttpServer(
 
         val cancelled = AtomicBoolean(false)
         val activeCalls = ConcurrentHashMap.newKeySet<Call>()
-        val window = ArrayDeque<Future<ByteArray>>(MULTI_LANE_IN_FLIGHT)
+        val targetLanes = AtomicInteger(2)
+        val ewmaLaneBps = AtomicLong(0L)
+        val cooldownChunks = AtomicInteger(0)
+
+        data class ChunkTask(val size: Int, val future: Future<ByteArray>)
+
+        val window = ArrayDeque<ChunkTask>(MAX_ADAPTIVE_LANES)
         var submitOffset = decodedStart
         var submitRemaining = totalBytesToSend
         var chunkIndex = 0
 
-        fun chunkSizeFor(index: Int): Long = when (index) {
+        fun maxHeapSafeLanes(): Int {
+            val rt = Runtime.getRuntime()
+            val used = rt.totalMemory() - rt.freeMemory()
+            val freeMb = (rt.maxMemory() - used).coerceAtLeast(0L) / (1024L * 1024L)
+            return when {
+                freeMb >= 72L -> MAX_ADAPTIVE_LANES
+                freeMb >= 40L -> 4
+                else -> 2
+            }
+        }
+
+        fun nextChunkSize(index: Int, lanes: Int): Long = when (index) {
             0 -> FIRST_CHUNK_BYTES
             1 -> RAMP_CHUNK_BYTES
-            else -> STEADY_CHUNK_BYTES
+            else -> when {
+                lanes >= 5 && ewmaLaneBps.get() in 1L until 20_000_000L -> 4L * 1024L * 1024L
+                maxHeapSafeLanes() >= 4 -> 3L * 1024L * 1024L
+                else -> 2L * 1024L * 1024L
+            }
         }
 
         fun enqueueLookahead() {
-            while (!cancelled.get() && window.size < MULTI_LANE_IN_FLIGHT && submitRemaining > 0L) {
-                val size = minOf(submitRemaining, chunkSizeFor(chunkIndex++)).toInt()
+            val desired = targetLanes.get().coerceIn(1, maxHeapSafeLanes())
+            while (!cancelled.get() && window.size < desired && submitRemaining > 0L) {
+                val size = minOf(submitRemaining, nextChunkSize(chunkIndex++, desired)).toInt()
                 val off = submitOffset
                 submitOffset += size
                 submitRemaining -= size
                 val future = workers.submit(Callable {
-                    fetchAndTransformChunkWithRetry(
-                        session = session,
-                        transform = transform,
-                        decodedOffset = off,
-                        chunkSize = size,
-                        cancelled = cancelled,
-                        activeCalls = activeCalls
-                    )
+                    val t0 = System.nanoTime()
+                    try {
+                        val bytes = fetchAndTransformChunkWithRetry(
+                            session = session,
+                            transform = transform,
+                            decodedOffset = off,
+                            chunkSize = size,
+                            cancelled = cancelled,
+                            activeCalls = activeCalls
+                        )
+                        val elapsedNs = (System.nanoTime() - t0).coerceAtLeast(1_000_000L)
+                        val chunkBps = (bytes.size.toLong() * 8_000_000_000L) / elapsedNs
+                        val prev = ewmaLaneBps.get()
+                        val updated = if (prev <= 0L) chunkBps else (prev * 7 + chunkBps * 3) / 10
+                        ewmaLaneBps.set(updated)
+
+                        val cool = cooldownChunks.get()
+                        if (cool > 0) {
+                            cooldownChunks.decrementAndGet()
+                        } else {
+                            val currentLanes = targetLanes.get()
+                            val estAggregateBps = updated * currentLanes
+                            val ceiling = maxHeapSafeLanes()
+                            if (estAggregateBps < TARGET_AGGREGATE_BPS && currentLanes < ceiling) {
+                                targetLanes.compareAndSet(currentLanes, (currentLanes + 1).coerceAtMost(ceiling))
+                            }
+                        }
+                        bytes
+                    } catch (e: IOException) {
+                        if (!cancelled.get()) {
+                            cooldownChunks.set(4)
+                            targetLanes.updateAndGet { cur -> (cur / 2).coerceAtLeast(1) }
+                        }
+                        throw e
+                    }
                 })
-                window.addLast(future)
+                window.addLast(ChunkTask(size, future))
             }
         }
 
+        var writtenTotal = 0L
         try {
             while (window.isNotEmpty() || submitRemaining > 0L) {
                 enqueueLookahead()
-                val nextFuture = window.removeFirst()
+                val task = window.removeFirst()
                 val data = try {
-                    nextFuture.get()
+                    task.future.get()
                 } catch (ee: ExecutionException) {
                     val cause = ee.cause
                     throw if (cause is IOException) cause else IOException("Upstream chunk fetch failed", cause)
                 }
-                // Schedule replacement chunk before potentially blocking on loopback socket write.
                 enqueueLookahead()
                 output.write(data)
                 output.flush()
+                writtenTotal += data.size
                 bytesServedCounter.addAndGet(data.size.toLong())
+            }
+            if (writtenTotal != totalBytesToSend) {
+                throw EOFException("Adaptive multi-lane short write ($writtenTotal/$totalBytesToSend)")
             }
         } finally {
             cancelled.set(true)
-            window.forEach { it.cancel(true) }
+            window.forEach { it.future.cancel(true) }
             window.clear()
             activeCalls.forEach { runCatching { it.cancel() } }
             activeCalls.clear()
@@ -1021,7 +1125,7 @@ class LocalProxyHttpServer(
         isHead: Boolean,
         overrideContentType: String?,
         output: OutputStream
-    ) {
+    ): Boolean {
         val headers = mergeRequestHeaders(session.activeHeaders, refererOverride).toMutableMap()
         if (!rangeHeader.isNullOrBlank()) {
             headers["Range"] = rangeHeader
@@ -1036,10 +1140,11 @@ class LocalProxyHttpServer(
             resp.header("Content-Disposition")?.let { outHeaders["Content-Disposition"] = it }
             resp.header("Cache-Control")?.let { outHeaders["Cache-Control"] = it }
 
-            writeResponseHeader(output, resp.code, statusReason(resp.code), contentType, outHeaders)
-            if (isHead) return
-            val stream = resp.body?.byteStream() ?: return
+            writeResponseHeader(output, resp.code, statusReason(resp.code), contentType, outHeaders, keepAlive = false)
+            if (isHead) return false
+            val stream = resp.body?.byteStream() ?: return false
             copyStreamWithCancelCheck(stream, output, resp)
+            return false
         }
     }
 
@@ -1142,11 +1247,11 @@ class LocalProxyHttpServer(
     }
 
     private companion object {
-        const val MULTI_LANE_MIN_BYTES = 6L * 1024L * 1024L
+        const val ADAPTIVE_SINGLE_CLIENT_MIN_BYTES = 2L * 1024L * 1024L
         const val FIRST_CHUNK_BYTES = 512L * 1024L
         const val RAMP_CHUNK_BYTES = 2L * 1024L * 1024L
-        const val STEADY_CHUNK_BYTES = 3L * 1024L * 1024L
-        const val MULTI_LANE_IN_FLIGHT = 4
+        const val MAX_ADAPTIVE_LANES = 6
+        const val TARGET_AGGREGATE_BPS = 150_000_000L
         val moshi: Moshi = Moshi.Builder().build()
     }
 
@@ -1260,15 +1365,15 @@ class LocalProxyHttpServer(
         return HttpHeaderSanitizer.sanitizeMap(merged)
     }
 
-    private fun relayErrorResponse(resp: Response, isHead: Boolean, output: OutputStream) {
+    private fun relayErrorResponse(resp: Response, isHead: Boolean, wantKeepAlive: Boolean, output: OutputStream): Boolean {
         val msg = if (isHead) ByteArray(0) else (resp.body?.bytes() ?: ByteArray(0)).let {
             if (it.size > 8192) it.copyOf(8192) else it
         }
         val contentType = resp.header("Content-Type") ?: "text/plain; charset=utf-8"
-        sendBytes(output, resp.code, statusReason(resp.code), contentType, msg, isHead)
+        return sendBytes(output, resp.code, statusReason(resp.code), contentType, msg, isHead, wantKeepAlive)
     }
 
-    private fun sendCorsPreflight(output: OutputStream) {
+    private fun sendCorsPreflight(output: OutputStream, keepAlive: Boolean): Boolean {
         val sb = StringBuilder()
         sb.append("HTTP/1.1 204 No Content\r\n")
         sb.append("Access-Control-Allow-Origin: *\r\n")
@@ -1276,12 +1381,13 @@ class LocalProxyHttpServer(
         sb.append("Access-Control-Allow-Headers: *\r\n")
         sb.append("Access-Control-Max-Age: 86400\r\n")
         sb.append("Content-Length: 0\r\n")
-        sb.append("Connection: close\r\n\r\n")
+        sb.append(if (keepAlive) "Connection: keep-alive\r\nKeep-Alive: timeout=60\r\n\r\n" else "Connection: close\r\n\r\n")
         output.write(sb.toString().toByteArray(StandardCharsets.US_ASCII))
+        return keepAlive
     }
 
-    private fun sendTextError(output: OutputStream, code: Int, reason: String, message: String) {
-        sendBytes(output, code, reason, "text/plain; charset=utf-8", message.toByteArray(StandardCharsets.UTF_8), isHead = false)
+    private fun sendTextError(output: OutputStream, code: Int, reason: String, message: String, keepAlive: Boolean): Boolean {
+        return sendBytes(output, code, reason, "text/plain; charset=utf-8", message.toByteArray(StandardCharsets.UTF_8), isHead = false, keepAlive = keepAlive)
     }
 
     private fun sendBytes(
@@ -1290,16 +1396,18 @@ class LocalProxyHttpServer(
         reason: String,
         contentType: String,
         body: ByteArray,
-        isHead: Boolean
-    ) {
+        isHead: Boolean,
+        keepAlive: Boolean = false
+    ): Boolean {
         val headers = LinkedHashMap<String, String>()
         headers["Content-Length"] = body.size.toString()
         headers["Accept-Ranges"] = "none"
-        writeResponseHeader(output, statusCode, reason, contentType, headers)
+        writeResponseHeader(output, statusCode, reason, contentType, headers, keepAlive = keepAlive)
         if (!isHead && body.isNotEmpty()) {
             output.write(body)
             bytesServedCounter.addAndGet(body.size.toLong())
         }
+        return keepAlive
     }
 
     private fun writeResponseHeader(
@@ -1307,7 +1415,8 @@ class LocalProxyHttpServer(
         statusCode: Int,
         reason: String,
         contentType: String,
-        extraHeaders: Map<String, String>
+        extraHeaders: Map<String, String>,
+        keepAlive: Boolean = false
     ) {
         val sb = StringBuilder(256)
         sb.append("HTTP/1.1 ").append(statusCode).append(' ').append(reason).append("\r\n")
@@ -1318,7 +1427,12 @@ class LocalProxyHttpServer(
         for ((k, v) in extraHeaders) {
             sb.append(k).append(": ").append(v).append("\r\n")
         }
-        sb.append("Connection: close\r\n\r\n")
+        if (keepAlive) {
+            sb.append("Connection: keep-alive\r\n")
+            sb.append("Keep-Alive: timeout=60\r\n\r\n")
+        } else {
+            sb.append("Connection: close\r\n\r\n")
+        }
         output.write(sb.toString().toByteArray(StandardCharsets.US_ASCII))
     }
 
@@ -1370,6 +1484,7 @@ class LocalProxyHttpServer(
 
         val method = parts[0]
         val rawTarget = parts[1]
+        val httpVersion = if (parts.size >= 3) parts[2].trim().uppercase() else "HTTP/1.0"
         val headers = LinkedHashMap<String, String>()
         for (i in 1 until lines.size) {
             val line = lines[i]
@@ -1384,6 +1499,7 @@ class LocalProxyHttpServer(
             method = method,
             rawTarget = rawTarget,
             path = rawTarget.substringBefore('?'),
+            httpVersion = httpVersion,
             headers = headers
         )
     }
@@ -1470,6 +1586,7 @@ class LocalProxyHttpServer(
         val method: String,
         val rawTarget: String,
         val path: String,
+        val httpVersion: String,
         val headers: Map<String, String>
     )
 }

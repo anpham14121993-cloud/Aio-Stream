@@ -8,6 +8,13 @@ import java.util.Collections
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
+enum class ProxyClientProfile {
+    /** ExoPlayer (`AutoSpeedup` / `ParallelRangeDataSource`): proxy runs pure 1:1 streaming & CDN cache without sub-chunking. */
+    ADAPTIVE_EXOPLAYER,
+    /** Single-connection players (`libmpv`, VLC, MX Player): proxy engages its own adaptive multi-lane fetcher. */
+    SINGLE_STREAM
+}
+
 data class ProxyInputContext(
     val url: String,
     val headers: Map<String, String> = emptyMap(),
@@ -304,7 +311,12 @@ class LocalStreamProxy(
         headers: Map<String, String> = emptyMap(),
         mimeType: String? = null,
         hints: LocalProxyHints? = null,
-        forExternalPlayer: Boolean = false
+        forExternalPlayer: Boolean = false,
+        clientProfile: ProxyClientProfile = if (forExternalPlayer) {
+            ProxyClientProfile.SINGLE_STREAM
+        } else {
+            ProxyClientProfile.ADAPTIVE_EXOPLAYER
+        }
     ): ProxyPreparationResult {
         val originalUrl = originalUrlOf(url) ?: url
         val sanitizedOriginalHeaders = HttpHeaderSanitizer.sanitizeMap(headers)
@@ -319,7 +331,7 @@ class LocalStreamProxy(
                 headers = sanitizedOriginalHeaders,
                 mimeType = mimeType,
                 hints = effectiveHints,
-                forExternalPlayer = forExternalPlayer
+                forExternalPlayer = forExternalPlayer || clientProfile == ProxyClientProfile.SINGLE_STREAM
             ),
             settings = settings
         )
@@ -345,7 +357,7 @@ class LocalStreamProxy(
         val entryRoute = when (decision.mode) {
             LocalProxyMode.HLS_REWRITE -> "hls"
             LocalProxyMode.DASH_REWRITE -> "dash"
-            else -> "media"
+            else -> if (clientProfile == ProxyClientProfile.SINGLE_STREAM) "smedia" else "media"
         }
         val playUrl = server.buildSessionEntryUrl(session, entryRoute)
         return ProxyPreparationResult(
@@ -390,6 +402,18 @@ class LocalStreamProxy(
         val candidate = url?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         val sid = extractSessionId(candidate) ?: return null
         return server.getSession(sid)?.originalUrl
+    }
+
+    /**
+     * Resolves the real remote URL (resolved CDN redirect URL if already probed, else target/origin URL)
+     * behind a local proxy URL so host-based speed memory and connection ledgers track the real upstream
+     * CDN rather than conflating every proxied addon under `127.0.0.1`.
+     */
+    fun effectiveTargetUrlOf(url: String?): String? {
+        val candidate = url?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val sid = extractSessionId(candidate) ?: return null
+        val session = server.getSession(sid) ?: return null
+        return session.validCdnTarget()?.first ?: session.activeTargetUrl.ifBlank { session.originalUrl }
     }
 
     fun originalHeadersOf(url: String?): Map<String, String>? {

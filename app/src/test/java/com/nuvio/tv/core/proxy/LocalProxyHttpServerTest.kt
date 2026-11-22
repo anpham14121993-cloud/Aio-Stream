@@ -2,6 +2,8 @@ package com.nuvio.tv.core.proxy
 
 import com.nuvio.tv.domain.model.LocalProxyHints
 import com.nuvio.tv.domain.model.LocalProxyMode
+import okhttp3.Call
+import okhttp3.EventListener
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.Dispatcher
@@ -16,7 +18,11 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 
 class LocalProxyHttpServerTest {
 
@@ -176,9 +182,10 @@ class LocalProxyHttpServerTest {
             headers = emptyMap(),
             hints = LocalProxyHints(enabled = true, mode = "hf-xor-256", autoKey = true)
         )
-        val proxyUrl = server.buildSessionEntryUrl(session, "media")
+        // Single-stream profile ("smedia") enables adaptive multi-lane throughput pipeline
+        val proxyUrl = server.buildSessionEntryUrl(session, "smedia")
 
-        // Open-ended streaming GET exercises multi-lane pipeline & Matroska Content-Type inference
+        // Open-ended streaming GET exercises adaptive multi-lane pipeline & Matroska Content-Type inference
         client.newCall(Request.Builder().url(proxyUrl).addHeader("Range", "bytes=0-").get().build()).execute().use { resp ->
             assertEquals(206, resp.code)
             assertEquals("video/x-matroska", resp.header("Content-Type"))
@@ -188,10 +195,9 @@ class LocalProxyHttpServerTest {
         }
         // 302 redirect only happened once during initial probe; all chunks hit cached CDN URL directly.
         assertEquals(1, redirectHits)
-        // Probe + 64KB autokey sample + >=4 multi-lane chunks (512KB, 2MB, 3MB, 3MB, tail)
-        assertTrue("Expected multi-lane chunk fetches, got $cdnRangeHits", cdnRangeHits >= 6)
+        assertTrue("Expected multi-chunk adaptive fetches, got $cdnRangeHits", cdnRangeHits >= 4)
 
-        // Open-ended mid-file seek still works cleanly via multi-lane without triggering another 302
+        // Open-ended mid-file seek still works cleanly via adaptive pipeline without triggering another 302
         val seekStart = 4 * 1024 * 1024 + 123
         client.newCall(
             Request.Builder().url(proxyUrl).addHeader("Range", "bytes=$seekStart-").get().build()
@@ -200,6 +206,101 @@ class LocalProxyHttpServerTest {
             assertArrayEquals(plain.copyOfRange(seekStart, plain.size), resp.body!!.bytes())
         }
         assertEquals(1, redirectHits)
+    }
+
+    @Test
+    fun exoPlayerMediaProfileForwardsRanges1To1AndReusesHttp11KeepAlive() {
+        val totalDecoded = 4 * 1024 * 1024
+        val customKey = ByteArray(256) { idx -> ((idx * 17 + 11) and 0xFF).toByte() }
+        val plain = ByteArray(totalDecoded) { idx ->
+            when {
+                idx == 0 -> 0x1A
+                idx == 1 -> 0x45
+                idx == 2 -> 0xDF.toByte()
+                idx == 3 -> 0xA3.toByte()
+                idx % 73 == 0 -> ((idx * 13) and 0xFF).toByte()
+                else -> 0
+            }
+        }
+        val encrypted = plain.copyOf()
+        HfXor256Transform(headerSize = 64, xorKey = customKey).transformInPlace(encrypted, 0, encrypted.size, 0L)
+        val fullRaw = ByteArray(64) { 0x41 } + encrypted
+
+        val upstreamRangesAfterWarmup = CopyOnWriteArrayList<String>()
+        var warmedUp = false
+        upstream.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path.orEmpty()
+                return when {
+                    path.startsWith("/entry") -> MockResponse()
+                        .setResponseCode(302)
+                        .addHeader("Location", upstream.url("/fast-cdn/movie.pth").toString())
+                    path.startsWith("/fast-cdn/movie.pth") -> {
+                        if (warmedUp) {
+                            upstreamRangesAfterWarmup += request.getHeader("Range").orEmpty()
+                        }
+                        serveRangedBytes(request, fullRaw, "application/octet-stream")
+                    }
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+
+        val session = server.registerSession(
+            originalUrl = upstream.url("/entry").toString(),
+            targetUrl = upstream.url("/entry").toString(),
+            mode = LocalProxyMode.HF_XOR_256,
+            headers = emptyMap(),
+            hints = LocalProxyHints(enabled = true, mode = "hf-xor-256", autoKey = true)
+        )
+        // Adaptive ExoPlayer profile ("media") must stream 1:1 without hidden sub-splitting
+        val mediaUrl = server.buildSessionEntryUrl(session, "media")
+        val tcpConnects = AtomicInteger(0)
+        val playerClient = OkHttpClient.Builder()
+            .eventListener(object : EventListener() {
+                override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
+                    tcpConnects.incrementAndGet()
+                }
+            })
+            .build()
+
+        try {
+            // Chunk 1 triggers initial probe + autokey + first 1MB range
+            playerClient.newCall(
+                Request.Builder().url(mediaUrl).addHeader("Range", "bytes=0-1048575").get().build()
+            ).execute().use { resp ->
+                assertEquals(206, resp.code)
+                assertEquals("keep-alive", resp.header("Connection")?.lowercase())
+                assertArrayEquals(plain.copyOfRange(0, 1048576), resp.body!!.bytes())
+            }
+            warmedUp = true
+
+            // Chunk 2 & 3 simulate ExoPlayer AutoSpeedup 1:1 range requests over the same Keep-Alive socket
+            playerClient.newCall(
+                Request.Builder().url(mediaUrl).addHeader("Range", "bytes=1048576-2097151").get().build()
+            ).execute().use { resp ->
+                assertEquals(206, resp.code)
+                assertEquals("keep-alive", resp.header("Connection")?.lowercase())
+                assertArrayEquals(plain.copyOfRange(1048576, 2097152), resp.body!!.bytes())
+            }
+            playerClient.newCall(
+                Request.Builder().url(mediaUrl).addHeader("Range", "bytes=2097152-3145727").get().build()
+            ).execute().use { resp ->
+                assertEquals(206, resp.code)
+                assertEquals("keep-alive", resp.header("Connection")?.lowercase())
+                assertArrayEquals(plain.copyOfRange(2097152, 3145728), resp.body!!.bytes())
+            }
+
+            // Strictly 1:1 upstream Range forwarding (no sub-splitting on "media") and 1 reused socket
+            assertEquals(
+                listOf("bytes=1048640-2097215", "bytes=2097216-3145791"),
+                upstreamRangesAfterWarmup
+            )
+            assertEquals(1, tcpConnects.get())
+        } finally {
+            playerClient.connectionPool.evictAll()
+            playerClient.dispatcher.executorService.shutdown()
+        }
     }
 
     @Test

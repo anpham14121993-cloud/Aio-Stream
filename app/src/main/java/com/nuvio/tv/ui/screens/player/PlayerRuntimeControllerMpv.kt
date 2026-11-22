@@ -53,7 +53,7 @@ private fun PlayerRuntimeController.startMpvOnAttachedView(view: NuvioMpvSurface
             url = currentStreamUrl,
             headers = currentHeaders,
             mimeType = currentStreamMimeType,
-            forExternalPlayer = false
+            clientProfile = com.nuvio.tv.core.proxy.ProxyClientProfile.SINGLE_STREAM
         )
         view.setMedia(mpvPrepared.playUrl, mpvPrepared.playHeaders)
         val playerInitLine =

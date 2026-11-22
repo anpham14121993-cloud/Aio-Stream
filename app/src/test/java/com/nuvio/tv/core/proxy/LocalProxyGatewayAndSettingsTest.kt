@@ -1,9 +1,11 @@
 package com.nuvio.tv.core.proxy
 
+import com.nuvio.tv.core.player.thumbnail.LedgerKey
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.dto.BehaviorHintsDto
 import com.nuvio.tv.domain.model.LocalProxyHints
 import com.nuvio.tv.domain.model.LocalProxyMode
+import com.nuvio.tv.ui.screens.player.HostSpeeds
 import com.squareup.moshi.Moshi
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -136,6 +138,52 @@ class LocalProxyGatewayAndSettingsTest {
         val second = proxy.prepareStreamForPlayback(url = url, headers = mapOf("Authorization" to "Bearer t"))
         assertEquals(first.playUrl, second.playUrl)
         assertEquals(url, proxy.originalUrlOf(first.playUrl))
+    }
+
+    @Test
+    fun clientProfileRoutesAdaptiveVsSingleStreamAndPreservesRemoteHostKeys() {
+        val hfUrl = "https://huggingface.co/datasets/owner/repo/resolve/main/movie.pth"
+        val hints = LocalProxyHints(enabled = true, mode = "hf-xor-256")
+
+        val exoPrep = proxy.prepareStreamForPlayback(
+            url = hfUrl,
+            hints = hints,
+            clientProfile = ProxyClientProfile.ADAPTIVE_EXOPLAYER
+        )
+        assertTrue(exoPrep.proxied)
+        assertTrue(exoPrep.playUrl.endsWith("/media"))
+
+        val singlePrep = proxy.prepareStreamForPlayback(
+            url = hfUrl,
+            hints = hints,
+            clientProfile = ProxyClientProfile.SINGLE_STREAM
+        )
+        assertTrue(singlePrep.proxied)
+        assertTrue(singlePrep.playUrl.endsWith("/smedia"))
+
+        val extPrep = proxy.prepareStreamForPlayback(
+            url = "https://cdn.example.net/video.mp4",
+            headers = mapOf("Referer" to "https://site.example/"),
+            forExternalPlayer = true
+        )
+        assertTrue(extPrep.proxied)
+        assertTrue(extPrep.playUrl.endsWith("/smedia"))
+
+        val shared = LocalStreamProxy.shared
+        try {
+            shared.updateSettings(localProxyEnabled = true, localProxyHeadersEnabled = true)
+            val sharedPrep = shared.prepareStreamForPlayback(
+                url = hfUrl,
+                hints = hints,
+                clientProfile = ProxyClientProfile.ADAPTIVE_EXOPLAYER
+            )
+            assertEquals(hfUrl, shared.effectiveTargetUrlOf(sharedPrep.playUrl))
+            assertEquals("huggingface.co", HostSpeeds.keyOf(sharedPrep.playUrl))
+            assertEquals("huggingface.co", LedgerKey.of(sharedPrep.playUrl))
+            assertEquals("127.0.0.1", HostSpeeds.keyOf("http://127.0.0.1:8090/stream/infohash/0"))
+        } finally {
+            shared.stop()
+        }
     }
 
     @Test
