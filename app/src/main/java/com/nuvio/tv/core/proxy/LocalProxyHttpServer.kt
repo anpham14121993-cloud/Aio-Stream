@@ -294,11 +294,11 @@ class LocalProxyHttpServer(
 
     private fun handleClientSocket(socket: Socket) {
         try {
-            socket.soTimeout = 60_000
+            socket.soTimeout = 90_000
             socket.tcpNoDelay = true
             runCatching { socket.sendBufferSize = 1024 * 1024 }
             val input = BufferedInputStream(socket.getInputStream(), 16 * 1024)
-            val output = BufferedOutputStream(socket.getOutputStream(), 256 * 1024)
+            val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
             while (running && !socket.isClosed) {
                 val request = parseHttpRequest(input) ?: break
                 val canKeepAlive = dispatchRequest(request, output)
@@ -901,6 +901,7 @@ class LocalProxyHttpServer(
             var decodedPos = requestedRange.start
             var remaining = effectiveLen ?: Long.MAX_VALUE
             var written = 0L
+            val flushTracker = StreamFlushTracker(output)
             while (remaining > 0L) {
                 val maxRead = minOf(buf.size.toLong(), remaining).toInt()
                 val n = stream.read(buf, 0, maxRead)
@@ -911,6 +912,7 @@ class LocalProxyHttpServer(
                 remaining -= n
                 written += n
                 bytesServedCounter.addAndGet(n.toLong())
+                flushTracker.onBytesWritten(n)
             }
             output.flush()
             if (effectiveLen != null && written != effectiveLen) {
@@ -1381,8 +1383,9 @@ class LocalProxyHttpServer(
         sb.append("Access-Control-Allow-Headers: *\r\n")
         sb.append("Access-Control-Max-Age: 86400\r\n")
         sb.append("Content-Length: 0\r\n")
-        sb.append(if (keepAlive) "Connection: keep-alive\r\nKeep-Alive: timeout=60\r\n\r\n" else "Connection: close\r\n\r\n")
+        sb.append(if (keepAlive) "Connection: keep-alive\r\nKeep-Alive: timeout=90\r\n\r\n" else "Connection: close\r\n\r\n")
         output.write(sb.toString().toByteArray(StandardCharsets.US_ASCII))
+        output.flush()
         return keepAlive
     }
 
@@ -1429,15 +1432,17 @@ class LocalProxyHttpServer(
         }
         if (keepAlive) {
             sb.append("Connection: keep-alive\r\n")
-            sb.append("Keep-Alive: timeout=60\r\n\r\n")
+            sb.append("Keep-Alive: timeout=90\r\n\r\n")
         } else {
             sb.append("Connection: close\r\n\r\n")
         }
         output.write(sb.toString().toByteArray(StandardCharsets.US_ASCII))
+        output.flush()
     }
 
     private fun copyStreamWithCancelCheck(stream: InputStream, output: OutputStream, resp: Response) {
         val buf = ByteArray(64 * 1024)
+        val flushTracker = StreamFlushTracker(output)
         try {
             while (true) {
                 val n = stream.read(buf)
@@ -1445,7 +1450,9 @@ class LocalProxyHttpServer(
                 if (n == 0) continue
                 output.write(buf, 0, n)
                 bytesServedCounter.addAndGet(n.toLong())
+                flushTracker.onBytesWritten(n)
             }
+            output.flush()
         } catch (e: IOException) {
             runCatching { resp.close() }
             throw e
@@ -1589,4 +1596,26 @@ class LocalProxyHttpServer(
         val httpVersion: String,
         val headers: Map<String, String>
     )
+
+    private class StreamFlushTracker(private val output: OutputStream) {
+        private var unflushedBytes = 0
+        private var lastFlushNs = System.nanoTime()
+
+        fun onBytesWritten(count: Int) {
+            unflushedBytes += count
+            val nowNs = System.nanoTime()
+            if (unflushedBytes >= STREAM_FLUSH_THRESHOLD_BYTES ||
+                nowNs - lastFlushNs >= STREAM_FLUSH_INTERVAL_NS
+            ) {
+                output.flush()
+                unflushedBytes = 0
+                lastFlushNs = nowNs
+            }
+        }
+    }
+
+    companion object {
+        private const val STREAM_FLUSH_THRESHOLD_BYTES = 32 * 1024
+        private const val STREAM_FLUSH_INTERVAL_NS = 25_000_000L
+    }
 }

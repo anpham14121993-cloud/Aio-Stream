@@ -207,6 +207,7 @@ jobs:
             --tests 'com.nuvio.tv.launcher.*' \
             --tests 'com.nuvio.tv.ui.screens.settings.*' \
             --tests 'com.nuvio.tv.ui.screens.player.MobilePlayerAspectPolicyTest' \
+            --tests 'com.nuvio.tv.ui.screens.player.ParallelRangeByteBufferReadTest' \
             --tests 'com.nuvio.tv.ui.screens.player.TunneledSurfaceResizeModeTest' \
             --tests 'com.nuvio.tv.ui.screens.player.PlaybackPositionRowTest' \
             --tests 'com.nuvio.tv.ui.screens.player.PlayerControlDeckGeometryTest' \

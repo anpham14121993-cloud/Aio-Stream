@@ -487,6 +487,115 @@ class LocalProxyHttpServerTest {
         assertEquals("https://player.example.com", segOrigin)
     }
 
+    @Test
+    fun hfXor256FlushesHeadersAndPartialBodyBeforeUpstreamCompletes() {
+        val plain = ByteArray(16 * 1024) { idx -> ((idx * 13 + 5) and 0xFF).toByte() }
+        val encryptedBody = plain.copyOf()
+        HfXor256Transform().transformInPlace(encryptedBody, 0, encryptedBody.size, 0L)
+        val fullObject = ByteArray(64) { 0x55 } + encryptedBody
+
+        val splitOffset = 4096
+        val releaseTail = java.util.concurrent.CountDownLatch(1)
+        val upstreamSocket = java.net.ServerSocket(0, 4, java.net.InetAddress.getByName("127.0.0.1"))
+        val acceptThread = Thread {
+            try {
+                while (!upstreamSocket.isClosed) {
+                    val conn = upstreamSocket.accept()
+                    Thread {
+                        conn.use { s ->
+                            val reader = s.getInputStream().bufferedReader(StandardCharsets.US_ASCII)
+                            val requestLine = reader.readLine() ?: return@use
+                            var reqRangeHeader: String? = null
+                            while (true) {
+                                val line = reader.readLine() ?: break
+                                if (line.isEmpty()) break
+                                if (line.startsWith("Range:", ignoreCase = true)) {
+                                    reqRangeHeader = line.substringAfter(':').trim()
+                                }
+                            }
+                            val os = s.getOutputStream()
+                            if (requestLine.startsWith("HEAD ")) {
+                                os.write(
+                                    (
+                                        "HTTP/1.1 200 OK\r\n" +
+                                            "Accept-Ranges: bytes\r\n" +
+                                            "Content-Length: ${fullObject.size}\r\n" +
+                                            "Connection: close\r\n\r\n"
+                                        ).toByteArray(StandardCharsets.US_ASCII)
+                                )
+                                os.flush()
+                            } else {
+                                val (start, end) = reqRangeHeader
+                                    ?.removePrefix("bytes=")
+                                    ?.split('-')
+                                    ?.let { parts ->
+                                        val sPos = parts[0].toInt()
+                                        val ePos = parts.getOrNull(1)?.toIntOrNull() ?: (fullObject.size - 1)
+                                        sPos to minOf(ePos, fullObject.size - 1)
+                                    } ?: (0 to (fullObject.size - 1))
+                                val len = end - start + 1
+                                os.write(
+                                    (
+                                        "HTTP/1.1 206 Partial Content\r\n" +
+                                            "Accept-Ranges: bytes\r\n" +
+                                            "Content-Range: bytes $start-$end/${fullObject.size}\r\n" +
+                                            "Content-Length: $len\r\n" +
+                                            "Connection: close\r\n\r\n"
+                                        ).toByteArray(StandardCharsets.US_ASCII)
+                                )
+                                if (len <= splitOffset) {
+                                    os.write(fullObject, start, len)
+                                    os.flush()
+                                } else {
+                                    os.write(fullObject, start, splitOffset)
+                                    os.flush()
+                                    releaseTail.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                                    os.write(fullObject, start + splitOffset, len - splitOffset)
+                                    os.flush()
+                                }
+                            }
+                        }
+                    }.start()
+                }
+            } catch (_: Throwable) {
+            }
+        }
+        acceptThread.isDaemon = true
+        acceptThread.start()
+
+        try {
+            val rawUrl = "http://127.0.0.1:${upstreamSocket.localPort}/slow-stream.bin"
+            val session = server.registerSession(
+                originalUrl = rawUrl,
+                targetUrl = rawUrl,
+                mode = LocalProxyMode.HF_XOR_256,
+                headers = emptyMap(),
+                hints = LocalProxyHints(enabled = true, mode = "hf-xor-256", autoKey = false, headerSize = 64)
+            )
+            val entryUrl = server.buildSessionEntryUrl(session, "media")
+            client.newCall(
+                Request.Builder().url(entryUrl).header("Range", "bytes=0-${plain.size - 1}").get().build()
+            ).execute().use { resp ->
+                assertEquals(206, resp.code)
+                val bodyStream = resp.body!!.byteStream()
+                val firstChunk = ByteArray(splitOffset - 64)
+                var got = 0
+                while (got < firstChunk.size) {
+                    val r = bodyStream.read(firstChunk, got, firstChunk.size - got)
+                    assertTrue(r > 0)
+                    got += r
+                }
+                assertArrayEquals(plain.copyOfRange(0, firstChunk.size), firstChunk)
+                releaseTail.countDown()
+                val rest = bodyStream.readBytes()
+                assertArrayEquals(plain.copyOfRange(firstChunk.size, plain.size), rest)
+            }
+        } finally {
+            releaseTail.countDown()
+            runCatching { upstreamSocket.close() }
+        }
+    }
+
     private fun serveRangedBytes(
         request: RecordedRequest,
         data: ByteArray,

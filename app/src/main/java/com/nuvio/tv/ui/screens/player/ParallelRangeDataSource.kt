@@ -106,6 +106,7 @@ internal class ParallelRangeDataSource(
         // exceeding the cap falls back to the blocking path, which has its own
         // 60 s bound.
         private const val IN_FLIGHT_WAIT_CAP_MS = 3_000L
+        private const val IN_FLIGHT_MAX_PROGRESS_WAIT_MS = 60_000L
         private const val IN_FLIGHT_POLL_MS = 2L
 
         // Body-stall watchdog. A chunk whose delivery RATE over
@@ -1352,6 +1353,7 @@ internal class ParallelRangeDataSource(
     // demonstrated sequential consumption, so side-cursor opens (tiny reads,
     // then reopen) never trigger the connections+1 chunk prefetch fan-out.
     private var bytesServedThisOpen: Long = 0L
+    private var lastPrefetchScheduledChunk: Long = -1L
     private var missingPieceRetries = 0
     private var inFlightServeLogged: Boolean = false
     // Memory-tiered chunk cap: low-RAM devices keep a ceiling of
@@ -1432,6 +1434,7 @@ internal class ParallelRangeDataSource(
 
         resetLocalReadState()
         bytesServedThisOpen = 0L
+        lastPrefetchScheduledChunk = -1L
 
         // Attach to the shared download session for this URI. Downloads
         // (done AND in-flight) belong to the session and survive the
@@ -1762,7 +1765,10 @@ internal class ParallelRangeDataSource(
             ensureChunkScheduled(chunkIndex)
             // Speed-up downloads start with the piece they follow, not when it completes: a reader waiting on
             // that piece would otherwise only ever have one download running.
-            if (depthLimit != null) scheduleChunks()
+            if (depthLimit != null || chunkIndex != lastPrefetchScheduledChunk) {
+                lastPrefetchScheduledChunk = chunkIndex
+                scheduleChunks()
+            }
             val future = activeSession.futures[chunkIndex] ?: return missingPiece(chunkIndex)
             missingPieceRetries = 0
             activeSession.noteRead(chunkIndex)
@@ -1772,7 +1778,15 @@ internal class ParallelRangeDataSource(
             // is available yet, fall through to the blocking path
             // (RS_CHUNK_WAIT still prices it).
             if (!future.isDone) {
-                val served = awaitServeFromInFlight(activeSession, chunkIndex, future, buffer, offset, toRead)
+                val served = awaitServeFromInFlight(
+                    activeSession = activeSession,
+                    chunkIndex = chunkIndex,
+                    future = future,
+                    targetBytes = buffer,
+                    targetOffset = offset,
+                    targetBuffer = null,
+                    maxLength = toRead
+                )
                 if (served > 0) return served
             }
             try {
@@ -1987,10 +2001,12 @@ internal class ParallelRangeDataSource(
         activeSession: Resources.ChunkSession,
         chunkIndex: Long,
         future: CompletableFuture<*>,
-        target: ByteArray,
+        targetBytes: ByteArray?,
         targetOffset: Int,
+        targetBuffer: ByteBuffer?,
         maxLength: Int
     ): Int {
+        if (maxLength <= 0) return 0
         val offsetInChunk = (position % chunkSize).toInt()
         val waitT0 = SystemClock.elapsedRealtime()
         // Reader-blocked escalation state for this wait.
@@ -2011,7 +2027,13 @@ internal class ParallelRangeDataSource(
                 if (available > 0) {
                     val toCopy = minOf(maxLength, available)
                     val buf = inFlight.buffer ?: return 0
-                    buf.leased { it.copyOut(offsetInChunk, target, targetOffset, toCopy) } ?: return 0
+                    buf.leased {
+                        if (targetBuffer != null) {
+                            it.copyOut(offsetInChunk, targetBuffer, toCopy)
+                        } else {
+                            it.copyOut(offsetInChunk, targetBytes!!, targetOffset, toCopy)
+                        }
+                    } ?: return 0
                     val waitedMs = SystemClock.elapsedRealtime() - waitT0
                     if (!inFlightServeLogged) {
                         inFlightServeLogged = true
@@ -2021,19 +2043,28 @@ internal class ParallelRangeDataSource(
                                 "watermark=${inFlight.watermark} served=$toCopy waitMs=$waitedMs"
                         )
                     }
+                    val crossedEarnedPrefetch =
+                        bytesServedThisOpen < EARNED_PREFETCH_BYTES &&
+                            bytesServedThisOpen + toCopy >= EARNED_PREFETCH_BYTES
                     position += toCopy
                     bytesRemaining -= toCopy
                     bytesServedThisOpen += toCopy
+                    if (crossedEarnedPrefetch) {
+                        lastPrefetchScheduledChunk = chunkIndex
+                        scheduleChunks()
+                    }
                     return toCopy
                 }
             }
             // Stagnant watermark past the threshold = hung request.
             // Progressing-but-slow chunks (watermark moving) belong to the
-            // body-stall watchdog and are never escalated here.
+            // body-stall watchdog and keep serving progressively without
+            // falling back to whole-chunk blocking future.get().
+            val now = SystemClock.elapsedRealtime()
             val wmNow = inFlight?.watermark ?: -1
             if (wmNow != lastWatermark) {
                 lastWatermark = wmNow
-                watermarkMovedAt = SystemClock.elapsedRealtime()
+                watermarkMovedAt = now
             }
             // The reader may arrive before the body registers its watermark.
             // Adopt its first zero baseline so a stationary registered body
@@ -2043,25 +2074,29 @@ internal class ParallelRangeDataSource(
             }
             if (!escalatedThisWait &&
                 wmNow == baselineWatermark &&
-                SystemClock.elapsedRealtime() - waitT0 >=
+                now - waitT0 >=
                     minOf(ESCALATE_AFTER_MS, IN_FLIGHT_WAIT_CAP_MS.toLong())
             ) {
                 escalateReaderBlockedChunk(
                     activeSession, chunkIndex, future,
-                    SystemClock.elapsedRealtime() - waitT0, wmNow
+                    now - waitT0, wmNow
                 )
                 escalatedThisWait = true
             }
+            val activelyArriving = wmNow > baselineWatermark &&
+                now - watermarkMovedAt < SteadySlowSource.QUIET_MS
             val slowButArriving = activeSession.steadySlow.known &&
-                SystemClock.elapsedRealtime() - watermarkMovedAt < SteadySlowSource.QUIET_MS
-            if (!slowButArriving && SystemClock.elapsedRealtime() - waitT0 >=
-                IN_FLIGHT_WAIT_CAP_MS.toLong() +
-                    (if (escalatedThisWait) ESCALATE_POLL_EXTENSION_MS else 0L)
+                now - watermarkMovedAt < SteadySlowSource.QUIET_MS
+            val waitElapsedMs = now - waitT0
+            val stallCapMs = IN_FLIGHT_WAIT_CAP_MS.toLong() +
+                (if (escalatedThisWait) ESCALATE_POLL_EXTENSION_MS else 0L)
+            if (waitElapsedMs >= IN_FLIGHT_MAX_PROGRESS_WAIT_MS ||
+                (!activelyArriving && !slowButArriving && waitElapsedMs >= stallCapMs)
             ) {
                 Log.i(
                     TAG,
                     "RS_INFLIGHT_GIVEUP pos=$position chunk=$chunkIndex " +
-                        "waitMs=${SystemClock.elapsedRealtime() - waitT0}"
+                        "waitMs=$waitElapsedMs"
                 )
                 return 0
             }
@@ -3010,7 +3045,8 @@ internal class ParallelRangeDataSource(
 
         if (bytesRemaining == 0L) return C.RESULT_END_OF_INPUT
 
-        val toRead = minOf(length.toLong(), bytesRemaining).toInt()
+        val toRead = minOf(length.toLong(), buffer.remaining().toLong(), bytesRemaining).toInt()
+        if (toRead <= 0) return 0
 
         val chunkIndex = position / chunkSize
         val bootstrap = bootstrapChunk
@@ -3074,17 +3110,31 @@ internal class ParallelRangeDataSource(
             ensureChunkScheduled(chunkIndex)
             // Speed-up downloads start with the piece they follow, not when it completes: a reader waiting on
             // that piece would otherwise only ever have one download running.
-            if (depthLimit != null) scheduleChunks()
+            if (depthLimit != null || chunkIndex != lastPrefetchScheduledChunk) {
+                lastPrefetchScheduledChunk = chunkIndex
+                scheduleChunks()
+            }
             val future = activeSession.futures[chunkIndex] ?: return missingPiece(chunkIndex)
             missingPieceRetries = 0
             activeSession.noteRead(chunkIndex)
+            // Progressive reads: mirror the ByteArray path so native-buffer
+            // ExoPlayer reads receive bytes as they arrive instead of stalling
+            // for an entire 16 MB chunk future before making forward progress.
+            if (!future.isDone) {
+                val served = awaitServeFromInFlight(
+                    activeSession = activeSession,
+                    chunkIndex = chunkIndex,
+                    future = future,
+                    targetBytes = null,
+                    targetOffset = 0,
+                    targetBuffer = buffer,
+                    maxLength = toRead
+                )
+                if (served > 0) return served
+            }
             try {
-                // RS_CHUNK_WAIT: read() blocks on the WHOLE chunk future, so
-                // ExoPlayer sees nothing of an 8 MB chunk until all 8 MB have
-                // landed. The count and highest pos logged before
-                // first_frame_rendered show whether this gates the first frame.
-                // preDone separates a real stall from an already-complete chunk.
-                // site= distinguishes the two read() overloads.
+                // RS_CHUNK_WAIT: read() blocks on the WHOLE chunk future when no
+                // progressive in-flight bytes are available yet (or past stall cap).
                 val blockT0 = SystemClock.elapsedRealtime()
                 val preDone = future.isDone
                 currentChunk = future.get(60, TimeUnit.SECONDS)

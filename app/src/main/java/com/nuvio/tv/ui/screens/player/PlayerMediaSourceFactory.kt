@@ -246,7 +246,7 @@ internal class PlayerMediaSourceFactory(
 
     private val chunkSessionLoopbackProxyHttpClient by lazy {
         chunkSessionHttpClient.newBuilder()
-            .readTimeout(45, TimeUnit.SECONDS)
+            .readTimeout(75, TimeUnit.SECONDS)
             .build()
     }
 
