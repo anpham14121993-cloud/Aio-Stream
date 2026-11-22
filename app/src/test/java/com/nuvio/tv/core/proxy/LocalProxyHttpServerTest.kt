@@ -749,8 +749,8 @@ class LocalProxyHttpServerTest {
             assertArrayEquals(segFmp4.copyOfRange(8, 32), resp.body!!.bytes())
         }
 
-        val expectedVariantUrl = upstream.url("/api/hls/pacific-rim/4k/index.m3u8").toString()
-        assertTrue(segReferers.all { it == expectedVariantUrl })
+        // Explicit session headers take precedence over playlist referer fallback.
+        assertTrue(segReferers.isNotEmpty() && segReferers.all { it == "https://fiml4k.fun/" })
 
         val subPlaylistUrl = Regex("""URI="(http://127\.0\.0\.1:[^"]+)"""").find(rewrittenMaster)!!.groupValues[1]
         val rewrittenSubPlaylist = client.newCall(Request.Builder().url(subPlaylistUrl).get().build()).execute().use { resp ->

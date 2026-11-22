@@ -739,6 +739,8 @@ class Fiml4kLocalAddonHandler(
     }
 
     private fun preferVi(obj: JsonObject, key: String): String {
+        obj.str("${key}Vi")?.takeIf { it.isNotBlank() }?.let { return it }
+        obj.str("${key}_vi")?.takeIf { it.isNotBlank() }?.let { return it }
         val v = obj.get(key) ?: return ""
         if (v.isJsonNull) return ""
         if (v.isJsonPrimitive) return v.asString
