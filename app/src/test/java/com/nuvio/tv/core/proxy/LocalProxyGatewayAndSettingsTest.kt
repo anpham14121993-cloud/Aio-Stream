@@ -51,6 +51,12 @@ class LocalProxyGatewayAndSettingsTest {
         val unwrapped = LocalProxyRuleRegistry.unwrapHfWrapperUrl(wrapper)
         assertEquals("https://huggingface.co/datasets/owner/repo/resolve/main/ep1.mp4?download=true", unwrapped)
 
+        val doubleExt = "https://phim4k-addon.notthingp.workers.dev/hf/buckets/u/b/resolve/VID123.pth.mkv?autokey=1"
+        assertEquals(
+            "https://huggingface.co/buckets/u/b/resolve/VID123.pth",
+            LocalProxyRuleRegistry.unwrapHfWrapperUrl(doubleExt)
+        )
+
         val prep = proxy.prepareStreamForPlayback(url = wrapper)
         assertTrue(prep.proxied)
         assertEquals(LocalProxyMode.HF_XOR_256, prep.mode)

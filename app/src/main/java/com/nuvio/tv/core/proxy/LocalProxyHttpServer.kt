@@ -5,7 +5,11 @@ import com.nuvio.tv.domain.model.LocalProxyMode
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import okhttp3.Call
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
+import okhttp3.EventListener
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import java.io.BufferedInputStream
@@ -22,10 +26,16 @@ import java.net.SocketTimeoutException
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.util.ArrayDeque
 import java.util.UUID
+import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -42,12 +52,38 @@ data class ProxySession(
     val hints: LocalProxyHints? = null,
     val createdAtMs: Long = System.currentTimeMillis()
 ) {
+    val metaLock = Any()
     @Volatile var lastAccessMs: Long = createdAtMs
     @Volatile var activeTargetUrl: String = targetUrl
     @Volatile var activeHeaders: Map<String, String> = headers
     @Volatile var resolvedTransform: HfXor256Transform? = null
     @Volatile var resolvedRawTotalSize: Long? = null
+    @Volatile var resolvedContentType: String? = null
     @Volatile var metadataRefreshedOnce: Boolean = false
+    @Volatile var cachedCdnUrl: String? = null
+    @Volatile var cachedCdnUrlAtMs: Long = 0L
+    @Volatile var cachedCdnHeaders: Map<String, String> = headers
+
+    fun validCdnTarget(nowMs: Long = System.currentTimeMillis()): Pair<String, Map<String, String>>? {
+        val cdn = cachedCdnUrl ?: return null
+        if (nowMs - cachedCdnUrlAtMs > CDN_CACHE_TTL_MS) return null
+        return cdn to cachedCdnHeaders
+    }
+
+    fun updateCdnTarget(url: String, resolvedHeaders: Map<String, String>) {
+        cachedCdnUrl = url
+        cachedCdnHeaders = resolvedHeaders
+        cachedCdnUrlAtMs = System.currentTimeMillis()
+    }
+
+    fun invalidateCdnCache() {
+        cachedCdnUrl = null
+        cachedCdnUrlAtMs = 0L
+    }
+
+    private companion object {
+        const val CDN_CACHE_TTL_MS = 10L * 60L * 1000L
+    }
 }
 
 /**
@@ -65,12 +101,17 @@ class LocalProxyHttpServer(
     private val httpClientProvider: () -> OkHttpClient
 ) {
     private val lock = Any()
+    private val clientLock = Any()
     private var serverSocket: ServerSocket? = null
     private var acceptThread: Thread? = null
     private var requestExecutor: ExecutorService? = null
+    private var laneExecutor: ExecutorService? = null
     @Volatile private var running = false
     @Volatile var port: Int = 0
         private set
+
+    @Volatile private var cachedBaseClientId: Int = 0
+    @Volatile private var cachedStreamingClient: OkHttpClient? = null
 
     private val sessions = ConcurrentHashMap<String, ProxySession>()
     private val activeClientSockets = ConcurrentHashMap.newKeySet<Socket>()
@@ -95,6 +136,13 @@ class LocalProxyHttpServer(
             }
             requestExecutor = executor
 
+            val workers = Executors.newCachedThreadPool { runnable ->
+                Thread(runnable, "LocalStreamProxy-Lane-${threadCounter.getAndIncrement()}").apply {
+                    isDaemon = true
+                }
+            }
+            laneExecutor = workers
+
             val acceptor = Thread({
                 acceptLoop(socket, executor)
             }, "LocalStreamProxy-Accept").apply {
@@ -118,6 +166,8 @@ class LocalProxyHttpServer(
             activeClientSockets.clear()
             requestExecutor?.shutdownNow()
             requestExecutor = null
+            laneExecutor?.shutdownNow()
+            laneExecutor = null
         }
     }
 
@@ -246,8 +296,9 @@ class LocalProxyHttpServer(
         try {
             socket.soTimeout = 30_000
             socket.tcpNoDelay = true
+            runCatching { socket.sendBufferSize = 1024 * 1024 }
             val input = BufferedInputStream(socket.getInputStream(), 16 * 1024)
-            val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
+            val output = BufferedOutputStream(socket.getOutputStream(), 256 * 1024)
             val request = parseHttpRequest(input) ?: return
             dispatchRequest(request, output)
             output.flush()
@@ -530,50 +581,103 @@ class LocalProxyHttpServer(
             transform = transform,
             rangeHeader = rangeHeader,
             isHead = isHead,
-            overrideContentType = session.hints?.contentType ?: "video/mp4",
+            overrideContentType = session.hints?.contentType ?: session.resolvedContentType ?: "video/x-matroska",
             output = output
         )
     }
 
     private fun ensureHfResolved(session: ProxySession): Pair<HfXor256Transform, Long?> {
         val existingTransform = session.resolvedTransform
-        if (existingTransform != null) {
+        if (existingTransform != null && session.resolvedRawTotalSize != null && session.validCdnTarget() != null) {
             return existingTransform to session.resolvedRawTotalSize
         }
 
-        val hints = session.hints
-        val explicitKey = hints?.decodedXorKey()
-        val explicitHeader = hints?.headerSize
-        val explicitRaw = hints?.raw
-
-        if (explicitRaw == true) {
-            val total = probeUpstreamTotalLength(session)
-            val t = HfXor256Transform(headerSize = 0, xorKey = explicitKey ?: HfXor256Transform.DEFAULT_KEY, isRaw = true)
-            session.resolvedTransform = t
-            session.resolvedRawTotalSize = total
-            return t to total
-        }
-
-        // Probe first 512 bytes using a small Range GET without buffering whole stream if upstream ignores Range.
-        val probeHeaders = session.activeHeaders.toMutableMap().apply {
-            put("Range", "bytes=0-511")
-        }
-        val (resp, _) = executeWithHfRefreshFallback(session, probeHeaders, isHead = false)
-        resp.use { r ->
-            val rawTotal = RangeHeaderParser.parseContentRangeTotal(r.header("Content-Range"))
-                ?: r.header("Content-Length")?.toLongOrNull()?.takeIf { r.code == 200 }
-            val bytes = if (r.isSuccessful) {
-                r.body?.byteStream()?.let { readUpTo(it, 512) } ?: ByteArray(0)
-            } else {
-                ByteArray(0)
+        synchronized(session.metaLock) {
+            val cachedTransform = session.resolvedTransform
+            if (cachedTransform != null && session.resolvedRawTotalSize != null && session.validCdnTarget() != null) {
+                return cachedTransform to session.resolvedRawTotalSize
             }
-            val resolved = HfXor256Transform.probeFromInitialBytes(
-                probeBytes = bytes,
-                explicitHeaderSize = explicitHeader,
-                explicitXorKey = explicitKey,
-                explicitRaw = explicitRaw
-            )
+
+            val hints = session.hints
+            val explicitKey = hints?.decodedXorKey()
+            val explicitHeader = hints?.headerSize
+            val explicitRaw = hints?.raw
+
+            if (explicitRaw == true) {
+                val total = probeUpstreamTotalLength(session)
+                val t = HfXor256Transform(headerSize = 0, xorKey = explicitKey ?: HfXor256Transform.DEFAULT_KEY, isRaw = true)
+                session.resolvedTransform = t
+                session.resolvedRawTotalSize = total
+                return t to total
+            }
+
+            // Probe first 512 bytes and cache direct 302 CDN URL so subsequent chunk/seek opens skip redirect stalls.
+            val probeHeaders = session.activeHeaders.toMutableMap().apply {
+                put("Range", "bytes=0-511")
+            }
+            val (resp, finalUrl) = executeWithHfRefreshFallback(session, probeHeaders, isHead = false)
+            var resolved: HfXor256Transform
+            var rawTotal: Long?
+            var probeBytes: ByteArray
+            resp.use { r ->
+                rawTotal = RangeHeaderParser.parseContentRangeTotal(r.header("Content-Range"))
+                    ?: r.header("Content-Length")?.toLongOrNull()?.takeIf { r.code == 200 }
+                probeBytes = if (r.isSuccessful) {
+                    r.body?.byteStream()?.let { readUpTo(it, 512) } ?: ByteArray(0)
+                } else {
+                    ByteArray(0)
+                }
+                if (r.isSuccessful) {
+                    session.updateCdnTarget(finalUrl, filterHeadersForRedirect(session.activeTargetUrl, finalUrl, session.activeHeaders))
+                }
+                resolved = HfXor256Transform.probeFromInitialBytes(
+                    probeBytes = probeBytes,
+                    explicitHeaderSize = explicitHeader,
+                    explicitXorKey = explicitKey,
+                    explicitRaw = explicitRaw
+                )
+            }
+
+            var detectedMime = detectTransformedMimeType(probeBytes, resolved)
+
+            // If autoKey is enabled and neither raw nor DEFAULT_KEY decoded a known container signature,
+            // sample 64KB of payload straight from cached CDN URL and recover per-file 256B XOR key.
+            if (detectedMime == null &&
+                !resolved.isRaw &&
+                explicitKey == null &&
+                hints?.autoKey == true &&
+                probeBytes.size > resolved.headerSize + 64
+            ) {
+                val sampleStart = resolved.headerSize.toLong()
+                val sampleEnd = sampleStart + 65535L
+                val keySampleHeaders = session.activeHeaders.toMutableMap().apply {
+                    put("Range", "bytes=$sampleStart-$sampleEnd")
+                }
+                runCatching {
+                    val (sampleResp, _) = executeWithSessionCdn(session, keySampleHeaders, isHead = false)
+                    sampleResp.use { sr ->
+                        if (sr.isSuccessful) {
+                            val sampleBytes = sr.body?.byteStream()?.let { readUpTo(it, 65536) } ?: ByteArray(0)
+                            val recoveredKey = HfXor256Transform.recoverCustomKeyFromSample(sampleBytes)
+                            if (recoveredKey != null) {
+                                resolved = HfXor256Transform(
+                                    headerSize = resolved.headerSize,
+                                    xorKey = recoveredKey,
+                                    isRaw = false
+                                )
+                                val testDec = sampleBytes.copyOf(minOf(sampleBytes.size, 64))
+                                resolved.transformInPlace(testDec, 0, testDec.size, 0L)
+                                detectedMime = HfXor256Transform.detectDecodedContentType(testDec, 0)
+                            }
+                        }
+                    }
+                }
+            }
+
             session.resolvedTransform = resolved
+            if (detectedMime != null) {
+                session.resolvedContentType = detectedMime
+            }
             if (rawTotal != null) {
                 session.resolvedRawTotalSize = rawTotal
             }
@@ -581,12 +685,27 @@ class LocalProxyHttpServer(
         }
     }
 
+    private fun detectTransformedMimeType(probeBytes: ByteArray, transform: HfXor256Transform): String? {
+        if (probeBytes.isEmpty()) return null
+        if (transform.isRaw) {
+            return HfXor256Transform.detectDecodedContentType(probeBytes, 0)
+        }
+        val payloadLen = probeBytes.size - transform.headerSize
+        if (payloadLen < 16) return null
+        val slice = probeBytes.copyOfRange(transform.headerSize, minOf(probeBytes.size, transform.headerSize + 64))
+        transform.transformInPlace(slice, 0, slice.size, 0L)
+        return HfXor256Transform.detectDecodedContentType(slice, 0)
+    }
+
     private fun probeUpstreamTotalLength(session: ProxySession): Long? {
         session.resolvedRawTotalSize?.let { return it }
-        val (resp, _) = executeWithHfRefreshFallback(session, session.activeHeaders, isHead = true)
+        val (resp, finalUrl) = executeWithHfRefreshFallback(session, session.activeHeaders, isHead = true)
         resp.use { r ->
             val len = r.header("Content-Length")?.toLongOrNull()
                 ?: RangeHeaderParser.parseContentRangeTotal(r.header("Content-Range"))
+            if (r.isSuccessful) {
+                session.updateCdnTarget(finalUrl, filterHeadersForRedirect(session.activeTargetUrl, finalUrl, session.activeHeaders))
+            }
             if (len != null && len >= 0L) {
                 session.resolvedRawTotalSize = len
             }
@@ -624,7 +743,7 @@ class LocalProxyHttpServer(
         }
 
         if (isHead) {
-            val contentType = overrideContentType ?: "video/mp4"
+            val contentType = overrideContentType ?: session.resolvedContentType ?: "video/mp4"
             val headers = LinkedHashMap<String, String>()
             headers["Accept-Ranges"] = "bytes"
             if (rangeHeader != null && decodedTotalSize != null && requestedRange.endInclusive != null) {
@@ -641,6 +760,41 @@ class LocalProxyHttpServer(
             return
         }
 
+        val isPartial = rangeHeader != null
+        val requestedLen = requestedRange.contentLengthOrNull()
+        val clientRequestedOpenRange = rangeHeader == null ||
+            rangeHeader.trim().endsWith("-") ||
+            (requestedLen != null && requestedLen > 24L * 1024L * 1024L)
+
+        // Multi-lane concurrent CDN chunk pipeline: saturates multi-connection throughput and prevents
+        // 15s idle-timeout drops when player pauses or buffers fill, without splitting already-chunked
+        // bounded requests from ParallelRangeDataSource.
+        if (decodedTotalSize != null &&
+            requestedLen != null &&
+            requestedLen > MULTI_LANE_MIN_BYTES &&
+            clientRequestedOpenRange
+        ) {
+            val contentType = overrideContentType ?: session.resolvedContentType ?: "video/x-matroska"
+            val respHeaders = LinkedHashMap<String, String>()
+            respHeaders["Accept-Ranges"] = "bytes"
+            if (isPartial) {
+                val endByte = requestedRange.start + requestedLen - 1L
+                respHeaders["Content-Range"] = "bytes ${requestedRange.start}-$endByte/$decodedTotalSize"
+            }
+            respHeaders["Content-Length"] = requestedLen.toString()
+            val code = if (isPartial) 206 else 200
+            writeResponseHeader(output, code, statusReason(code), contentType, respHeaders)
+            output.flush()
+            streamMultiLaneTransformed(
+                session = session,
+                transform = transform,
+                decodedStart = requestedRange.start,
+                totalBytesToSend = requestedLen,
+                output = output
+            )
+            return
+        }
+
         val rawReq = transform.toRawRange(requestedRange.start, requestedRange.endInclusive)
         val upstreamHeaders = session.activeHeaders.toMutableMap()
         if (rawReq.start > 0L || rawReq.endInclusive != null) {
@@ -648,17 +802,14 @@ class LocalProxyHttpServer(
             upstreamHeaders["Range"] = "bytes=${rawReq.start}-$endStr"
         }
 
-        val (response, _) = if (session.mode == LocalProxyMode.HF_XOR_256) {
-            executeWithHfRefreshFallback(session, upstreamHeaders, isHead = false)
-        } else {
-            executeWithRedirects(session.activeTargetUrl, upstreamHeaders, isHead = false)
-        }
+        val (response, finalUrl) = executeWithSessionCdn(session, upstreamHeaders, isHead = false)
 
         response.use { resp ->
             if (!resp.isSuccessful) {
                 relayErrorResponse(resp, isHead = false, output = output)
                 return
             }
+            session.updateCdnTarget(finalUrl, filterHeadersForRedirect(session.activeTargetUrl, finalUrl, session.activeHeaders))
 
             val rawRespTotal = RangeHeaderParser.parseContentRangeTotal(resp.header("Content-Range"))
                 ?: (if (resp.code == 200) resp.header("Content-Length")?.toLongOrNull() else null)
@@ -668,6 +819,7 @@ class LocalProxyHttpServer(
             }
             val effectiveDecodedTotal = transform.decodedTotalSize(rawRespTotal)
             val contentType = overrideContentType
+                ?: session.resolvedContentType
                 ?: resp.header("Content-Type")?.takeIf { !it.equals("application/octet-stream", ignoreCase = true) }
                 ?: "video/mp4"
 
@@ -684,7 +836,6 @@ class LocalProxyHttpServer(
                 else -> null
             }
 
-            val isPartial = rangeHeader != null
             if (isPartial) {
                 if (effectiveDecodedTotal != null && effectiveLen != null && effectiveLen > 0L) {
                     val endByte = requestedRange.start + effectiveLen - 1L
@@ -706,7 +857,7 @@ class LocalProxyHttpServer(
                 skipFully(stream, skippedBytes)
             }
 
-            val buf = ByteArray(64 * 1024)
+            val buf = ByteArray(256 * 1024)
             var decodedPos = requestedRange.start
             var remaining = effectiveLen ?: Long.MAX_VALUE
             while (remaining > 0L) {
@@ -719,7 +870,147 @@ class LocalProxyHttpServer(
                 remaining -= n
                 bytesServedCounter.addAndGet(n.toLong())
             }
+            output.flush()
         }
+    }
+
+    private fun streamMultiLaneTransformed(
+        session: ProxySession,
+        transform: RangeByteTransform,
+        decodedStart: Long,
+        totalBytesToSend: Long,
+        output: OutputStream
+    ) {
+        val workers = laneExecutor ?: Executors.newCachedThreadPool { r ->
+            Thread(r, "LocalStreamProxy-Lane-${threadCounter.getAndIncrement()}").apply { isDaemon = true }
+        }.also { laneExecutor = it }
+
+        val cancelled = AtomicBoolean(false)
+        val activeCalls = ConcurrentHashMap.newKeySet<Call>()
+        val window = ArrayDeque<Future<ByteArray>>(MULTI_LANE_IN_FLIGHT)
+        var submitOffset = decodedStart
+        var submitRemaining = totalBytesToSend
+        var chunkIndex = 0
+
+        fun chunkSizeFor(index: Int): Long = when (index) {
+            0 -> FIRST_CHUNK_BYTES
+            1 -> RAMP_CHUNK_BYTES
+            else -> STEADY_CHUNK_BYTES
+        }
+
+        fun enqueueLookahead() {
+            while (!cancelled.get() && window.size < MULTI_LANE_IN_FLIGHT && submitRemaining > 0L) {
+                val size = minOf(submitRemaining, chunkSizeFor(chunkIndex++)).toInt()
+                val off = submitOffset
+                submitOffset += size
+                submitRemaining -= size
+                val future = workers.submit(Callable {
+                    fetchAndTransformChunkWithRetry(
+                        session = session,
+                        transform = transform,
+                        decodedOffset = off,
+                        chunkSize = size,
+                        cancelled = cancelled,
+                        activeCalls = activeCalls
+                    )
+                })
+                window.addLast(future)
+            }
+        }
+
+        try {
+            while (window.isNotEmpty() || submitRemaining > 0L) {
+                enqueueLookahead()
+                val nextFuture = window.removeFirst()
+                val data = try {
+                    nextFuture.get()
+                } catch (ee: ExecutionException) {
+                    val cause = ee.cause
+                    throw if (cause is IOException) cause else IOException("Upstream chunk fetch failed", cause)
+                }
+                // Schedule replacement chunk before potentially blocking on loopback socket write.
+                enqueueLookahead()
+                output.write(data)
+                output.flush()
+                bytesServedCounter.addAndGet(data.size.toLong())
+            }
+        } finally {
+            cancelled.set(true)
+            window.forEach { it.cancel(true) }
+            window.clear()
+            activeCalls.forEach { runCatching { it.cancel() } }
+            activeCalls.clear()
+        }
+    }
+
+    private fun fetchAndTransformChunkWithRetry(
+        session: ProxySession,
+        transform: RangeByteTransform,
+        decodedOffset: Long,
+        chunkSize: Int,
+        cancelled: AtomicBoolean,
+        activeCalls: MutableSet<Call>
+    ): ByteArray {
+        val rawReq = transform.toRawRange(decodedOffset, decodedOffset + chunkSize - 1L)
+        var lastError: IOException? = null
+
+        for (attempt in 0..2) {
+            if (cancelled.get()) throw IOException("Proxy request cancelled")
+            val headers = session.activeHeaders.toMutableMap().apply {
+                put("Range", "bytes=${rawReq.start}-${rawReq.endInclusive}")
+            }
+            var activeCall: Call? = null
+            try {
+                val (resp, finalUrl) = executeWithSessionCdn(
+                    session = session,
+                    headers = headers,
+                    isHead = false,
+                    onCallCreated = { call ->
+                        activeCall = call
+                        activeCalls.add(call)
+                    }
+                )
+                resp.use { r ->
+                    if (r.code == 401 || r.code == 403 || r.code == 404 || r.code == 410) {
+                        session.invalidateCdnCache()
+                        throw IOException("HTTP ${r.code} fetching chunk")
+                    }
+                    if (!r.isSuccessful) {
+                        throw IOException("Unexpected HTTP ${r.code} fetching chunk")
+                    }
+                    session.updateCdnTarget(
+                        finalUrl,
+                        filterHeadersForRedirect(session.activeTargetUrl, finalUrl, session.activeHeaders)
+                    )
+                    val stream = r.body?.byteStream() ?: throw IOException("Empty upstream chunk body")
+                    if (r.code == 200 && rawReq.start > 0L) {
+                        skipFully(stream, rawReq.start)
+                    }
+                    val out = ByteArray(chunkSize)
+                    var filled = 0
+                    while (filled < chunkSize) {
+                        if (cancelled.get()) throw IOException("Proxy request cancelled")
+                        val n = stream.read(out, filled, chunkSize - filled)
+                        if (n < 0) break
+                        filled += n
+                    }
+                    if (filled != chunkSize) {
+                        throw IOException("Truncated upstream chunk ($filled/$chunkSize bytes)")
+                    }
+                    transform.transformInPlace(out, 0, chunkSize, decodedOffset)
+                    return out
+                }
+            } catch (e: IOException) {
+                lastError = e
+                if (cancelled.get()) throw e
+                if (attempt == 1) {
+                    session.invalidateCdnCache()
+                }
+            } finally {
+                activeCall?.let { activeCalls.remove(it) }
+            }
+        }
+        throw lastError ?: IOException("Failed to fetch chunk at offset $decodedOffset")
     }
 
     private fun handleRawAssetRequest(
@@ -752,12 +1043,42 @@ class LocalProxyHttpServer(
         }
     }
 
+    private fun executeWithSessionCdn(
+        session: ProxySession,
+        headers: Map<String, String>,
+        isHead: Boolean,
+        onCallCreated: ((Call) -> Unit)? = null
+    ): Pair<Response, String> {
+        val cached = session.validCdnTarget()
+        if (cached != null) {
+            val (cdnUrl, cdnBaseHeaders) = cached
+            val filteredExtra = filterHeadersForRedirect(session.activeTargetUrl, cdnUrl, headers)
+            val merged = mergeRequestHeaders(cdnBaseHeaders, null, filteredExtra)
+            try {
+                val (resp, finalUrl) = executeWithRedirects(cdnUrl, merged, isHead, onCallCreated)
+                if (resp.code != 401 && resp.code != 403 && resp.code != 404 && resp.code != 410) {
+                    return resp to finalUrl
+                }
+                resp.close()
+                session.invalidateCdnCache()
+            } catch (e: IOException) {
+                session.invalidateCdnCache()
+            }
+        }
+        return if (session.mode == LocalProxyMode.HF_XOR_256) {
+            executeWithHfRefreshFallback(session, headers, isHead, onCallCreated)
+        } else {
+            executeWithRedirects(session.activeTargetUrl, headers, isHead, onCallCreated)
+        }
+    }
+
     private fun executeWithHfRefreshFallback(
         session: ProxySession,
         headers: Map<String, String>,
-        isHead: Boolean
+        isHead: Boolean,
+        onCallCreated: ((Call) -> Unit)? = null
     ): Pair<Response, String> {
-        val first = executeWithRedirects(session.activeTargetUrl, headers, isHead)
+        val first = executeWithRedirects(session.activeTargetUrl, headers, isHead, onCallCreated)
         val firstResp = first.first
         if ((firstResp.code == 401 || firstResp.code == 403) &&
             !session.metadataRefreshedOnce &&
@@ -765,8 +1086,14 @@ class LocalProxyHttpServer(
         ) {
             firstResp.close()
             session.metadataRefreshedOnce = true
+            session.invalidateCdnCache()
             if (refreshHfSessionFromMetadata(session)) {
-                return executeWithRedirects(session.activeTargetUrl, mergeRequestHeaders(session.activeHeaders, null, headers), isHead)
+                return executeWithRedirects(
+                    session.activeTargetUrl,
+                    mergeRequestHeaders(session.activeHeaders, null, headers),
+                    isHead,
+                    onCallCreated
+                )
             }
         }
         return first
@@ -815,7 +1142,41 @@ class LocalProxyHttpServer(
     }
 
     private companion object {
+        const val MULTI_LANE_MIN_BYTES = 6L * 1024L * 1024L
+        const val FIRST_CHUNK_BYTES = 512L * 1024L
+        const val RAMP_CHUNK_BYTES = 2L * 1024L * 1024L
+        const val STEADY_CHUNK_BYTES = 3L * 1024L * 1024L
+        const val MULTI_LANE_IN_FLIGHT = 4
         val moshi: Moshi = Moshi.Builder().build()
+    }
+
+    private fun streamingClient(): OkHttpClient {
+        val base = httpClientProvider()
+        val id = System.identityHashCode(base)
+        cachedStreamingClient?.takeIf { cachedBaseClientId == id }?.let { return it }
+        synchronized(clientLock) {
+            cachedStreamingClient?.takeIf { cachedBaseClientId == id }?.let { return it }
+            val built = base.newBuilder()
+                .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+                .dispatcher(
+                    Dispatcher().apply {
+                        maxRequests = 64
+                        maxRequestsPerHost = 32
+                    }
+                )
+                .protocols(listOf(Protocol.HTTP_1_1))
+                .eventListenerFactory(EventListener.NONE)
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(45, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .callTimeout(0, TimeUnit.MILLISECONDS)
+                .build()
+            cachedBaseClientId = id
+            cachedStreamingClient = built
+            return built
+        }
     }
 
     /**
@@ -825,12 +1186,10 @@ class LocalProxyHttpServer(
     private fun executeWithRedirects(
         initialUrl: String,
         headers: Map<String, String>,
-        isHead: Boolean
+        isHead: Boolean,
+        onCallCreated: ((Call) -> Unit)? = null
     ): Pair<Response, String> {
-        val client = httpClientProvider().newBuilder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
+        val client = streamingClient()
 
         var currentUrl = initialUrl
         var currentHeaders = HttpHeaderSanitizer.sanitizeMap(headers)
@@ -843,6 +1202,7 @@ class LocalProxyHttpServer(
             }
             if (useHead) reqBuilder.head() else reqBuilder.get()
             val call: Call = client.newCall(reqBuilder.build())
+            onCallCreated?.invoke(call)
             val response = call.execute()
             val code = response.code
             if (code in setOf(301, 302, 303, 307, 308)) {

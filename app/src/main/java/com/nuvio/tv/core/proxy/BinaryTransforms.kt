@@ -127,6 +127,14 @@ class HfXor256Transform(
         if (isRaw || length <= 0 || xorKey.isEmpty()) return
         val keyLen = xorKey.size
         val end = (offset + length).coerceAtMost(buffer.size)
+        if (keyLen == KEY_LENGTH && decodedOffset >= 0L) {
+            var keyIdx = (decodedOffset.toInt() and 0xFF)
+            for (i in offset until end) {
+                buffer[i] = (buffer[i].toInt() xor xorKey[keyIdx].toInt()).toByte()
+                keyIdx = (keyIdx + 1) and 0xFF
+            }
+            return
+        }
         var pos = decodedOffset
         for (i in offset until end) {
             val keyIdx = ((pos % keyLen + keyLen) % keyLen).toInt()
@@ -207,62 +215,90 @@ class HfXor256Transform(
             )
         }
 
-        fun looksLikeKnownPlainContainer(bytes: ByteArray, offset: Int = 0): Boolean {
-            val avail = bytes.size - offset
-            if (avail < 4) return false
-            // ISO BMFF / MP4: bytes [offset+4..offset+7] == "ftyp" / "moov" / "free" / "wide"
-            if (avail >= 8) {
-                val b4 = bytes[offset + 4].toInt() and 0xFF
-                val b5 = bytes[offset + 5].toInt() and 0xFF
-                val b6 = bytes[offset + 6].toInt() and 0xFF
-                val b7 = bytes[offset + 7].toInt() and 0xFF
-                val boxType = byteArrayOf(b4.toByte(), b5.toByte(), b6.toByte(), b7.toByte())
-                    .decodeToString()
-                if (boxType == "ftyp" || boxType == "moov" || boxType == "wide" || boxType == "free") {
-                    return true
+        /**
+         * Attempts to recover a custom 256-byte repeating XOR key using zero-byte column frequency
+         * over a ~64KB encrypted sample (matching P4k Worker `autokey=1`), accepting the recovered
+         * key only when it produces a valid MKV/MP4/AVI/TS container signature at offset 0.
+         */
+        fun recoverCustomKeyFromSample(sampleAtPayload: ByteArray): ByteArray? {
+            if (sampleAtPayload.size < KEY_LENGTH) return null
+            val recovered = ByteArray(KEY_LENGTH)
+            val counts = IntArray(256)
+            for (col in 0 until KEY_LENGTH) {
+                counts.fill(0)
+                var maxCount = -1
+                var bestByte = 0
+                var i = col
+                while (i < sampleAtPayload.size) {
+                    val b = sampleAtPayload[i].toInt() and 0xFF
+                    val c = ++counts[b]
+                    if (c > maxCount) {
+                        maxCount = c
+                        bestByte = b
+                    }
+                    i += KEY_LENGTH
                 }
+                recovered[col] = bestByte.toByte()
             }
-            // EBML / Matroska / WebM: 1A 45 DF A3
+            val probeHead = ByteArray(minOf(sampleAtPayload.size, 32)) { idx ->
+                (sampleAtPayload[idx].toInt() xor recovered[idx % KEY_LENGTH].toInt()).toByte()
+            }
+            return recovered.takeIf { looksLikeKnownPlainContainer(probeHead, 0) }
+        }
+
+        fun detectDecodedContentType(bytes: ByteArray, offset: Int = 0): String? {
+            val avail = bytes.size - offset
+            if (avail < 4) return null
             if ((bytes[offset].toInt() and 0xFF) == 0x1A &&
                 (bytes[offset + 1].toInt() and 0xFF) == 0x45 &&
                 (bytes[offset + 2].toInt() and 0xFF) == 0xDF &&
                 (bytes[offset + 3].toInt() and 0xFF) == 0xA3
             ) {
-                return true
+                return "video/x-matroska"
             }
-            // AVI / RIFF
+            if (avail >= 8) {
+                val boxType = byteArrayOf(
+                    bytes[offset + 4],
+                    bytes[offset + 5],
+                    bytes[offset + 6],
+                    bytes[offset + 7]
+                ).decodeToString()
+                if (boxType == "ftyp" || boxType == "moov" || boxType == "wide" || boxType == "free") {
+                    return "video/mp4"
+                }
+            }
             if (avail >= 12 &&
                 bytes[offset] == 'R'.code.toByte() &&
                 bytes[offset + 1] == 'I'.code.toByte() &&
                 bytes[offset + 2] == 'F'.code.toByte() &&
                 bytes[offset + 3] == 'F'.code.toByte()
             ) {
-                return true
+                return "video/x-msvideo"
             }
-            // OggS
             if (bytes[offset] == 'O'.code.toByte() &&
                 bytes[offset + 1] == 'g'.code.toByte() &&
                 bytes[offset + 2] == 'g'.code.toByte() &&
                 bytes[offset + 3] == 'S'.code.toByte()
             ) {
-                return true
+                return "video/ogg"
             }
-            // FLV
             if (bytes[offset] == 'F'.code.toByte() &&
                 bytes[offset + 1] == 'L'.code.toByte() &&
                 bytes[offset + 2] == 'V'.code.toByte() &&
                 bytes[offset + 3] == 0x01.toByte()
             ) {
-                return true
+                return "video/x-flv"
             }
-            // MPEG-TS at offset
             if (avail >= MpegTsSyncDetector.TS_PACKET_SIZE * 2 &&
                 bytes[offset] == MpegTsSyncDetector.TS_SYNC_BYTE &&
                 bytes[offset + MpegTsSyncDetector.TS_PACKET_SIZE] == MpegTsSyncDetector.TS_SYNC_BYTE
             ) {
-                return true
+                return "video/mp2t"
             }
-            return false
+            return null
         }
+
+        fun looksLikeKnownPlainContainer(bytes: ByteArray, offset: Int = 0): Boolean =
+            detectDecodedContentType(bytes, offset) != null
     }
 }

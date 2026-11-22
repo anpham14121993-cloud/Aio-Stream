@@ -81,6 +81,30 @@ class HfXor256TransformTest {
     }
 
     @Test
+    fun recoversCustomXorKeyFromZeroDenseSampleAndDetectsMkvContentType() {
+        val customKey = ByteArray(256) { idx -> ((idx * 13 + 7) and 0xFF).toByte() }
+        // Realistic MKV header + sparse zeroes so histogram recovers customKey accurately
+        val mkvSample = ByteArray(16 * 1024) { 0 }
+        mkvSample[0] = 0x1A
+        mkvSample[1] = 0x45
+        mkvSample[2] = 0xDF.toByte()
+        mkvSample[3] = 0xA3.toByte()
+        mkvSample[100] = 0x42
+        mkvSample[101] = 0x86.toByte()
+
+        val encryptedSample = mkvSample.copyOf()
+        HfXor256Transform(headerSize = 64, xorKey = customKey).transformInPlace(
+            encryptedSample,
+            0,
+            encryptedSample.size,
+            0L
+        )
+        val recovered = HfXor256Transform.recoverCustomKeyFromSample(encryptedSample)
+        assertArrayEquals(customKey, recovered)
+        assertEquals("video/x-matroska", HfXor256Transform.detectDecodedContentType(mkvSample, 0))
+    }
+
+    @Test
     fun decodesCustomHexBase64AndBase64UrlKeys() {
         val bytes = ByteArray(32) { it.toByte() }
         val hex = bytes.joinToString("") { "%02x".format(it) }

@@ -188,6 +188,7 @@ class LocalProxyRuleRegistry {
 
     companion object {
         private val hfPathRegex = Regex("""^/hf/((?:datasets|buckets|spaces)/.+)$""")
+        private val hfDoubleExtRegex = Regex("""(\.[a-z0-9]+)\.mkv$""", RegexOption.IGNORE_CASE)
 
         /**
          * If an addon returns a wrapper URL such as `https://worker.example/hf/datasets/owner/repo/resolve/main/file.mp4`,
@@ -202,7 +203,10 @@ class LocalProxyRuleRegistry {
             }
             val rawPath = uri.rawPath ?: return null
             val match = hfPathRegex.matchEntire(rawPath) ?: return null
-            val hfPath = "/${match.groupValues[1]}"
+            var hfPath = "/${match.groupValues[1]}"
+            if (hfDoubleExtRegex.containsMatchIn(hfPath)) {
+                hfPath = hfDoubleExtRegex.replace(hfPath, "$1")
+            }
             val filteredQuery = filterProxyWrapperQuery(uri.rawQuery)
             return URI(
                 "https",
@@ -215,7 +219,7 @@ class LocalProxyRuleRegistry {
 
         private fun filterProxyWrapperQuery(rawQuery: String?): String? {
             if (rawQuery.isNullOrBlank()) return null
-            val proxyOnlyParams = setOf("token", "sig", "exp", "meta", "raw", "key", "xorKey", "headerSize")
+            val proxyOnlyParams = setOf("token", "sig", "exp", "meta", "raw", "key", "xorkey", "headersize", "autokey")
             val kept = rawQuery.split('&').filter { pair ->
                 val name = pair.substringBefore('=').lowercase()
                 name.isNotEmpty() && name !in proxyOnlyParams
