@@ -1807,6 +1807,9 @@
     <string name="addon_refresh_action">Làm mới Tiện ích.</string>
     <string name="addon_refresh_default_subtitle">Tải các thay đổi mới nhất của tiện ích cho hồ sơ hiện tại</string>
     <string name="addon_refresh_done_subtitle">Tiện ích vừa được làm mới</string>
+    <string name="addon_local_fiml4k_title">Nothing-P • Fiml4K (Trên máy)</string>
+    <string name="addon_local_fiml4k_subtitle_install">Cài nguồn phim 4K/Vietsub chạy trực tiếp trên mạng của máy qua Local Proxy</string>
+    <string name="addon_local_fiml4k_subtitle_installed">Đã cài đặt — có thể bật/tắt, đổi vị trí hoặc nhấn để gỡ bỏ như tiện ích thường</string>
     <string name="addon_pending_collections_updated">Bộ sưu tập đã cập nhật</string>
     <string name="addon_pending_collections_replace">%1$d bộ sưu tập sẽ thay thế các bộ sưu tập hiện tại</string>
     <string name="addon_confirm_total_addons">Tổng tiện ích: %1$d</string>

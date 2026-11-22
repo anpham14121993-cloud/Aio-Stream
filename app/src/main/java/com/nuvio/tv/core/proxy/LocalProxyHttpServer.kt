@@ -98,7 +98,9 @@ data class ProxySession(
  * - Sidecar subtitle header proxying
  */
 class LocalProxyHttpServer(
-    private val httpClientProvider: () -> OkHttpClient
+    private val httpClientProvider: () -> OkHttpClient,
+    private val defaultPreferredPort: Int = 0,
+    internal val fiml4kAddonHandler: Fiml4kLocalAddonHandler = Fiml4kLocalAddonHandler(httpClientProvider)
 ) {
     private val lock = Any()
     private val clientLock = Any()
@@ -114,11 +116,12 @@ class LocalProxyHttpServer(
     @Volatile private var cachedStreamingClient: OkHttpClient? = null
 
     private val sessions = ConcurrentHashMap<String, ProxySession>()
+    private val disguisedPrefixCache = ConcurrentHashMap<String, DetectedSegmentPayload>()
     private val activeClientSockets = ConcurrentHashMap.newKeySet<Socket>()
     private val threadCounter = AtomicInteger(1)
     private val bytesServedCounter = AtomicLong(0L)
 
-    fun start(preferredPort: Int = 0): Int {
+    fun start(preferredPort: Int = defaultPreferredPort): Int {
         synchronized(lock) {
             if (running && serverSocket != null && serverSocket?.isClosed == false && port > 0) {
                 return port
@@ -342,6 +345,21 @@ class LocalProxyHttpServer(
             val json = "{\"ok\":true,\"port\":$port}"
             return sendBytes(output, 200, "OK", "application/json; charset=utf-8", json.toByteArray(StandardCharsets.UTF_8), isHead, wantKeepAlive)
         }
+        if (cleanPath == Fiml4kLocalAddonHandler.BASE_PATH ||
+            cleanPath.startsWith("${Fiml4kLocalAddonHandler.BASE_PATH}/")
+        ) {
+            val reply = fiml4kAddonHandler.handleRequest(req.rawTarget, cleanPath)
+            return sendBytes(
+                output = output,
+                statusCode = reply.statusCode,
+                reason = statusReason(reply.statusCode),
+                contentType = "application/json; charset=utf-8",
+                body = reply.bodyBytes,
+                isHead = isHead,
+                keepAlive = wantKeepAlive,
+                extraHeaders = mapOf("Cache-Control" to reply.cacheControl)
+            )
+        }
 
         // Expected: /p/<sessionId>/<route>[/...]
         val trimmed = cleanPath.removePrefix("/")
@@ -452,8 +470,11 @@ class LocalProxyHttpServer(
         wantKeepAlive: Boolean,
         output: OutputStream
     ): Boolean {
+        val fragment = targetUrl.substringAfter('#', "")
+        val wireUrl = targetUrl.substringBefore('#')
+        val requestedQuality = parseFragmentParam(fragment, "aio_quality")
         val headers = mergeRequestHeaders(session.activeHeaders, refererOverride)
-        val (response, finalUrl) = executeWithRedirects(targetUrl, headers, isHead = false)
+        val (response, finalUrl) = executeWithRedirects(wireUrl, headers, isHead = false)
         response.use { resp ->
             if (!resp.isSuccessful) {
                 return relayErrorResponse(resp, isHead, wantKeepAlive, output)
@@ -463,8 +484,15 @@ class LocalProxyHttpServer(
             if (HlsAndDashRewriter.containsHlsDrm(text)) {
                 return sendTextError(output, 403, "Forbidden", "DRM-protected streams are not supported by local proxy", wantKeepAlive)
             }
+            val filteredText = if (!requestedQuality.isNullOrBlank() &&
+                text.contains("#EXT-X-STREAM-INF", ignoreCase = true)
+            ) {
+                HlsAndDashRewriter.filterMasterPlaylistByQuality(text, requestedQuality)
+            } else {
+                text
+            }
             val rewritten = HlsAndDashRewriter.rewriteHlsPlaylist(
-                playlistText = text,
+                playlistText = filteredText,
                 playlistUrl = finalUrl
             ) { kind, resolvedTarget, playlistRef ->
                 buildAssetUrl(session.id, kind, resolvedTarget, playlistRef)
@@ -490,12 +518,26 @@ class LocalProxyHttpServer(
         isHead: Boolean,
         output: OutputStream
     ): Boolean {
-        val shouldCheckTsUnwrap = !isHead &&
-            rangeHeader.isNullOrBlank() &&
-            (session.hints?.autoUnwrapTs != false) &&
-            !looksLikeInitOrMediaMp4Url(targetUrl)
+        val allowUnwrap = session.hints?.autoUnwrapTs != false
+        if (!allowUnwrap || isSubtitleSegmentUrl(targetUrl)) {
+            return handleRawAssetRequest(session, targetUrl, refererOverride, rangeHeader, isHead, session.hints?.contentType, output)
+        }
 
-        if (!shouldCheckTsUnwrap) {
+        val prefixKey = "${session.id}|${targetUrl.substringBefore('?')}"
+        if (isHead || !rangeHeader.isNullOrBlank()) {
+            val cached = disguisedPrefixCache[prefixKey]
+                ?: if (!looksLikeKnownPlainSegmentUrl(targetUrl)) probeDisguisedSegmentPrefix(session, targetUrl, refererOverride) else null
+            if (cached != null && cached.syncOffset > 0) {
+                return handlePrefixStrippedHlsRangeOrHead(
+                    session = session,
+                    targetUrl = targetUrl,
+                    refererOverride = refererOverride,
+                    rangeHeader = rangeHeader,
+                    isHead = isHead,
+                    detected = cached,
+                    output = output
+                )
+            }
             return handleRawAssetRequest(session, targetUrl, refererOverride, rangeHeader, isHead, session.hints?.contentType, output)
         }
 
@@ -507,22 +549,43 @@ class LocalProxyHttpServer(
                 return false
             }
             val upstreamType = resp.header("Content-Type")?.trim().orEmpty()
+            if (upstreamType.startsWith("text/", ignoreCase = true) ||
+                (looksLikeInitOrMediaMp4Url(targetUrl) &&
+                    !upstreamType.startsWith("image/", ignoreCase = true) &&
+                    !upstreamType.equals("application/octet-stream", ignoreCase = true))
+            ) {
+                val outHeaders = LinkedHashMap<String, String>()
+                resp.header("Accept-Ranges")?.let { outHeaders["Accept-Ranges"] = it }
+                resp.header("Content-Range")?.let { outHeaders["Content-Range"] = it }
+                resp.header("Content-Length")?.let { outHeaders["Content-Length"] = it }
+                resp.header("Cache-Control")?.let { outHeaders["Cache-Control"] = it }
+                val effectiveType = session.hints?.contentType ?: upstreamType.ifEmpty { "application/octet-stream" }
+                writeResponseHeader(output, resp.code, statusReason(resp.code), effectiveType, outHeaders, keepAlive = false)
+                val stream = resp.body?.byteStream() ?: return false
+                copyStreamWithCancelCheck(stream, output, resp)
+                return false
+            }
+
             val stream = resp.body?.byteStream() ?: run {
                 sendBytes(output, 200, "OK", upstreamType.ifEmpty { "video/mp2t" }, ByteArray(0), isHead = false, keepAlive = false)
                 return false
             }
-            // Peek first 8KB to detect PNG/JPEG/HTML wrapper prefixes around 0x47 stride-188 TS packets.
+            // Peek first 8KB to detect PNG/JPEG/GIF/HTML wrappers around MPEG-TS (`0x47`) OR ISOBMFF/fMP4 (`ftyp`/`styp`/`moov`/`moof`).
             val peekBuffer = ByteArray(8192)
             var peekRead = 0
             while (peekRead < peekBuffer.size) {
                 val n = stream.read(peekBuffer, peekRead, peekBuffer.size - peekRead)
                 if (n < 0) break
                 peekRead += n
-                if (peekRead >= 1024 && MpegTsSyncDetector.detectSyncOffset(peekBuffer, peekRead) >= 0) {
+                if (peekRead >= 1024 && DisguisedMediaDetector.detectPayload(peekBuffer, peekRead, upstreamType) != null) {
                     break
                 }
             }
-            val syncOffset = MpegTsSyncDetector.detectSyncOffset(peekBuffer, peekRead)
+            val detected = DisguisedMediaDetector.detectPayload(peekBuffer, peekRead, upstreamType)
+            val syncOffset = detected?.syncOffset ?: 0
+            if (syncOffset > 0 && detected != null) {
+                cacheDisguisedPrefix(prefixKey, detected)
+            }
             val contentLength = resp.header("Content-Length")?.toLongOrNull()
             val adjustedLength = if (syncOffset > 0 && contentLength != null && contentLength > syncOffset) {
                 contentLength - syncOffset
@@ -530,9 +593,9 @@ class LocalProxyHttpServer(
                 contentLength
             }
             val resolvedType = when {
-                syncOffset >= 0 && upstreamType.startsWith("image/", ignoreCase = true) -> "video/mp2t"
+                detected != null && upstreamType.startsWith("image/", ignoreCase = true) -> detected.contentType
                 upstreamType.isNotEmpty() -> upstreamType
-                syncOffset >= 0 -> "video/mp2t"
+                detected != null -> detected.contentType
                 else -> "application/octet-stream"
             }
 
@@ -547,6 +610,7 @@ class LocalProxyHttpServer(
             val firstPayloadLen = (peekRead - skipOffset).coerceAtLeast(0)
             if (firstPayloadLen > 0) {
                 output.write(peekBuffer, skipOffset, firstPayloadLen)
+                output.flush()
                 bytesServedCounter.addAndGet(firstPayloadLen.toLong())
             }
             copyStreamWithCancelCheck(stream, output, resp)
@@ -1402,11 +1466,13 @@ class LocalProxyHttpServer(
         contentType: String,
         body: ByteArray,
         isHead: Boolean,
-        keepAlive: Boolean = false
+        keepAlive: Boolean = false,
+        extraHeaders: Map<String, String> = emptyMap()
     ): Boolean {
         val headers = LinkedHashMap<String, String>()
         headers["Content-Length"] = body.size.toString()
         headers["Accept-Ranges"] = "none"
+        headers.putAll(extraHeaders)
         writeResponseHeader(output, statusCode, reason, contentType, headers, keepAlive = keepAlive)
         if (!isHead && body.isNotEmpty()) {
             output.write(body)
@@ -1531,6 +1597,120 @@ class LocalProxyHttpServer(
             }
         }
         return null
+    }
+
+    private fun probeDisguisedSegmentPrefix(
+        session: ProxySession,
+        targetUrl: String,
+        refererOverride: String?
+    ): DetectedSegmentPayload? {
+        val headers = mergeRequestHeaders(session.activeHeaders, refererOverride).toMutableMap()
+        headers["Range"] = "bytes=0-8191"
+        val prefixKey = "${session.id}|${targetUrl.substringBefore('?')}"
+        return runCatching {
+            val (response, _) = executeWithRedirects(targetUrl, headers, isHead = false)
+            response.use { resp ->
+                if (!resp.isSuccessful) return null
+                val upstreamType = resp.header("Content-Type")?.trim().orEmpty()
+                val probeBytes = resp.body?.byteStream()?.let { readUpTo(it, 8192) } ?: ByteArray(0)
+                val detected = DisguisedMediaDetector.detectPayload(probeBytes, probeBytes.size, upstreamType)
+                if (detected != null && detected.syncOffset > 0) {
+                    cacheDisguisedPrefix(prefixKey, detected)
+                    detected
+                } else {
+                    null
+                }
+            }
+        }.getOrNull()
+    }
+
+    private fun handlePrefixStrippedHlsRangeOrHead(
+        session: ProxySession,
+        targetUrl: String,
+        refererOverride: String?,
+        rangeHeader: String?,
+        isHead: Boolean,
+        detected: DetectedSegmentPayload,
+        output: OutputStream
+    ): Boolean {
+        val skip = detected.syncOffset.toLong()
+        val headers = mergeRequestHeaders(session.activeHeaders, refererOverride).toMutableMap()
+        if (!rangeHeader.isNullOrBlank()) {
+            when (val parsed = RangeHeaderParser.parse(rangeHeader, null)) {
+                is RangeParseResult.SingleRange -> {
+                    val upStart = parsed.spec.start + skip
+                    val upEnd = parsed.spec.endInclusive?.let { it + skip }
+                    headers["Range"] = if (upEnd != null) "bytes=$upStart-$upEnd" else "bytes=$upStart-"
+                }
+                is RangeParseResult.Unsatisfiable -> {
+                    return sendTextError(output, 416, "Range Not Satisfiable", "Requested range unsatisfiable", wantKeepAlive = false)
+                }
+                RangeParseResult.NoRange -> Unit
+            }
+        }
+        val (response, _) = executeWithRedirects(targetUrl, headers, isHead = isHead)
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                relayErrorResponse(resp, isHead = isHead, wantKeepAlive = false, output = output)
+                return false
+            }
+            val outHeaders = LinkedHashMap<String, String>()
+            outHeaders["Accept-Ranges"] = resp.header("Accept-Ranges") ?: "bytes"
+            val upstreamCr = resp.header("Content-Range")
+            if (upstreamCr != null) {
+                val parsedCr = Regex("""bytes\s+(\d+)-(\d+)/(\d+|\*)""", RegexOption.IGNORE_CASE).matchEntire(upstreamCr.trim())
+                if (parsedCr != null) {
+                    val s = (parsedCr.groupValues[1].toLong() - skip).coerceAtLeast(0L)
+                    val e = (parsedCr.groupValues[2].toLong() - skip).coerceAtLeast(s)
+                    val total = parsedCr.groupValues[3].toLongOrNull()?.let { (it - skip).coerceAtLeast(0L).toString() } ?: "*"
+                    outHeaders["Content-Range"] = "bytes $s-$e/$total"
+                } else {
+                    outHeaders["Content-Range"] = upstreamCr
+                }
+            }
+            val upstreamLen = resp.header("Content-Length")?.toLongOrNull()
+            if (upstreamLen != null) {
+                val adjLen = if (rangeHeader.isNullOrBlank()) (upstreamLen - skip).coerceAtLeast(0L) else upstreamLen
+                outHeaders["Content-Length"] = adjLen.toString()
+            }
+            writeResponseHeader(output, resp.code, statusReason(resp.code), detected.contentType, outHeaders, keepAlive = false)
+            if (isHead) return false
+            val stream = resp.body?.byteStream() ?: return false
+            if (rangeHeader.isNullOrBlank() || resp.code == 200) {
+                skipFully(stream, skip)
+            }
+            copyStreamWithCancelCheck(stream, output, resp)
+            return false
+        }
+    }
+
+    private fun cacheDisguisedPrefix(prefixKey: String, detected: DetectedSegmentPayload) {
+        if (disguisedPrefixCache.size > 1024) {
+            disguisedPrefixCache.clear()
+        }
+        disguisedPrefixCache[prefixKey] = detected
+    }
+
+    private fun parseFragmentParam(fragment: String, name: String): String? {
+        if (fragment.isBlank()) return null
+        for (pair in fragment.split('&')) {
+            val eq = pair.indexOf('=')
+            val key = decodeComponent(if (eq >= 0) pair.substring(0, eq) else pair)
+            if (key == name && eq >= 0) {
+                return decodeComponent(pair.substring(eq + 1))
+            }
+        }
+        return null
+    }
+
+    private fun isSubtitleSegmentUrl(url: String): Boolean {
+        val clean = url.substringBefore('?').substringBefore('#').lowercase()
+        return clean.endsWith(".vtt") || clean.endsWith(".srt") || clean.endsWith(".ass") || clean.endsWith(".ssa")
+    }
+
+    private fun looksLikeKnownPlainSegmentUrl(url: String): Boolean {
+        val clean = url.substringBefore('?').substringBefore('#').lowercase()
+        return clean.endsWith(".ts") || clean.endsWith(".aac") || looksLikeInitOrMediaMp4Url(url)
     }
 
     private fun parseQueryParams(rawTarget: String): Map<String, String> {

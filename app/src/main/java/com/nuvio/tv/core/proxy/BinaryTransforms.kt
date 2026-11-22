@@ -98,6 +98,143 @@ object MpegTsSyncDetector {
 }
 
 /**
+ * Detects ISOBMFF / fMP4 containers (init `ftyp`/`moov` and media `styp`/`sidx`/`moof`) even when
+ * disguised behind an image or wrapper prefix (such as a 67-byte PNG header).
+ */
+object IsobmffSyncDetector {
+    private const val MAX_REASONABLE_BOX_BYTES = 64L * 1024L * 1024L
+    private const val MAX_SCAN_OFFSET = 64 * 1024
+    private val START_BOX_TYPES = setOf("ftyp", "styp", "moov", "moof", "sidx")
+    private val FOLLOW_BOX_TYPES = START_BOX_TYPES + setOf("mdat", "free", "skip", "emsg", "prft")
+
+    fun detectSyncOffset(bytes: ByteArray, length: Int = bytes.size): Int {
+        val limit = length.coerceAtMost(bytes.size)
+        if (limit < 12) return -1
+        if (isBoxBoundary(bytes, limit, 0, requireFollowUp = false)) {
+            return 0
+        }
+        val disguisedWrapper = looksLikeWrapperPrefix(bytes, limit)
+        val maxOffset = minOf(limit - 8, MAX_SCAN_OFFSET)
+        for (offset in 1 until maxOffset) {
+            if (isBoxBoundary(bytes, limit, offset, requireFollowUp = !disguisedWrapper)) {
+                return offset
+            }
+        }
+        return -1
+    }
+
+    private fun isBoxBoundary(
+        bytes: ByteArray,
+        limit: Int,
+        offset: Int,
+        requireFollowUp: Boolean
+    ): Boolean {
+        val header = readBoxHeader(bytes, limit, offset) ?: return false
+        val boxSize = header.first
+        val boxType = header.second
+        if (boxType !in START_BOX_TYPES) return false
+        val nextOffset = offset + boxSize
+        if (nextOffset + 8L <= limit.toLong()) {
+            val follow = readBoxHeader(bytes, limit, nextOffset.toInt()) ?: return false
+            return follow.second in FOLLOW_BOX_TYPES
+        }
+        if (requireFollowUp) return false
+        if (boxType == "ftyp" && offset + 12 <= limit) {
+            return isPrintableBrand(bytes, offset + 8)
+        }
+        return false
+    }
+
+    private fun readBoxHeader(bytes: ByteArray, limit: Int, offset: Int): Pair<Long, String>? {
+        if (offset < 0 || offset + 8 > limit) return null
+        val size = ((bytes[offset].toLong() and 0xFF) shl 24) or
+            ((bytes[offset + 1].toLong() and 0xFF) shl 16) or
+            ((bytes[offset + 2].toLong() and 0xFF) shl 8) or
+            (bytes[offset + 3].toLong() and 0xFF)
+        if (size < 8L || size > MAX_REASONABLE_BOX_BYTES) return null
+        val type = byteArrayOf(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7])
+        for (b in type) {
+            val code = b.toInt() and 0xFF
+            if (code !in 0x20..0x7E) return null
+        }
+        return size to String(type, Charsets.ISO_8859_1)
+    }
+
+    private fun isPrintableBrand(bytes: ByteArray, offset: Int): Boolean {
+        for (i in 0 until 4) {
+            val c = bytes[offset + i].toInt() and 0xFF
+            if (c !in 0x20..0x7E) return false
+        }
+        return true
+    }
+
+    internal fun looksLikeWrapperPrefix(bytes: ByteArray, limit: Int): Boolean {
+        if (limit >= 4 &&
+            (bytes[0].toInt() and 0xFF) == 0x89 &&
+            bytes[1] == 'P'.code.toByte() &&
+            bytes[2] == 'N'.code.toByte() &&
+            bytes[3] == 'G'.code.toByte()
+        ) return true
+        if (limit >= 3 &&
+            (bytes[0].toInt() and 0xFF) == 0xFF &&
+            (bytes[1].toInt() and 0xFF) == 0xD8 &&
+            (bytes[2].toInt() and 0xFF) == 0xFF
+        ) return true
+        if (limit >= 4 &&
+            bytes[0] == 'G'.code.toByte() &&
+            bytes[1] == 'I'.code.toByte() &&
+            bytes[2] == 'F'.code.toByte() &&
+            bytes[3] == '8'.code.toByte()
+        ) return true
+        if (limit >= 12 &&
+            bytes[0] == 'R'.code.toByte() &&
+            bytes[1] == 'I'.code.toByte() &&
+            bytes[2] == 'F'.code.toByte() &&
+            bytes[3] == 'F'.code.toByte() &&
+            bytes[8] == 'W'.code.toByte() &&
+            bytes[9] == 'E'.code.toByte() &&
+            bytes[10] == 'B'.code.toByte() &&
+            bytes[11] == 'P'.code.toByte()
+        ) return true
+        return false
+    }
+}
+
+data class DetectedSegmentPayload(
+    val syncOffset: Int,
+    val contentType: String
+)
+
+/**
+ * Unifies detection of disguised media segments across MPEG-TS (`0x47` stride 188) and
+ * ISOBMFF/fMP4 (`ftyp`/`styp`/`moov`/`moof`/`sidx`) payloads.
+ */
+object DisguisedMediaDetector {
+    fun detectPayload(
+        bytes: ByteArray,
+        length: Int,
+        upstreamContentType: String? = null
+    ): DetectedSegmentPayload? {
+        val lowerType = upstreamContentType?.trim()?.lowercase().orEmpty()
+        if (lowerType.startsWith("text/") ||
+            lowerType.contains("mpegurl") ||
+            lowerType.contains("json")
+        ) {
+            return null
+        }
+        val tsOffset = MpegTsSyncDetector.detectSyncOffset(bytes, length)
+        if (tsOffset >= 0) {
+            return DetectedSegmentPayload(syncOffset = tsOffset, contentType = "video/mp2t")
+        }
+        val mp4Offset = IsobmffSyncDetector.detectSyncOffset(bytes, length)
+        if (mp4Offset >= 0) {
+            return DetectedSegmentPayload(syncOffset = mp4Offset, contentType = "video/mp4")
+        }
+        return null
+    }
+}
+
+/**
  * HuggingFace container obfuscation decoder (64-byte header + rotated 256-byte XOR keystream).
  * Runs 100% locally inside Aio-Stream.
  */

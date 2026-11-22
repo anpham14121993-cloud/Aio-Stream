@@ -213,6 +213,14 @@ fun AddonManagerScreen(
             addon.enabled && addon.catalogs.any { catalog -> !catalog.isSearchOnlyCatalog() }
         }
     }
+    val localFiml4kAddon = remember(uiState.installedAddons) {
+        uiState.installedAddons.firstOrNull { addon ->
+            val path = runCatching {
+                java.net.URI(addon.baseUrl.trim()).path.orEmpty().trimEnd('/')
+            }.getOrDefault("")
+            path == com.nuvio.tv.core.proxy.Fiml4kLocalAddonHandler.BASE_PATH
+        }
+    }
     val manageFromPhoneSubtitle = if (webConfigMode == com.nuvio.tv.core.server.AddonWebConfigMode.COLLECTIONS_ONLY) {
         stringResource(R.string.addon_manage_collections_from_phone_subtitle)
     } else {
@@ -594,6 +602,22 @@ fun AddonManagerScreen(
                             onNavigateToCollections()
                         },
                         focusRequester = collectionsFocusRequester
+                    )
+                }
+            }
+
+            if (!viewModel.isReadOnly) {
+                item {
+                    LocalFiml4kAddonEntryCard(
+                        isInstalled = localFiml4kAddon != null,
+                        isInstalling = uiState.isInstalling,
+                        onClick = {
+                            if (localFiml4kAddon != null) {
+                                addonUrlPendingDeletion = localFiml4kAddon.baseUrl
+                            } else if (!uiState.isInstalling) {
+                                viewModel.installLocalFiml4kAddon()
+                            }
+                        }
                     )
                 }
             }
@@ -1061,6 +1085,92 @@ private fun CollectionsEntryCard(
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
                 tint = NuvioTheme.colors.TextSecondary
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun LocalFiml4kAddonEntryCard(
+    isInstalled: Boolean,
+    isInstalling: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isFocused by remember { mutableStateOf(false) }
+
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .fillMaxWidth().settingsSubmenuSurface()
+            .onFocusChanged { isFocused = it.isFocused }
+            .semantics { role = Role.Button },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = settingsItemColor(NuvioTheme.colors.BackgroundCard),
+            focusedContainerColor = NuvioTheme.colors.FocusBackground
+        ),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                shape = settingsItemShape(18.dp)
+            )
+        ),
+        shape = ClickableSurfaceDefaults.shape(settingsItemShape(18.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = if (isV2Settings()) 1f else 1.01f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(if (isV2Settings()) 14.dp else 20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PhoneAndroid,
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp),
+                    tint = when {
+                        isFocused -> NuvioTheme.colors.Secondary
+                        isInstalled -> NuvioTheme.colors.Success
+                        else -> NuvioTheme.colors.TextSecondary
+                    }
+                )
+                Spacer(modifier = Modifier.width(NuvioTheme.spacing.lg))
+                Column {
+                    Text(
+                        text = stringResource(R.string.addon_local_fiml4k_title),
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            textDirection = TextDirection.Content
+                        ),
+                        color = NuvioTheme.colors.TextPrimary
+                    )
+                    Text(
+                        text = when {
+                            isInstalling && !isInstalled -> stringResource(R.string.addon_installing)
+                            isInstalled -> stringResource(R.string.addon_local_fiml4k_subtitle_installed)
+                            else -> stringResource(R.string.addon_local_fiml4k_subtitle_install)
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NuvioTheme.colors.TextSecondary
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(NuvioTheme.spacing.md))
+            Icon(
+                imageVector = if (isInstalled) {
+                    Icons.Default.Check
+                } else {
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight
+                },
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = if (isInstalled) NuvioTheme.colors.Success else NuvioTheme.colors.TextSecondary
             )
         }
     }

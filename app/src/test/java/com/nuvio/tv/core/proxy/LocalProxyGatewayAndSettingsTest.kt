@@ -210,4 +210,22 @@ class LocalProxyGatewayAndSettingsTest {
         assertEquals("video/mp4", domain.localProxy?.contentType)
         assertNotNull(domain.localProxy)
     }
+
+    @Test
+    fun infersHlsAndDashMimeTypesForLoopbackProxyEntryUrls() {
+        assertEquals(
+            androidx.media3.common.MimeTypes.APPLICATION_M3U8,
+            com.nuvio.tv.ui.screens.player.PlayerMediaSourceFactory.inferMimeType(
+                url = "http://127.0.0.1:47123/p/sess123/hls",
+                filename = null
+            )
+        )
+        assertEquals(
+            androidx.media3.common.MimeTypes.APPLICATION_MPD,
+            com.nuvio.tv.ui.screens.player.PlayerMediaSourceFactory.inferMimeType(
+                url = "http://127.0.0.1:47123/p/sess123/dash",
+                filename = null
+            )
+        )
+    }
 }

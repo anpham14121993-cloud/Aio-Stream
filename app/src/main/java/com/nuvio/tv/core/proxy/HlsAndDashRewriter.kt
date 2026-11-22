@@ -250,4 +250,87 @@ object HlsAndDashRewriter {
         val bytes = com.nuvio.tv.domain.model.LocalProxyHints.decodeBase64Flexible(encoded) ?: return null
         return bytes.toString(StandardCharsets.UTF_8)
     }
+
+    /**
+     * Filters an HLS Master Playlist down to the requested quality tier (`4k`, `1080`, `720`, `480`),
+     * keeping audio renditions and Vietnamese subtitle tracks where available while falling back to the
+     * unmodified playlist if no variant matches.
+     */
+    fun filterMasterPlaylistByQuality(
+        playlistText: String,
+        quality: String
+    ): String {
+        val normalizedQuality = quality.trim().lowercase()
+        if (normalizedQuality.isEmpty()) return playlistText
+        val lines = playlistText.split(Regex("""\r?\n"""))
+        val out = ArrayList<String>(lines.size)
+        val keptSubGroups = HashSet<String>()
+        var keepingVariant = false
+        var matchedVariants = 0
+
+        val resRegex = Regex("""RESOLUTION=(\d+)x(\d+)""", RegexOption.IGNORE_CASE)
+        val groupRegex = Regex("""GROUP-ID="([^"]+)"""", RegexOption.IGNORE_CASE)
+        val subGroupRegex = Regex("""SUBTITLES="([^"]+)"""", RegexOption.IGNORE_CASE)
+        val langVieRegex = Regex("""LANGUAGE="?(?:vie|vi)"?""", RegexOption.IGNORE_CASE)
+        val subTextVieRegex = Regex("""vietsub|tiếng\s*việt|vietnamese""", RegexOption.IGNORE_CASE)
+
+        for (rawLine in lines) {
+            val trimmed = rawLine.trim()
+            if (trimmed.isEmpty()) continue
+            when {
+                trimmed.startsWith("#EXTM3U", ignoreCase = true) ||
+                    trimmed.startsWith("#EXT-X-VERSION", ignoreCase = true) ||
+                    trimmed.startsWith("#EXT-X-INDEPENDENT-SEGMENTS", ignoreCase = true) -> {
+                    out.add(rawLine)
+                }
+                trimmed.startsWith("#EXT-X-MEDIA:", ignoreCase = true) -> {
+                    if (trimmed.contains("TYPE=SUBTITLES", ignoreCase = true)) {
+                        val hasVieSub = langVieRegex.containsMatchIn(trimmed) || subTextVieRegex.containsMatchIn(trimmed)
+                        if (hasVieSub) {
+                            groupRegex.find(trimmed)?.groupValues?.getOrNull(1)?.let(keptSubGroups::add)
+                            out.add(rawLine)
+                        }
+                    } else {
+                        out.add(rawLine)
+                    }
+                }
+                trimmed.startsWith("#EXT-X-STREAM-INF:", ignoreCase = true) -> {
+                    val resMatch = resRegex.find(trimmed)
+                    val matchesTier = if (resMatch != null) {
+                        val w = resMatch.groupValues[1].toIntOrNull() ?: 0
+                        val h = resMatch.groupValues[2].toIntOrNull() ?: 0
+                        val maxDim = maxOf(w, h)
+                        val minDim = minOf(w, h)
+                        when (normalizedQuality) {
+                            "4k" -> maxDim >= 3840 || minDim >= 1500
+                            "1080" -> (minDim in 800..1440 && maxDim < 3840) || (maxDim in 1920..3839)
+                            "720" -> (minDim in 700..799) || (maxDim in 1280..1919)
+                            "480" -> minDim < 700 && maxDim < 1280
+                            else -> true
+                        }
+                    } else {
+                        false
+                    }
+                    keepingVariant = matchesTier
+                    if (keepingVariant) {
+                        matchedVariants++
+                        val subGroup = subGroupRegex.find(trimmed)?.groupValues?.getOrNull(1)
+                        val cleaned = if (subGroup != null && subGroup !in keptSubGroups) {
+                            rawLine
+                                .replace(Regex(""",\s*SUBTITLES="[^"]+"""", RegexOption.IGNORE_CASE), "")
+                                .replace(Regex("""SUBTITLES="[^"]+"\s*,?""", RegexOption.IGNORE_CASE), "")
+                        } else {
+                            rawLine
+                        }
+                        out.add(cleaned)
+                    }
+                }
+                keepingVariant && !trimmed.startsWith("#") -> {
+                    out.add(rawLine)
+                    keepingVariant = false
+                }
+            }
+        }
+        return if (matchedVariants > 0) out.joinToString("\n") + "\n" else playlistText
+    }
 }

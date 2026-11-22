@@ -596,6 +596,183 @@ class LocalProxyHttpServerTest {
         }
     }
 
+    @Test
+    fun filtersHlsMasterQualityAndUnwrapsPngDisguisedFmp4SegmentsAndServesLocalAddonManifest() {
+        fun beBox(type: String, payloadSize: Int, brand: String? = null): ByteArray {
+            val total = 8 + payloadSize
+            val out = ByteArray(total) { 0x1A }
+            out[0] = ((total ushr 24) and 0xFF).toByte()
+            out[1] = ((total ushr 16) and 0xFF).toByte()
+            out[2] = ((total ushr 8) and 0xFF).toByte()
+            out[3] = (total and 0xFF).toByte()
+            type.toByteArray(StandardCharsets.US_ASCII).copyInto(out, 4)
+            brand?.toByteArray(StandardCharsets.US_ASCII)?.copyInto(out, 8)
+            return out
+        }
+
+        val pngPrefix = ByteArray(67) { idx -> (idx + 1).toByte() }
+        pngPrefix[0] = 0x89.toByte()
+        pngPrefix[1] = 'P'.code.toByte()
+        pngPrefix[2] = 'N'.code.toByte()
+        pngPrefix[3] = 'G'.code.toByte()
+        pngPrefix[4] = '\r'.code.toByte()
+        pngPrefix[5] = '\n'.code.toByte()
+        pngPrefix[6] = 0x1A.toByte()
+        pngPrefix[7] = '\n'.code.toByte()
+
+        val initFmp4 = beBox("ftyp", 16, "iso5") + beBox("moov", 40)
+        val segFmp4 = beBox("styp", 16, "msdh") + beBox("sidx", 24) + beBox("moof", 48)
+        val disguisedInit = pngPrefix + initFmp4
+        val disguisedSeg = pngPrefix + segFmp4
+        val subtitleBody = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nXin chao\n".toByteArray(StandardCharsets.UTF_8)
+
+        val masterPlaylist = """
+            #EXTM3U
+            #EXT-X-VERSION:7
+            #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Tieng Viet",LANGUAGE="vie",DEFAULT=YES,AUTOSELECT=YES,URI="sub_vi.m3u8"
+            #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="eng",DEFAULT=NO,AUTOSELECT=NO,URI="sub_en.m3u8"
+            #EXT-X-STREAM-INF:BANDWIDTH=12000000,RESOLUTION=3840x2160,SUBTITLES="subs"
+            4k/index.m3u8
+            #EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,SUBTITLES="subs"
+            1080/index.m3u8
+        """.trimIndent()
+
+        val variant4kPlaylist = """
+            #EXTM3U
+            #EXT-X-VERSION:7
+            #EXT-X-TARGETDURATION:6
+            #EXT-X-MAP:URI="https://cdn.example.com/init.image"
+            #EXTINF:6.0,
+            https://cdn.example.com/seg1.image
+            #EXT-X-ENDLIST
+        """.trimIndent().replace("https://cdn.example.com", upstream.url("/cdn").toString().trimEnd('/'))
+
+        val subViPlaylist = """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:6
+            #EXTINF:6.0,
+            vi.vtt
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val segReferers = CopyOnWriteArrayList<String?>()
+        upstream.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path.orEmpty()
+                return when {
+                    path.startsWith("/api/hls/pacific-rim/master.m3u8") -> {
+                        assertTrue("Fragment must not leak to wire URL", request.requestUrl?.fragment == null)
+                        MockResponse()
+                            .setResponseCode(200)
+                            .addHeader("Content-Type", "application/vnd.apple.mpegurl")
+                            .setBody(masterPlaylist)
+                    }
+                    path.startsWith("/api/hls/pacific-rim/4k/index.m3u8") -> {
+                        MockResponse()
+                            .setResponseCode(200)
+                            .addHeader("Content-Type", "application/vnd.apple.mpegurl")
+                            .setBody(variant4kPlaylist)
+                    }
+                    path.startsWith("/api/hls/pacific-rim/sub_vi.m3u8") -> {
+                        MockResponse()
+                            .setResponseCode(200)
+                            .addHeader("Content-Type", "application/vnd.apple.mpegurl")
+                            .setBody(subViPlaylist)
+                    }
+                    path.startsWith("/api/hls/pacific-rim/vi.vtt") -> {
+                        MockResponse()
+                            .setResponseCode(200)
+                            .addHeader("Content-Type", "text/vtt; charset=utf-8")
+                            .setBody(Buffer().write(subtitleBody))
+                    }
+                    path.startsWith("/cdn/init.image") -> {
+                        segReferers.add(request.getHeader("Referer"))
+                        serveRangedBytes(request, disguisedInit, "image/png")
+                    }
+                    path.startsWith("/cdn/seg1.image") -> {
+                        segReferers.add(request.getHeader("Referer"))
+                        serveRangedBytes(request, disguisedSeg, "image/png")
+                    }
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+
+        val masterWithFragment = upstream.url("/api/hls/pacific-rim/master.m3u8").toString() + "#aio_quality=4k"
+        val session = server.registerSession(
+            originalUrl = masterWithFragment,
+            targetUrl = masterWithFragment,
+            mode = LocalProxyMode.HLS_REWRITE,
+            headers = mapOf("Referer" to "https://fiml4k.fun/"),
+            hints = LocalProxyHints(enabled = true, mode = "hls-rewrite", autoUnwrapTs = true)
+        )
+        val masterProxyUrl = server.buildSessionEntryUrl(session, "hls")
+        val rewrittenMaster = client.newCall(Request.Builder().url(masterProxyUrl).get().build()).execute().use { resp ->
+            assertEquals(200, resp.code)
+            resp.body!!.string()
+        }
+        assertTrue(rewrittenMaster.contains("RESOLUTION=3840x2160"))
+        assertTrue(!rewrittenMaster.contains("RESOLUTION=1920x1080"))
+        assertTrue(rewrittenMaster.contains("LANGUAGE=\"vie\""))
+        assertTrue(!rewrittenMaster.contains("LANGUAGE=\"eng\""))
+
+        val variantProxyUrl = rewrittenMaster.lineSequence().first { it.trim().startsWith("http://127.0.0.1:") }.trim()
+        val rewrittenVariant = client.newCall(Request.Builder().url(variantProxyUrl).get().build()).execute().use { resp ->
+            assertEquals(200, resp.code)
+            resp.body!!.string()
+        }
+
+        val mapProxyUrl = Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(rewrittenVariant)!!.groupValues[1]
+        val segProxyUrl = rewrittenVariant.lineSequence().first {
+            val t = it.trim()
+            t.startsWith("http://127.0.0.1:") && t.contains("seg1.image")
+        }.trim()
+
+        client.newCall(Request.Builder().url(mapProxyUrl).get().build()).execute().use { resp ->
+            assertEquals(200, resp.code)
+            assertEquals("video/mp4", resp.header("Content-Type"))
+            assertArrayEquals(initFmp4, resp.body!!.bytes())
+        }
+
+        client.newCall(Request.Builder().url(segProxyUrl).head().build()).execute().use { resp ->
+            assertEquals(200, resp.code)
+            assertEquals("video/mp4", resp.header("Content-Type"))
+            assertEquals(segFmp4.size.toString(), resp.header("Content-Length"))
+        }
+
+        client.newCall(
+            Request.Builder().url(segProxyUrl).header("Range", "bytes=8-31").get().build()
+        ).execute().use { resp ->
+            assertEquals(206, resp.code)
+            assertEquals("video/mp4", resp.header("Content-Type"))
+            assertEquals("bytes 8-31/${segFmp4.size}", resp.header("Content-Range"))
+            assertArrayEquals(segFmp4.copyOfRange(8, 32), resp.body!!.bytes())
+        }
+
+        val expectedVariantUrl = upstream.url("/api/hls/pacific-rim/4k/index.m3u8").toString()
+        assertTrue(segReferers.all { it == expectedVariantUrl })
+
+        val subPlaylistUrl = Regex("""URI="(http://127\.0\.0\.1:[^"]+)"""").find(rewrittenMaster)!!.groupValues[1]
+        val rewrittenSubPlaylist = client.newCall(Request.Builder().url(subPlaylistUrl).get().build()).execute().use { resp ->
+            assertEquals(200, resp.code)
+            resp.body!!.string()
+        }
+        val vttProxyUrl = rewrittenSubPlaylist.lineSequence().first { it.trim().startsWith("http://127.0.0.1:") }.trim()
+        client.newCall(Request.Builder().url(vttProxyUrl).get().build()).execute().use { resp ->
+            assertEquals(200, resp.code)
+            assertTrue(resp.header("Content-Type").orEmpty().contains("text/vtt"))
+            assertArrayEquals(subtitleBody, resp.body!!.bytes())
+        }
+
+        val manifestUrl = "http://127.0.0.1:${server.listeningPort()}${Fiml4kLocalAddonHandler.BASE_PATH}/manifest.json"
+        client.newCall(Request.Builder().url(manifestUrl).get().build()).execute().use { resp ->
+            assertEquals(200, resp.code)
+            val body = resp.body!!.string()
+            assertTrue(body.contains(Fiml4kLocalAddonHandler.ADDON_ID))
+            assertTrue(body.contains(Fiml4kLocalAddonHandler.ADDON_NAME))
+        }
+    }
+
     private fun serveRangedBytes(
         request: RecordedRequest,
         data: ByteArray,

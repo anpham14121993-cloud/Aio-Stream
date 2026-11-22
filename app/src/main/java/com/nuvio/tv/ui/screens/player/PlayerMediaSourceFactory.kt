@@ -1234,6 +1234,8 @@ internal class PlayerMediaSourceFactory(
             val normalized = path?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() } ?: return null
             val pathWithoutFragment = normalized.substringBefore('#')
             val pathPart = pathWithoutFragment.substringBefore('?')
+            if (LOCAL_PROXY_HLS_PATH_PATTERN.matches(pathPart)) return MimeTypes.APPLICATION_M3U8
+            if (LOCAL_PROXY_DASH_PATH_PATTERN.matches(pathPart)) return MimeTypes.APPLICATION_MPD
             val fileName = pathPart.substringAfterLast('/')
             val extension = fileName.substringAfterLast('.', missingDelimiterValue = "")
             return when (extension) {
@@ -1578,6 +1580,8 @@ internal class PlayerMediaSourceFactory(
             }
         }
 
+        private val LOCAL_PROXY_HLS_PATH_PATTERN = Regex("^https?://(?:127\\.0\\.0\\.1|localhost)(?::\\d+)?/p/[^/?#]+/hls/?$")
+        private val LOCAL_PROXY_DASH_PATH_PATTERN = Regex("^https?://(?:127\\.0\\.0\\.1|localhost)(?::\\d+)?/p/[^/?#]+/dash/?$")
         private val DELIMITED_M3U8_PATTERN = Regex("(^|[=/_.?&-])(m3u8|m3u)($|[=/_.?&-])")
         private val PLAYLIST_HLS_PATTERN = Regex("/(playlist|hls|manifest|master|vs)/(?!stream$|list$|info$|details$)[a-zA-Z0-9_/-]+$")
         private val DELIMITED_MPD_PATTERN = Regex("(^|[=/_.?&-])mpd($|[=/_.?&-])")

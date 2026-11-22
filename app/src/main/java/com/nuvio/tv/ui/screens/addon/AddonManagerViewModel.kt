@@ -141,8 +141,23 @@ class AddonManagerViewModel @Inject constructor(
     }
 
     fun installAddon() {
-        val rawUrl = uiState.value.installUrl.trim()
-        if (rawUrl.isBlank()) {
+        installAddonUrl(
+            rawUrl = uiState.value.installUrl,
+            clearInputOnSuccess = true
+        )
+    }
+
+    /** Installs the built-in on-device Fiml4K Stremio addon via Local Proxy. */
+    fun installLocalFiml4kAddon() {
+        installAddonUrl(
+            rawUrl = com.nuvio.tv.core.proxy.Fiml4kLocalAddonHandler.CANONICAL_BASE_URL,
+            clearInputOnSuccess = false
+        )
+    }
+
+    private fun installAddonUrl(rawUrl: String, clearInputOnSuccess: Boolean) {
+        val trimmedUrl = rawUrl.trim()
+        if (trimmedUrl.isBlank()) {
             val message = context.getString(R.string.addon_error_invalid_url)
             _uiState.update {
                 it.copy(
@@ -154,7 +169,7 @@ class AddonManagerViewModel @Inject constructor(
             return
         }
 
-        val normalizedUrl = normalizeAddonUrl(rawUrl)
+        val normalizedUrl = normalizeAddonUrl(trimmedUrl)
         if (normalizedUrl == null) {
             val message = context.getString(R.string.addon_error_invalid_scheme)
             _uiState.update {
@@ -175,7 +190,7 @@ class AddonManagerViewModel @Inject constructor(
                     if (result.data.isTrackingAddon) {
                         val decision = trackingAddonConsentController.request(normalizedUrl, result.data)
                         _uiState.update { it.copy(isInstalling = false) }
-                        if (decision.await()) {
+                        if (decision.await() && clearInputOnSuccess) {
                             _uiState.update { it.copy(installUrl = "") }
                         }
                         return@launch
@@ -185,7 +200,7 @@ class AddonManagerViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             isInstalling = false,
-                            installUrl = "",
+                            installUrl = if (clearInputOnSuccess) "" else it.installUrl,
                             transientMessage = context.getString(R.string.addon_install_success, addonName),
                             transientMessageIsError = false
                         )

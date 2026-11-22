@@ -277,9 +277,10 @@ class LocalProxyRuleRegistry {
  * Main entry point for Aio-Stream's on-device Local Stream Proxy (`127.0.0.1:<port>`).
  */
 class LocalStreamProxy(
-    httpClientProvider: () -> OkHttpClient = { defaultHttpClient }
+    httpClientProvider: () -> OkHttpClient = { defaultHttpClient },
+    defaultPreferredPort: Int = 0
 ) {
-    val server: LocalProxyHttpServer = LocalProxyHttpServer(httpClientProvider)
+    val server: LocalProxyHttpServer = LocalProxyHttpServer(httpClientProvider, defaultPreferredPort = defaultPreferredPort)
     val rules: LocalProxyRuleRegistry = LocalProxyRuleRegistry()
 
     @Volatile
@@ -457,7 +458,10 @@ class LocalStreamProxy(
         }
 
         val shared: LocalStreamProxy by lazy {
-            LocalStreamProxy(httpClientProvider = { configuredHttpClientProvider() })
+            LocalStreamProxy(
+                httpClientProvider = { configuredHttpClientProvider() },
+                defaultPreferredPort = Fiml4kLocalAddonHandler.LOCAL_ADDON_DEFAULT_PORT
+            )
         }
     }
 }

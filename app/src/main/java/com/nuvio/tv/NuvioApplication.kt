@@ -189,6 +189,13 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
             com.nuvio.tv.ui.screens.player.PlayerPlaybackNetworking.playbackHttpClient
         }
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching {
+                com.nuvio.tv.core.proxy.LocalStreamProxy.shared.ensureStarted(
+                    com.nuvio.tv.core.proxy.Fiml4kLocalAddonHandler.LOCAL_ADDON_DEFAULT_PORT
+                )
+            }
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             playerSettingsDataStore.playerSettings
                 .map { it.localProxyEnabled to it.localProxyHeadersEnabled }
                 .distinctUntilChanged()

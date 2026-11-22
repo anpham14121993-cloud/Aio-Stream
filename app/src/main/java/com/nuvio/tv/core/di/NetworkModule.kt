@@ -202,6 +202,20 @@ object NetworkModule {
         }
         return okHttpClient.newBuilder()
             .cache(Cache(File(context.cacheDir, "addon_http_cache"), 50L * 1024 * 1024))
+            .addInterceptor { chain ->
+                val req = chain.request()
+                val reqUrl = req.url
+                if (reqUrl.host == "127.0.0.1" && reqUrl.encodedPath.startsWith("/addon/")) {
+                    val livePort = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.ensureStarted(
+                        com.nuvio.tv.core.proxy.Fiml4kLocalAddonHandler.LOCAL_ADDON_DEFAULT_PORT
+                    )
+                    if (reqUrl.port != livePort) {
+                        val updated = reqUrl.newBuilder().port(livePort).build()
+                        return@addInterceptor chain.proceed(req.newBuilder().url(updated).build())
+                    }
+                }
+                chain.proceed(req)
+            }
             .sslSocketFactory(sslContext.socketFactory, trustAllManager)
             .hostnameVerifier(ServerTrust.uncheckedClientVerifier)
             .build()
