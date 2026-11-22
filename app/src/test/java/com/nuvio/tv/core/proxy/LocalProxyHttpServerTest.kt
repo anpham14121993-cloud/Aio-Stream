@@ -764,7 +764,7 @@ class LocalProxyHttpServerTest {
             assertArrayEquals(subtitleBody, resp.body!!.bytes())
         }
 
-        val manifestUrl = "http://127.0.0.1:${server.listeningPort()}${Fiml4kLocalAddonHandler.BASE_PATH}/manifest.json"
+        val manifestUrl = "http://127.0.0.1:${server.port}${Fiml4kLocalAddonHandler.BASE_PATH}/manifest.json"
         client.newCall(Request.Builder().url(manifestUrl).get().build()).execute().use { resp ->
             assertEquals(200, resp.code)
             val body = resp.body!!.string()

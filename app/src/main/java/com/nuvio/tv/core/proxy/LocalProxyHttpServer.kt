@@ -99,9 +99,22 @@ data class ProxySession(
  */
 class LocalProxyHttpServer(
     private val httpClientProvider: () -> OkHttpClient,
-    private val defaultPreferredPort: Int = 0,
-    internal val fiml4kAddonHandler: Fiml4kLocalAddonHandler = Fiml4kLocalAddonHandler(httpClientProvider)
+    private val defaultPreferredPort: Int,
+    internal val fiml4kAddonHandler: Fiml4kLocalAddonHandler
 ) {
+    constructor(
+        httpClientProvider: () -> OkHttpClient,
+        defaultPreferredPort: Int
+    ) : this(
+        httpClientProvider = httpClientProvider,
+        defaultPreferredPort = defaultPreferredPort,
+        fiml4kAddonHandler = Fiml4kLocalAddonHandler(httpClientProvider)
+    )
+
+    constructor(httpClientProvider: () -> OkHttpClient) : this(
+        httpClientProvider = httpClientProvider,
+        defaultPreferredPort = 0
+    )
     private val lock = Any()
     private val clientLock = Any()
     private var serverSocket: ServerSocket? = null
