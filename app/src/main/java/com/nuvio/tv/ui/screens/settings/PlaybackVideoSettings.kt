@@ -60,14 +60,6 @@ internal fun PlaybackVideoSection(
     onOpenDialog: (PlaybackDialog) -> Unit
 ) {
     val enabled = settings.playerPreference != PlayerPreference.EXTERNAL
-    val displayCapabilities = rememberDisplayCapabilities()
-    val frameRateFocusRequester = remember { FocusRequester() }
-    val resolutionSwitchingSupported = !displayCapabilities.apiSupported ||
-        displayCapabilities.supportsResolutionSwitching
-    val showAfrWarning = (settings.frameRateMatchingMode != FrameRateMatchingMode.OFF &&
-        displayCapabilities.apiSupported &&
-        !displayCapabilities.supportsFrameRateSwitching) ||
-        (settings.resolutionMatchingEnabled && !resolutionSwitchingSupported)
 
     SettingsToggleRow(
         title = stringResource(R.string.playback_dim_hdr_overlays),
@@ -77,67 +69,78 @@ internal fun PlaybackVideoSection(
         enabled = enabled
     )
 
-    SettingsSectionLabel(text = stringResource(R.string.playback_auto_frame_rate))
-    SettingsActionRow(
-        title = stringResource(R.string.playback_afr_mode),
-        subtitle = null,
-        value = frameRateMatchingLabel(settings.frameRateMatchingMode),
-        titleTrailingIcon = if (showAfrWarning) Icons.Default.Warning else null,
-        titleTrailingIconTint = NuvioTheme.colors.Warning,
-        enabled = enabled,
-        modifier = Modifier.focusRequester(frameRateFocusRequester),
-        onClick = { onOpenDialog(PlaybackDialog.FRAME_RATE_MATCHING) }
-    )
-    SettingsToggleRow(
-        title = stringResource(R.string.playback_resolution_matching),
-        subtitle = stringResource(
-            if (resolutionSwitchingSupported) R.string.playback_resolution_matching_sub
-            else R.string.playback_resolution_matching_unsupported_sub
-        ),
-        checked = settings.resolutionMatchingEnabled,
-        onToggle = { onUpdate { setResolutionMatchingEnabled(!settings.resolutionMatchingEnabled) } },
-        titleTrailingIcon = if (settings.resolutionMatchingEnabled && !resolutionSwitchingSupported) {
-            Icons.Default.Warning
-        } else {
-            null
-        },
-        titleTrailingIconTint = NuvioTheme.colors.Warning,
-        enabled = enabled
-    )
-    if (settings.frameRateMatchingMode != FrameRateMatchingMode.OFF && displayCapabilities.offersSeamlessRates) {
-        SettingsToggleRow(
-            title = stringResource(R.string.playback_afr_seamless_switch),
-            subtitle = stringResource(R.string.playback_afr_seamless_switch_sub),
-            checked = settings.afrAllowSeamlessSwitch,
-            onToggle = { onUpdate { setAfrAllowSeamlessSwitch(!settings.afrAllowSeamlessSwitch) } },
-            enabled = enabled
-        )
-    }
-    if (settings.frameRateMatchingMode != FrameRateMatchingMode.OFF) {
+    if (com.nuvio.tv.ui.monolith.isTvFormFactor()) {
+        val displayCapabilities = rememberDisplayCapabilities()
+        val frameRateFocusRequester = remember { FocusRequester() }
+        val resolutionSwitchingSupported = !displayCapabilities.apiSupported ||
+            displayCapabilities.supportsResolutionSwitching
+        val showAfrWarning = (settings.frameRateMatchingMode != FrameRateMatchingMode.OFF &&
+            displayCapabilities.apiSupported &&
+            !displayCapabilities.supportsFrameRateSwitching) ||
+            (settings.resolutionMatchingEnabled && !resolutionSwitchingSupported)
+
+        SettingsSectionLabel(text = stringResource(R.string.playback_auto_frame_rate))
         SettingsActionRow(
-            title = stringResource(R.string.playback_afr_settle_delay),
-            subtitle = stringResource(R.string.playback_afr_settle_delay_sub),
-            value = afrSettleDelayLabel(settings.afrSettleDelaySeconds),
+            title = stringResource(R.string.playback_afr_mode),
+            subtitle = null,
+            value = frameRateMatchingLabel(settings.frameRateMatchingMode),
+            titleTrailingIcon = if (showAfrWarning) Icons.Default.Warning else null,
+            titleTrailingIconTint = NuvioTheme.colors.Warning,
             enabled = enabled,
-            onClick = { onOpenDialog(PlaybackDialog.AFR_SETTLE_DELAY) }
+            modifier = Modifier.focusRequester(frameRateFocusRequester),
+            onClick = { onOpenDialog(PlaybackDialog.FRAME_RATE_MATCHING) }
         )
         SettingsToggleRow(
-            title = stringResource(R.string.playback_afr_allow_low_rates),
-            subtitle = stringResource(R.string.playback_afr_allow_low_rates_sub),
-            checked = settings.afrAllowLowRates,
-            onToggle = { onUpdate { setAfrAllowLowRates(!settings.afrAllowLowRates) } },
+            title = stringResource(R.string.playback_resolution_matching),
+            subtitle = stringResource(
+                if (resolutionSwitchingSupported) R.string.playback_resolution_matching_sub
+                else R.string.playback_resolution_matching_unsupported_sub
+            ),
+            checked = settings.resolutionMatchingEnabled,
+            onToggle = { onUpdate { setResolutionMatchingEnabled(!settings.resolutionMatchingEnabled) } },
+            titleTrailingIcon = if (settings.resolutionMatchingEnabled && !resolutionSwitchingSupported) {
+                Icons.Default.Warning
+            } else {
+                null
+            },
+            titleTrailingIconTint = NuvioTheme.colors.Warning,
             enabled = enabled
         )
+        if (settings.frameRateMatchingMode != FrameRateMatchingMode.OFF && displayCapabilities.offersSeamlessRates) {
+            SettingsToggleRow(
+                title = stringResource(R.string.playback_afr_seamless_switch),
+                subtitle = stringResource(R.string.playback_afr_seamless_switch_sub),
+                checked = settings.afrAllowSeamlessSwitch,
+                onToggle = { onUpdate { setAfrAllowSeamlessSwitch(!settings.afrAllowSeamlessSwitch) } },
+                enabled = enabled
+            )
+        }
+        if (settings.frameRateMatchingMode != FrameRateMatchingMode.OFF) {
+            SettingsActionRow(
+                title = stringResource(R.string.playback_afr_settle_delay),
+                subtitle = stringResource(R.string.playback_afr_settle_delay_sub),
+                value = afrSettleDelayLabel(settings.afrSettleDelaySeconds),
+                enabled = enabled,
+                onClick = { onOpenDialog(PlaybackDialog.AFR_SETTLE_DELAY) }
+            )
+            SettingsToggleRow(
+                title = stringResource(R.string.playback_afr_allow_low_rates),
+                subtitle = stringResource(R.string.playback_afr_allow_low_rates_sub),
+                checked = settings.afrAllowLowRates,
+                onToggle = { onUpdate { setAfrAllowLowRates(!settings.afrAllowLowRates) } },
+                enabled = enabled
+            )
+        }
+        AfrCapabilityWarningCard(
+            snapshot = displayCapabilities,
+            afrModeOn = settings.frameRateMatchingMode != FrameRateMatchingMode.OFF,
+            resolutionMatchingOn = settings.resolutionMatchingEnabled,
+            onDisableAll = { onUpdate { disableAfrAndResolution() } },
+            onDisableAfrOnly = { onUpdate { setFrameRateMatchingMode(FrameRateMatchingMode.OFF) } },
+            onDisableResolutionOnly = { onUpdate { setResolutionMatchingEnabled(false) } },
+            focusAfterDisable = frameRateFocusRequester
+        )
     }
-    AfrCapabilityWarningCard(
-        snapshot = displayCapabilities,
-        afrModeOn = settings.frameRateMatchingMode != FrameRateMatchingMode.OFF,
-        resolutionMatchingOn = settings.resolutionMatchingEnabled,
-        onDisableAll = { onUpdate { disableAfrAndResolution() } },
-        onDisableAfrOnly = { onUpdate { setFrameRateMatchingMode(FrameRateMatchingMode.OFF) } },
-        onDisableResolutionOnly = { onUpdate { setResolutionMatchingEnabled(false) } },
-        focusAfterDisable = frameRateFocusRequester
-    )
 
     if (settings.usesExoPlayerEngine) {
         val dv81Conversion = settings.dv7HandlingMode == Dv7HandlingMode.DV81_LIBDOVI

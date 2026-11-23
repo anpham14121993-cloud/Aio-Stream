@@ -51,7 +51,8 @@ class ProfileSettingsCredentialPolicyTest {
             "migration_back_buffer_budget_done",
             "inject_hdr10_metadata_on_strip",
         ).forEach { assertTrue(it, shouldExcludePreferenceFromProfileSettingsSync("player_settings", it)) }
-        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "subtitle_preferred_language"))
+        assertTrue(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "subtitle_preferred_language"))
+        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "player_chapters_enabled"))
     }
 
     @Test
@@ -100,8 +101,18 @@ class ProfileSettingsCredentialPolicyTest {
     }
 
     @Test
-    fun `subtitle appearance size and offset stay device local across phone tablet and tv`() {
+    fun `all subtitle settings stay device local across phone tablet and tv`() {
         listOf(
+            "subtitle_preferred_language",
+            "subtitle_secondary_language",
+            "subtitle_tertiary_language",
+            "subtitle_preferred_language_before_off",
+            "subtitle_use_forced_subtitles",
+            "subtitle_show_only_preferred_languages",
+            "addon_subtitles_enabled",
+            "subtitle_prefer_addon",
+            "subtitle_strip_sdh",
+            "subtitle_organization_mode",
             "subtitle_font_id",
             "subtitle_font",
             "subtitle_size",
@@ -122,13 +133,14 @@ class ProfileSettingsCredentialPolicyTest {
             "subtitle_hdr_text_color",
             "subtitle_hdr_brightness",
             "subtitle_hdr_dim_player_controls",
+            "use_libass",
+            "libass_render_type",
             "libass_render_mode",
-            "libass_render_scale"
+            "libass_render_scale",
+            "external_player_forward_subtitles",
+            "subtitle_any_future_key"
         ).forEach { key ->
             assertTrue(key, shouldExcludePreferenceFromProfileSettingsSync("player_settings", key))
         }
-        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "subtitle_preferred_language"))
-        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "subtitle_secondary_language"))
-        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("player_settings", "subtitle_tertiary_language"))
     }
 }

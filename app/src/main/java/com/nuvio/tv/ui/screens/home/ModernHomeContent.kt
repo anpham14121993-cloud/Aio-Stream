@@ -1041,7 +1041,7 @@ fun ModernHomeContent(
                 if (useLandscapePosters) landscapeCatalogCardHeight else portraitCatalogCardHeight,
                 continueWatchingCardHeight
             )
-            val useMobileScrollableHero = com.nuvio.tv.ui.monolith.isMobileFormFactor()
+            val useMobileScrollableHero = com.nuvio.tv.ui.monolith.isTouchFormFactor()
             val rowsViewportHeight = remember(screenHeight, rowsViewportHeightFraction, tallestRowCardHeight, monolithBottomInset, isCompactPhone, uiState.heroSectionEnabled, useMobileScrollableHero) {
                 if (!uiState.heroSectionEnabled && !useMobileScrollableHero) {
                     (screenHeight * 0.88f).coerceAtLeast(tallestRowCardHeight)
@@ -1254,8 +1254,8 @@ fun ModernHomeContent(
                                     .align(Alignment.BottomStart)
                                     .fillMaxWidth()
                                     .padding(
-                                        start = 16.dp,
-                                        end = 16.dp,
+                                        start = if (isCompactPhone) 16.dp else rowHorizontalPadding,
+                                        end = if (isCompactPhone) 16.dp else rowHorizontalPadding,
                                         top = monolithTopInset + 8.dp,
                                         bottom = 14.dp
                                     )

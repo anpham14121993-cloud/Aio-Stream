@@ -93,7 +93,7 @@ class V2AppearancePreferenceStoreTest {
         val old = V2AppearancePreferenceStore.decode(saved)
         assertEquals(GlassTintMode.ARTWORK, old.glassTintMode)
         assertEquals(SettingsPresentation.MINIMAL, old.settingsPresentation)
-        assertEquals(PlayerChromeStyle.CONTROL_DECK, old.playerChromeStyle)
+        assertEquals(PlayerChromeStyle.INVISIBLE, old.playerChromeStyle)
         assertFalse(old.introAnimationEnabled)
     }
 }

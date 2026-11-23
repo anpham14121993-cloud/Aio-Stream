@@ -7,7 +7,7 @@ enum class SubtitleEdgeStyle { NONE, OUTLINE, DROP_SHADOW }
 /** Stored by name: THICK keeps its width for everyone who chose it; the UI calls it Extra thick and MEDIUM Thick. */
 enum class SubtitleOutlineSize { OFF, THIN, NORMAL, MEDIUM, THICK }
 
-internal val DEFAULT_SUBTITLE_EDGE_STYLE = SubtitleEdgeStyle.DROP_SHADOW
+internal val DEFAULT_SUBTITLE_EDGE_STYLE = SubtitleEdgeStyle.OUTLINE
 
 internal const val DEFAULT_SUBTITLE_SHADOW_OPACITY = 70
 internal const val MIN_SUBTITLE_SHADOW_OPACITY = 10
@@ -34,7 +34,7 @@ internal fun parseSubtitleFont(value: String?): SubtitleFont? =
 internal fun parseSubtitleOutlineSize(value: String?): SubtitleOutlineSize? =
     SubtitleOutlineSize.entries.firstOrNull { it.name == value }
 
-/** New profiles use shadow; explicit modern or legacy choices retain their existing semantics. */
+/** New profiles use a normal outline without drop shadow; explicit choices keep their saved meaning. */
 internal fun resolveSubtitleEdgeStyle(value: String?, legacyOutline: Boolean?): SubtitleEdgeStyle? =
     if (value == null && legacyOutline == null) DEFAULT_SUBTITLE_EDGE_STYLE else parseSubtitleEdgeStyle(value)
 

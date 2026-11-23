@@ -29,7 +29,6 @@ import com.nuvio.tv.core.network.NoDelaySocketFactory
 import com.nuvio.tv.core.network.ServerTrust
 import com.nuvio.tv.core.network.imageNetworkFetcherFactory
 import com.nuvio.tv.core.network.withServerTrust
-import com.nuvio.tv.data.mediaserver.ServerUserStateProjection
 import com.nuvio.tv.data.simkl.SimklAnimeIdPreferenceHolder
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.Cookie
@@ -53,9 +52,6 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
     @Inject lateinit var androidTvChannelSyncService: AndroidTvChannelSyncService
     @Inject lateinit var playerSettingsDataStore: PlayerSettingsDataStore
     @Inject lateinit var simklAnimeIdPreferenceHolder: SimklAnimeIdPreferenceHolder
-    @Inject lateinit var serverUserStateProjection: ServerUserStateProjection
-    @Inject lateinit var siloArtworkRefresher: com.nuvio.tv.data.mediaserver.silo.SiloArtworkRefresher
-    @Inject lateinit var plexArtworkSigner: com.nuvio.tv.data.mediaserver.plex.PlexArtworkSigner
     @Inject lateinit var reportOutbox: com.nuvio.tv.data.repository.ReportOutbox
     @Inject lateinit var reportStatusChecker: com.nuvio.tv.data.repository.ReportStatusChecker
     @Inject lateinit var screensaverController: com.nuvio.tv.core.player.ScreensaverController
@@ -69,7 +65,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
         private const val HTTP_CACHE_VALIDATED_DIR = "http_cache_validated"
 
         private val START_PREFERENCES = listOf(
-            "server_configuration", "floppy_auth", "mdblist_auth", "wetrakr_auth", "media_servers",
+            "server_configuration", "floppy_auth", "mdblist_auth", "wetrakr_auth",
             "member_access_snapshot", "member_catalogs", "backup_restore", "app_locale", "image_performance"
         )
 
@@ -155,7 +151,6 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
         // Hydrate the AFR fps cache from disk (background load) so cold
         // rewatches take the preflight hit path (switch before prepare).
         com.nuvio.tv.core.player.FrameRateUtils.initFrameRateCachePersistence(this)
-        serverUserStateProjection.start()
         reportOutbox.start()
         reportStatusChecker.start()
         // Pin application UI strictly to Vietnamese across all screens.
@@ -285,16 +280,6 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
                 .connectTimeout(4, TimeUnit.SECONDS)
                 .readTimeout(5, TimeUnit.SECONDS)
                 .callTimeout(8, TimeUnit.SECONDS)
-                .addInterceptor(
-                    com.nuvio.tv.data.mediaserver.silo.SiloArtworkInterceptor({
-                        if (::siloArtworkRefresher.isInitialized) siloArtworkRefresher else null
-                    })
-                )
-                .addInterceptor(
-                    com.nuvio.tv.data.mediaserver.plex.PlexArtworkInterceptor({
-                        if (::plexArtworkSigner.isInitialized) plexArtworkSigner else null
-                    })
-                )
                 .addInterceptor { chain ->
                     try {
                         chain.proceed(chain.request())

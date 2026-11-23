@@ -32,7 +32,11 @@ class AndroidServerPersistence @Inject constructor(
 ) : ServerPersistence {
     private val preferences = ProtectedProfilePreferences(context, "media_servers", "com.nuvio.tv.mediaservers.v1")
 
-    override fun read(profileId: Int): String? = preferences.read(profileId)
-    override fun write(profileId: Int, value: String?) = preferences.write(profileId, value)
+    init {
+        preferences.clear()
+    }
+
+    override fun read(profileId: Int): String? = null
+    override fun write(profileId: Int, value: String?) = Unit
     override fun clear() = preferences.clear()
 }

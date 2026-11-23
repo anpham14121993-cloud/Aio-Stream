@@ -718,6 +718,7 @@ open class MainActivity : ComponentActivity() {
                 interfaceExperience = com.nuvio.tv.domain.model.InterfaceExperience.NUVIO_V2
             )
             val appearance = appearancePreferences?.copy(
+                playerChromeStyle = com.nuvio.tv.domain.model.PlayerChromeStyle.INVISIBLE,
                 introAnimationEnabled = true,
                 introSoundEnabled = true
             )

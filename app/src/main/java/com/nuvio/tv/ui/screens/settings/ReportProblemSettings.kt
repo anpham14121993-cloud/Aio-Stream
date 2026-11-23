@@ -52,7 +52,6 @@ internal enum class ReportWhere(val key: String, @StringRes val label: Int) {
     Settings("settings", R.string.report_where_settings),
     SignIn("sign_in_or_sync", R.string.report_where_sign_in),
     Addons("addons", R.string.report_where_addons),
-    MediaServers("media_servers", R.string.report_where_servers),
     WatchParty("watch_party", R.string.report_where_party),
     Elsewhere("somewhere_else", R.string.report_where_other)
 }

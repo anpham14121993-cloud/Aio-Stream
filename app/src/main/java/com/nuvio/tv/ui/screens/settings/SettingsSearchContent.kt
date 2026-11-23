@@ -120,8 +120,9 @@ internal fun SettingsSearchContent(
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val isV2 = LocalV2Appearance.current != null
-    val inReach = remember(visibleCategories, isV2) {
-        SETTINGS_SEARCH_ENTRIES.filter { it.category in visibleCategories && it.shownIn(isV2) }
+    val isTv = com.nuvio.tv.ui.monolith.isTvFormFactor()
+    val inReach = remember(visibleCategories, isV2, isTv) {
+        SETTINGS_SEARCH_ENTRIES.filter { it.category in visibleCategories && it.shownIn(isV2, isTv) }
     }
     val items = remember(context, inReach) { context.searchItems(inReach) }
     val found = remember(items, query) {

@@ -36,13 +36,15 @@ internal enum class LayoutSection(
 
 internal fun visibleLayoutSections(
     essentialMode: Boolean,
-    focusedPosterHasOptions: Boolean
+    focusedPosterHasOptions: Boolean,
+    isTv: Boolean = true
 ): List<LayoutSection> =
     if (essentialMode) {
         listOf(LayoutSection.HOME_LAYOUT)
     } else {
         LayoutSection.entries.filter { section ->
-            section != LayoutSection.FOCUSED_POSTER || focusedPosterHasOptions
+            (section != LayoutSection.FOCUSED_POSTER || focusedPosterHasOptions) &&
+                (section != LayoutSection.SIDEBAR || isTv)
         }
     }
 

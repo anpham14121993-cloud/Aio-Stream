@@ -22,7 +22,8 @@ internal data class SettingsSearchEntry(
     val modes: SettingsSearchModes = SettingsSearchModes.BOTH,
     val literalTitle: String? = null,
     val keywords: List<String> = emptyList(),
-    val look: SettingsSearchLook = SettingsSearchLook.BOTH
+    val look: SettingsSearchLook = SettingsSearchLook.BOTH,
+    val tvOnly: Boolean = false
 )
 
 internal fun SettingsSearchEntry.availableIn(isEssentialMode: Boolean): Boolean = when (modes) {
@@ -31,10 +32,13 @@ internal fun SettingsSearchEntry.availableIn(isEssentialMode: Boolean): Boolean 
     SettingsSearchModes.ESSENTIAL -> isEssentialMode
 }
 
-internal fun SettingsSearchEntry.shownIn(isV2: Boolean): Boolean = when (look) {
-    SettingsSearchLook.BOTH -> true
-    SettingsSearchLook.ORIGINAL -> !isV2
-    SettingsSearchLook.V2 -> isV2
+internal fun SettingsSearchEntry.shownIn(isV2: Boolean, isTv: Boolean = true): Boolean {
+    if (tvOnly && !isTv) return false
+    return when (look) {
+        SettingsSearchLook.BOTH -> true
+        SettingsSearchLook.ORIGINAL -> !isV2
+        SettingsSearchLook.V2 -> isV2
+    }
 }
 
 /** Text ready for matching, in the app's language plus English as a second chance. */

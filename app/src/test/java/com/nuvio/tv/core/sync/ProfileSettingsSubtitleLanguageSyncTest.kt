@@ -1,5 +1,6 @@
 package com.nuvio.tv.core.sync
 
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.nuvio.tv.TestPreferencesStore
@@ -7,6 +8,8 @@ import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
 import com.nuvio.tv.data.local.ProfileDataStoreFactory
+import com.nuvio.tv.data.local.SubtitleOrganizationMode
+import com.nuvio.tv.data.local.SubtitleOutlineSize
 import com.nuvio.tv.domain.model.UserProfile
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
@@ -35,7 +38,7 @@ import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -57,61 +60,73 @@ class ProfileSettingsSubtitleLanguageSyncTest {
     }
 
     @Test
-    fun `third subtitle language uploads and restores with the other two`() = runTest(dispatcher) {
+    fun `subtitle languages and rules never upload and are not restored from remote`() = runTest(dispatcher) {
         val harness = harness()
         harness.player.setSubtitlePreferredLanguage("es-419")
         harness.player.setSubtitleSecondaryLanguage("es")
         harness.player.setSubtitleTertiaryLanguage("en")
+        harness.player.setAddonSubtitlesEnabled(false)
+        harness.player.setSubtitlePreferAddon(true)
+        harness.player.setSubtitleStripSdh(true)
+        harness.player.setSubtitleOrganizationMode(SubtitleOrganizationMode.BY_LANGUAGE)
         harness.service.pushCurrentProfileToRemote().getOrThrow()
 
         val uploaded = harness.remote.getValue(1).getValue("features").jsonObject
             .getValue("player_settings").jsonObject
-        assertEquals("en", uploaded.getValue("subtitle_tertiary_language").jsonObject.getValue("value").jsonPrimitive.content)
+        listOf(
+            "subtitle_preferred_language",
+            "subtitle_secondary_language",
+            "subtitle_tertiary_language",
+            "addon_subtitles_enabled",
+            "subtitle_prefer_addon",
+            "subtitle_strip_sdh",
+            "subtitle_organization_mode"
+        ).forEach { key -> assertFalse(key, uploaded.containsKey(key)) }
 
         harness.playerStore.edit { it.clear() }
-        assertNull(harness.player.playerSettings.first().subtitleStyle.tertiaryPreferredLanguage)
-        harness.service.pullCurrentProfileFromRemote().getOrThrow()
-
-        val style = harness.player.playerSettings.first().subtitleStyle
-        assertEquals("es-419", style.preferredLanguage)
-        assertEquals("es", style.secondaryPreferredLanguage)
-        assertEquals("en", style.tertiaryPreferredLanguage)
-    }
-
-    @Test
-    fun `older cloud settings without a third language still load`() = runTest(dispatcher) {
-        val harness = harness()
         harness.remote[1] = buildJsonObject {
             put("version", 1)
             put("features", buildJsonObject {
                 put("player_settings", buildJsonObject {
-                    put("subtitle_preferred_language", encodedString("es-419"))
-                    put("subtitle_secondary_language", encodedString("es"))
+                    put("subtitle_preferred_language", encodedString("fr"))
+                    put("subtitle_secondary_language", encodedString("de"))
+                    put("subtitle_tertiary_language", encodedString("ja"))
+                    put("subtitle_use_forced_subtitles", encodedBoolean(false))
+                    put("subtitle_show_only_preferred_languages", encodedBoolean(true))
+                    put("addon_subtitles_enabled", encodedBoolean(false))
+                    put("subtitle_prefer_addon", encodedBoolean(true))
+                    put("subtitle_strip_sdh", encodedBoolean(true))
+                    put("subtitle_organization_mode", encodedString(SubtitleOrganizationMode.BY_LANGUAGE.name))
                 })
             })
         }
-
         harness.service.pullCurrentProfileFromRemote().getOrThrow()
 
-        val style = harness.player.playerSettings.first().subtitleStyle
-        assertEquals("es-419", style.preferredLanguage)
-        assertEquals("es", style.secondaryPreferredLanguage)
-        assertNull(style.tertiaryPreferredLanguage)
-        assertNull(harness.playerStore.value[stringPreferencesKey("subtitle_tertiary_language")])
+        val settings = harness.player.playerSettings.first()
+        val style = settings.subtitleStyle
+        assertTrue(style.isPreferredLanguageSystemDefault)
+        assertEquals(null, style.secondaryPreferredLanguage)
+        assertEquals(null, style.tertiaryPreferredLanguage)
+        assertTrue(settings.addonSubtitlesEnabled)
+        assertFalse(style.preferAddonSubtitles)
+        assertFalse(style.stripSdh)
+        assertEquals(SubtitleOrganizationMode.NONE, settings.subtitleOrganizationMode)
     }
 
     @Test
-    fun `subtitle style size and vertical offset are neither pushed nor overwritten by remote sync`() = runTest(dispatcher) {
+    fun `remote subtitle language settings do not overwrite local subtitle choices`() = runTest(dispatcher) {
         val harness = harness()
         harness.player.setSubtitlePreferredLanguage("vi")
         harness.player.setSubtitleSize(85)
         harness.player.setSubtitleBitmapSize(90)
         harness.player.setSubtitleVerticalOffset(12)
+        harness.player.setSubtitleOutlineSize(SubtitleOutlineSize.THICK)
+        harness.player.setSubtitleShadowEnabled(false)
         harness.service.pushCurrentProfileToRemote().getOrThrow()
 
         val uploaded = harness.remote.getValue(1).getValue("features").jsonObject
             .getValue("player_settings").jsonObject
-        assertEquals("vi", uploaded.getValue("subtitle_preferred_language").jsonObject.getValue("value").jsonPrimitive.content)
+        assertFalse(uploaded.containsKey("subtitle_preferred_language"))
         assertFalse(uploaded.containsKey("subtitle_size"))
         assertFalse(uploaded.containsKey("subtitle_bitmap_size"))
         assertFalse(uploaded.containsKey("subtitle_vertical_offset"))
@@ -131,10 +146,12 @@ class ProfileSettingsSubtitleLanguageSyncTest {
         harness.service.pullCurrentProfileFromRemote().getOrThrow()
 
         val style = harness.player.playerSettings.first().subtitleStyle
-        assertEquals("en", style.preferredLanguage)
+        assertEquals("vi", style.preferredLanguage)
         assertEquals(85, style.size)
         assertEquals(90, style.bitmapSize)
         assertEquals(12, style.verticalOffset)
+        assertEquals(SubtitleOutlineSize.THICK, style.effectiveOutlineSize)
+        assertFalse(style.effectiveShadowEnabled)
     }
 
     private fun harness(): Harness {
@@ -192,6 +209,11 @@ class ProfileSettingsSubtitleLanguageSyncTest {
 
     private fun encodedString(value: String) = buildJsonObject {
         put("type", "string")
+        put("value", value)
+    }
+
+    private fun encodedBoolean(value: Boolean) = buildJsonObject {
+        put("type", "boolean")
         put("value", value)
     }
 

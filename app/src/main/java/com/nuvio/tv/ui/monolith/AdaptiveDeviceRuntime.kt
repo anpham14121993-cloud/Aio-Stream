@@ -144,6 +144,16 @@ fun isTvFocusMode(): Boolean =
 @androidx.compose.runtime.ReadOnlyComposable
 fun isMobileFormFactor(): Boolean = LocalDeviceFormFactor.current == DeviceFormFactor.MOBILE
 
+/** True when running on touch handheld form factors (Phone or Tablet). */
+@androidx.compose.runtime.Composable
+@androidx.compose.runtime.ReadOnlyComposable
+fun isTouchFormFactor(): Boolean = LocalDeviceFormFactor.current != DeviceFormFactor.TV
+
+/** True when running on TV form factor regardless of temporary input events. */
+@androidx.compose.runtime.Composable
+@androidx.compose.runtime.ReadOnlyComposable
+fun isTvFormFactor(): Boolean = LocalDeviceFormFactor.current == DeviceFormFactor.TV
+
 fun Activity.applyAioOrientation(
     formFactor: DeviceFormFactor,
     inPlayer: Boolean

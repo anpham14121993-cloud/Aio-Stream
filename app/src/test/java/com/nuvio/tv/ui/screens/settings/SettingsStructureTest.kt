@@ -45,6 +45,12 @@ class SettingsStructureTest {
     }
 
     @Test
+    fun `remote buttons section is hidden on phone and tablet`() {
+        assertTrue(PlaybackSection.REMOTE_BUTTONS in visiblePlaybackSections(PlayerSettings(), isTv = true))
+        assertFalse(PlaybackSection.REMOTE_BUTTONS in visiblePlaybackSections(PlayerSettings(), isTv = false))
+    }
+
+    @Test
     fun `layout sections follow the documented order`() {
         assertEquals(
             listOf(
@@ -76,6 +82,24 @@ class SettingsStructureTest {
     fun `focused poster section is hidden when it has nothing to show`() {
         assertFalse(
             LayoutSection.FOCUSED_POSTER in visibleLayoutSections(essentialMode = false, focusedPosterHasOptions = false)
+        )
+    }
+
+    @Test
+    fun `sidebar section is hidden on phone and tablet`() {
+        assertTrue(
+            LayoutSection.SIDEBAR in visibleLayoutSections(
+                essentialMode = false,
+                focusedPosterHasOptions = true,
+                isTv = true
+            )
+        )
+        assertFalse(
+            LayoutSection.SIDEBAR in visibleLayoutSections(
+                essentialMode = false,
+                focusedPosterHasOptions = true,
+                isTv = false
+            )
         )
     }
 

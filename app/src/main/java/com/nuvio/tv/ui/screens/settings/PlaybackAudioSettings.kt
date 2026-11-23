@@ -145,15 +145,17 @@ internal fun PlaybackAudioSection(
         enabled = enabled && settings.isTunnelingCompatible
     )
 
-    SurroundSettingsRows(settings = settings, enabled = enabled, onUpdate = onUpdate, onOpenDialog = onOpenDialog)
+    if (com.nuvio.tv.ui.monolith.isTvFormFactor()) {
+        SurroundSettingsRows(settings = settings, enabled = enabled, onUpdate = onUpdate, onOpenDialog = onOpenDialog)
 
-    SettingsToggleRow(
-        title = stringResource(R.string.audio_force_optical_passthrough),
-        subtitle = stringResource(R.string.audio_force_optical_passthrough_sub),
-        checked = settings.forceOpticalPassthrough && settings.decoderPriority != 0,
-        onToggle = { onUpdate { setForceOpticalPassthrough(!settings.forceOpticalPassthrough) } },
-        enabled = enabled && settings.decoderPriority != 0
-    )
+        SettingsToggleRow(
+            title = stringResource(R.string.audio_force_optical_passthrough),
+            subtitle = stringResource(R.string.audio_force_optical_passthrough_sub),
+            checked = settings.forceOpticalPassthrough && settings.decoderPriority != 0,
+            onToggle = { onUpdate { setForceOpticalPassthrough(!settings.forceOpticalPassthrough) } },
+            enabled = enabled && settings.decoderPriority != 0
+        )
+    }
 }
 
 @Composable

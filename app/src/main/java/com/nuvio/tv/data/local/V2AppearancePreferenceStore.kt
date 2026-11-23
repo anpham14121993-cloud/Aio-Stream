@@ -56,7 +56,7 @@ object V2AppearancePreferenceStore {
             glassTintMode = GlassTintMode.entries.firstOrNull { it.name == p[tint] } ?: GlassTintMode.ACCENT,
             settingsBackground = SettingsBackground.entries.firstOrNull { it.name == p[background] } ?: SettingsBackground.POSTERS,
             settingsPresentation = SettingsPresentation.entries.firstOrNull { it.name == p[settings] } ?: SettingsPresentation.GLASS,
-            playerChromeStyle = PlayerChromeStyle.entries.firstOrNull { it.name == p[player] } ?: PlayerChromeStyle.INVISIBLE,
+            playerChromeStyle = PlayerChromeStyle.INVISIBLE,
             introAnimationEnabled = p[intro] ?: true,
             introSoundEnabled = p[introSound] ?: true,
             glassPreset = preset,
@@ -83,7 +83,7 @@ object V2AppearancePreferenceStore {
         p[tint] = next.glassTintMode.name
         p[settings] = next.settingsPresentation.name
         p[background] = next.settingsBackground.name
-        p[player] = next.playerChromeStyle.name
+        p[player] = PlayerChromeStyle.INVISIBLE.name
         p[intro] = next.introAnimationEnabled
         p[introSound] = next.introSoundEnabled
         p[glassPreset] = next.glassPreset.name

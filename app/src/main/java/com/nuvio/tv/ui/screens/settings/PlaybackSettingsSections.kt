@@ -63,7 +63,8 @@ internal fun PlaybackSettingsSections(
     onShowControlLayoutEditor: (() -> Unit)? = null,
     returnToQualityRules: Boolean = false
 ) {
-    val sections = visiblePlaybackSections(playerSettings)
+    val isTv = com.nuvio.tv.ui.monolith.isTvFormFactor()
+    val sections = visiblePlaybackSections(playerSettings, isTv = isTv)
     var expandedSections by rememberSaveable {
         mutableStateOf(
             if (returnToQualityRules) listOf(PlaybackSection.STREAM_SELECTION.name) else emptyList()

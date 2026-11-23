@@ -80,7 +80,6 @@ private const val MdbListUrl = "https://mdblist.com"
 private const val WeTrakrUrl = "https://wetrakr.com"
 private const val IntroDbUrl = "https://introdb.app/"
 private const val ImdbDatasetsUrl = "https://developer.imdb.com/non-commercial-datasets/"
-private const val JellyfinUrl = "https://jellyfin.org"
 private const val TrashGuidesUrl = "https://github.com/TRaSH-Guides/Guides"
 private const val ApacheLicenseUrl = "https://www.apache.org/licenses/LICENSE-2.0"
 private const val HazeLicenseUrl = "https://github.com/chrisbanes/haze/blob/1.7.2/LICENSE"
@@ -463,11 +462,6 @@ private fun dataAttributionItems() = listOfNotNull(
         title = stringResource(R.string.licenses_attributions_imdb_title),
         body = stringResource(R.string.licenses_attributions_imdb_body),
         url = ImdbDatasetsUrl
-    ),
-    LicenseAttributionItem(
-        title = stringResource(R.string.licenses_attributions_media_servers_title),
-        body = stringResource(R.string.licenses_attributions_media_servers_body),
-        url = JellyfinUrl
     ),
     LicenseAttributionItem(
         title = stringResource(R.string.licenses_attributions_trash_title),

@@ -44,16 +44,16 @@ class SubtitleAppearancePreferencesTest {
         }
     }
 
-    @Test fun `new profiles default to shadow while legacy on and off survive without writing keys`() = settings(
+    @Test fun `new profiles default to normal outline while legacy on and off survive without writing keys`() = settings(
         listOf(emptyPreferences(), preferencesOf(oldOutline to true), preferencesOf(oldOutline to false))
     ) { player, _, active, stores ->
         for (id in stores.indices) {
             active.value = id
             val style = player.playerSettings.first().subtitleStyle
             assertNull(style.font)
-            assertEquals(when (id) { 0 -> SubtitleEdgeStyle.DROP_SHADOW; 1 -> SubtitleEdgeStyle.OUTLINE; else -> SubtitleEdgeStyle.NONE }, style.effectiveEdgeStyle)
-            assertEquals(if (id == 1) SubtitleOutlineSize.NORMAL else SubtitleOutlineSize.OFF, style.effectiveOutlineSize)
-            assertEquals(id == 0, style.effectiveShadowEnabled)
+            assertEquals(when (id) { 0, 1 -> SubtitleEdgeStyle.OUTLINE; else -> SubtitleEdgeStyle.NONE }, style.effectiveEdgeStyle)
+            assertEquals(if (id in 0..1) SubtitleOutlineSize.NORMAL else SubtitleOutlineSize.OFF, style.effectiveOutlineSize)
+            assertFalse(style.effectiveShadowEnabled)
             assertEquals(70, style.shadowOpacity)
             assertNull(stores[id].data.value[fontKey]); assertNull(stores[id].data.value[edgeKey])
             assertNull(stores[id].data.value[outlineSizeKey]); assertNull(stores[id].data.value[shadowKey])
@@ -124,9 +124,9 @@ class SubtitleAppearancePreferencesTest {
         player.setSubtitleOutlineSize(SubtitleOutlineSize.THICK)
         var style = player.playerSettings.first().subtitleStyle
         assertEquals(SubtitleOutlineSize.THICK, style.effectiveOutlineSize)
-        assertTrue("the shadow a new profile had stays on", style.effectiveShadowEnabled)
+        assertFalse("the default shadow stays off", style.effectiveShadowEnabled)
         assertEquals("THICK", stores[0].data.value[outlineSizeKey])
-        assertEquals(true, stores[0].data.value[shadowKey])
+        assertEquals(false, stores[0].data.value[shadowKey])
         assertEquals(SubtitleEdgeStyle.OUTLINE.name, stores[0].data.value[edgeKey])
         assertEquals(true, stores[0].data.value[oldOutline])
         player.setSubtitleShadowEnabled(false)
@@ -145,8 +145,8 @@ class SubtitleAppearancePreferencesTest {
         }
         active.value = 1
         style = player.playerSettings.first().subtitleStyle
-        assertEquals(SubtitleOutlineSize.OFF, style.effectiveOutlineSize)
-        assertTrue(style.effectiveShadowEnabled)
+        assertEquals(SubtitleOutlineSize.NORMAL, style.effectiveOutlineSize)
+        assertFalse(style.effectiveShadowEnabled)
     }
 
     @Test fun `a saved outline choice keeps its shadow off when the outline changes`() = settings(
@@ -159,33 +159,35 @@ class SubtitleAppearancePreferencesTest {
         assertEquals(false, stores[0].data.value[shadowKey])
     }
 
-    @Test fun `reset restores shadow atomically but preserves UI and subtitle language`() = settings(
+    @Test fun `reset restores normal black outline with shadow off atomically and preserves UI and subtitle language`() = settings(
         listOf(preferencesOf(stringPreferencesKey("subtitle_preferred_language") to "fr"))
     ) { player, theme, _, stores ->
         theme.setFont(AppFont.SOURCE_SANS_3)
         player.setSubtitleFont(SubtitleFont.ATKINSON_HYPERLEGIBLE_NEXT)
         player.setSubtitleOutlineSize(SubtitleOutlineSize.THICK)
-        player.setSubtitleShadowEnabled(false)
+        player.setSubtitleShadowEnabled(true)
+        player.setSubtitleOutlineColor(0xFFFFFFFF.toInt())
         player.setSubtitleShadowOpacity(30)
         player.setSubtitleSize(180)
         player.resetSubtitleAppearance()
         val style = player.playerSettings.first().subtitleStyle
-        assertNull(style.font); assertEquals(SubtitleEdgeStyle.DROP_SHADOW, style.effectiveEdgeStyle)
-        assertEquals(SubtitleOutlineSize.OFF, style.effectiveOutlineSize)
-        assertTrue(style.effectiveShadowEnabled)
+        assertNull(style.font); assertEquals(SubtitleEdgeStyle.OUTLINE, style.effectiveEdgeStyle)
+        assertEquals(SubtitleOutlineSize.NORMAL, style.effectiveOutlineSize)
+        assertFalse(style.effectiveShadowEnabled)
+        assertEquals(0xFF000000.toInt(), style.outlineColor)
         assertEquals(70, style.shadowOpacity)
         assertEquals(100, style.size)
         assertEquals("fr", style.preferredLanguage)
         assertEquals(AppFont.SOURCE_SANS_3, theme.selectedFont.first())
-        assertNull(stores[0].data.value[fontKey]); assertEquals(SubtitleEdgeStyle.DROP_SHADOW.name, stores[0].data.value[edgeKey])
-        assertEquals(false, stores[0].data.value[oldOutline])
+        assertNull(stores[0].data.value[fontKey]); assertEquals(SubtitleEdgeStyle.OUTLINE.name, stores[0].data.value[edgeKey])
+        assertEquals(true, stores[0].data.value[oldOutline])
     }
 
-    @Test fun `existing size and color choices without an edge choice use shadow`() = settings(
+    @Test fun `existing size and color choices without an edge choice use outline`() = settings(
         listOf(preferencesOf(intPreferencesKey("subtitle_size") to 150, intPreferencesKey("subtitle_text_color") to -65536))
     ) { player, _, _, stores ->
         val style=player.playerSettings.first().subtitleStyle
-        assertEquals(SubtitleEdgeStyle.DROP_SHADOW,style.effectiveEdgeStyle)
+        assertEquals(SubtitleEdgeStyle.OUTLINE,style.effectiveEdgeStyle)
         assertEquals(150,style.size);assertEquals(-65536,style.textColor)
         assertNull(stores[0].data.value[edgeKey])
     }

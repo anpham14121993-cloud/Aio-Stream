@@ -109,6 +109,9 @@ class SettingsSearchTest {
         assertFalse(original.shownIn(isV2 = true))
         assertTrue(v2.shownIn(isV2 = true))
         assertFalse(v2.shownIn(isV2 = false))
+        val tvOnly = v2.copy(tvOnly = true)
+        assertTrue(tvOnly.shownIn(isV2 = true, isTv = true))
+        assertFalse(tvOnly.shownIn(isV2 = true, isTv = false))
     }
 
     @Test

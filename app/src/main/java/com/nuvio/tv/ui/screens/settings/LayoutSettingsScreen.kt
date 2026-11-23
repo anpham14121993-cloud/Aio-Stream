@@ -58,9 +58,11 @@ fun LayoutSettingsContent(
     val streamBadgeUiState by viewModel.streamBadgeUiState.collectAsStateWithLifecycle()
     val customPosterQrState by viewModel.customPosterQrState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val isTv = com.nuvio.tv.ui.monolith.isTvFormFactor()
     val sections = visibleLayoutSections(
         essentialMode = essentialMode,
-        focusedPosterHasOptions = uiState.focusedPosterHasOptions()
+        focusedPosterHasOptions = uiState.focusedPosterHasOptions(),
+        isTv = isTv
     )
     var expandedSections by rememberSaveable(essentialMode) {
         mutableStateOf(if (essentialMode) listOf(LayoutSection.HOME_LAYOUT.name) else emptyList())

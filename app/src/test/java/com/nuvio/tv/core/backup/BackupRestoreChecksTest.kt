@@ -22,7 +22,7 @@ class BackupRestoreChecksTest {
 
     @Test
     fun `a protected entry with no text is refused before writing`() {
-        val entry = BackupEntry(BackupStoreKind.PROTECTED, "media_servers", 1)
+        val entry = BackupEntry(BackupStoreKind.PROTECTED, "floppy_auth", 1)
         assertThrows(BackupFormatException::class.java) {
             BackupRestoreChecks.validate(mapOf(BackupPart.SECRETS to listOf(entry)), setOf(BackupPart.SECRETS))
         }

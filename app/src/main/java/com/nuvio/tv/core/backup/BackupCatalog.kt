@@ -94,7 +94,6 @@ object BackupCatalog {
         BackupStoreSpec(BackupStoreKind.PREFS, "nuvio_simkl_auth", BackupPart.SECRETS),
         BackupStoreSpec(BackupStoreKind.PREFS, BackupSupporter.STORE, BackupPart.SECRETS),
 
-        BackupStoreSpec(BackupStoreKind.PROTECTED, "media_servers", BackupPart.SECRETS, keyAlias = "com.nuvio.tv.mediaservers.v1"),
         BackupStoreSpec(BackupStoreKind.PROTECTED, "floppy_auth", BackupPart.SECRETS, keyAlias = "com.nuvio.tv.floppy.credentials.v1"),
         BackupStoreSpec(BackupStoreKind.PROTECTED, "mdblist_auth", BackupPart.SECRETS, keyAlias = "com.nuvio.tv.mdblist.credentials.v1"),
         BackupStoreSpec(BackupStoreKind.PROTECTED, "wetrakr_auth", BackupPart.SECRETS, keyAlias = "com.nuvio.tv.wetrakr.credentials.v1"),

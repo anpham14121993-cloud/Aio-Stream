@@ -26,12 +26,12 @@ import com.nuvio.tv.domain.model.FormFactorOverride
 import com.nuvio.tv.domain.model.GlassPreset
 import com.nuvio.tv.domain.model.GlassTintMode
 import com.nuvio.tv.domain.model.NavigationStyle
-import com.nuvio.tv.domain.model.PlayerChromeStyle
 import com.nuvio.tv.domain.model.SettingsPresentation
 import com.nuvio.tv.domain.model.FocusStyle
 import com.nuvio.tv.domain.model.UiScaleMode
 import com.nuvio.tv.domain.model.VisualStyle
 import com.nuvio.tv.domain.model.VisualQualityMode
+import com.nuvio.tv.ui.monolith.isTvFormFactor
 import com.nuvio.tv.ui.v2.appearance.LocalDeviceUiPreferences
 import com.nuvio.tv.ui.v2.appearance.LocalUiScaleDecision
 import com.nuvio.tv.ui.v2.quality.LocalVisualQuality
@@ -45,6 +45,7 @@ internal fun V2PreferenceControls(initialFocusRequester: FocusRequester? = null)
     val scope = rememberCoroutineScope()
     val device = LocalDeviceUiPreferences.current
     val appearance = LocalV2Appearance.current
+    val isTvFormFactor = isTvFormFactor()
     SettingsGroupCard(title = stringResource(R.string.appearance_title)) {
         V2ChoiceRow(
             title = stringResource(R.string.aio_device_mode_title),
@@ -73,17 +74,19 @@ internal fun V2PreferenceControls(initialFocusRequester: FocusRequester? = null)
                     V2AppearancePreferenceStore.update(context) { it.copy(visualStyle = value) }
                 }
             )
-            V2ChoiceRow(
-                title = stringResource(R.string.v2_navigation_title),
-                selected = appearance.navigationStyle,
-                options = listOf(
-                    NavigationStyle.FLOATING_SIDEBAR to stringResource(R.string.v2_navigation_sidebar),
-                    NavigationStyle.TOP_NAVIGATION to stringResource(R.string.v2_navigation_top)
-                ),
-                onSelect = { value ->
-                    V2AppearancePreferenceStore.update(context) { it.copy(navigationStyle = value) }
-                }
-            )
+            if (isTvFormFactor) {
+                V2ChoiceRow(
+                    title = stringResource(R.string.v2_navigation_title),
+                    selected = appearance.navigationStyle,
+                    options = listOf(
+                        NavigationStyle.FLOATING_SIDEBAR to stringResource(R.string.v2_navigation_sidebar),
+                        NavigationStyle.TOP_NAVIGATION to stringResource(R.string.v2_navigation_top)
+                    ),
+                    onSelect = { value ->
+                        V2AppearancePreferenceStore.update(context) { it.copy(navigationStyle = value) }
+                    }
+                )
+            }
             V2ChoiceRow(
                 title = stringResource(R.string.v2_accent_title),
                 subtitle = stringResource(R.string.v2_accent_fixed_hint),
@@ -147,28 +150,19 @@ internal fun V2PreferenceControls(initialFocusRequester: FocusRequester? = null)
                     onFocused = {}
                 )
             }
-            V2ChoiceRow(
-                title = stringResource(R.string.v2_focus_style_title),
-                selected = appearance.focusStyle,
-                options = listOf(
-                    FocusStyle.GLASS_LIFT to stringResource(R.string.v2_focus_glass_lift),
-                    FocusStyle.CINEMATIC_FOCUS to stringResource(R.string.v2_focus_cinematic)
-                ),
-                onSelect = { value ->
-                    V2AppearancePreferenceStore.update(context) { it.copy(focusStyle = value) }
-                }
-            )
-            V2ChoiceRow(
-                title = stringResource(R.string.v2_player_chrome),
-                selected = appearance.playerChromeStyle,
-                options = listOf(
-                    PlayerChromeStyle.CONTROL_DECK to stringResource(R.string.v2_player_deck),
-                    PlayerChromeStyle.INVISIBLE to stringResource(R.string.v2_player_invisible)
-                ),
-                onSelect = { value ->
-                    V2AppearancePreferenceStore.update(context) { it.copy(playerChromeStyle = value) }
-                }
-            )
+            if (isTvFormFactor) {
+                V2ChoiceRow(
+                    title = stringResource(R.string.v2_focus_style_title),
+                    selected = appearance.focusStyle,
+                    options = listOf(
+                        FocusStyle.GLASS_LIFT to stringResource(R.string.v2_focus_glass_lift),
+                        FocusStyle.CINEMATIC_FOCUS to stringResource(R.string.v2_focus_cinematic)
+                    ),
+                    onSelect = { value ->
+                        V2AppearancePreferenceStore.update(context) { it.copy(focusStyle = value) }
+                    }
+                )
+            }
             V2ChoiceRow(
                 title = stringResource(R.string.v2_settings_background),
                 subtitle = stringResource(R.string.v2_settings_background_help),
@@ -264,7 +258,7 @@ private fun <T> V2ChoiceRow(
 ) {
     val scope = rememberCoroutineScope()
     if (selected is VisualStyle || selected is NavigationStyle || selected is FocusStyle ||
-        selected is PlayerChromeStyle || selected is SettingsPresentation) {
+        selected is SettingsPresentation) {
         V2VisualOptions(title, selected, options) { value -> scope.launch { onSelect(value) } }
         return
     }

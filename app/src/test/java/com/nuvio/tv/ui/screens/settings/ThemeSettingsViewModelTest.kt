@@ -136,14 +136,11 @@ class ThemeSettingsViewModelTest {
     }
 
     @Test
-    fun lockedSupporterThemesShowForNonSupportersUntilSuggestionsAreHidden() = runTest {
+    fun lockedSupporterThemesAreNeverShownInThemePicker() = runTest {
         val viewModel = createViewModel()
         runCurrent()
 
-        assertEquals(
-            listOf(AppTheme.GOLD, AppTheme.JADE, AppTheme.ROSE_GOLD, AppTheme.ARCTIC_BLUE, AppTheme.GRAPHITE),
-            viewModel.uiState.value.lockedThemes
-        )
+        assertEquals(emptyList<AppTheme>(), viewModel.uiState.value.lockedThemes)
 
         suggestionsHidden.value = true
         runCurrent()

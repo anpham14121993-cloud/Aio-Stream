@@ -2,7 +2,6 @@ package com.nuvio.tv.ui.screens.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.data.local.SupportNuvioDataStore
 import com.nuvio.tv.data.local.ThemeDataStore
 import com.nuvio.tv.data.repository.MemberAccessRepository
@@ -14,7 +13,6 @@ import com.nuvio.tv.domain.model.CustomThemeColors
 import com.nuvio.tv.domain.model.SettingsUiStyle
 import com.nuvio.tv.domain.model.canUseAppIcon
 import com.nuvio.tv.domain.model.availableAppThemes
-import com.nuvio.tv.domain.model.lockedSupporterThemes
 import com.nuvio.tv.domain.model.resolveAppTheme
 import com.nuvio.tv.domain.model.resolveCustomThemeColors
 import com.nuvio.tv.launcher.AppIconManager
@@ -65,7 +63,8 @@ class ThemeSettingsViewModel @Inject constructor(
     private val themeDataStore: ThemeDataStore,
     private val memberAccessRepository: MemberAccessRepository,
     private val appIconManager: AppIconManager,
-    private val supportNuvioDataStore: SupportNuvioDataStore
+    @Suppress("UNUSED_PARAMETER")
+    supportNuvioDataStore: SupportNuvioDataStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ThemeSettingsUiState())
@@ -106,21 +105,6 @@ class ThemeSettingsViewModel @Inject constructor(
                             customThemeGradientEnabled = gradientEnabled,
                             availableThemes = availableThemes
                         )
-                    }
-                }
-        }
-        viewModelScope.launch {
-            combine(
-                memberAccessRepository.access,
-                supportNuvioDataStore.suggestionsHidden
-            ) { memberAccess, hidden ->
-                if (hidden || memberAccess.tier != null || !AppFeaturePolicy.supportNuvioEnabled) emptyList()
-                else lockedSupporterThemes(memberAccess.entitlements)
-            }
-                .distinctUntilChanged()
-                .collectLatest { locked ->
-                    _uiState.update { state ->
-                        if (state.lockedThemes == locked) state else state.copy(lockedThemes = locked)
                     }
                 }
         }

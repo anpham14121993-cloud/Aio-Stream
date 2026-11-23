@@ -199,6 +199,21 @@ internal val localOnlyPlayerProfileSettingsKeys = setOf(
     "inject_hdr10_metadata_on_strip"
 )
 
+// All subtitle preferences (language picks, addon/forced/SDH rules, organization, and visual styling)
+// must never sync via Nuvio accounts because phone, tablet, and TV are configured per device.
+private val accountSyncExcludedSubtitleProfileSettingsKeys = setOf(
+    "subtitle_preferred_language",
+    "subtitle_secondary_language",
+    "subtitle_tertiary_language",
+    "subtitle_preferred_language_before_off",
+    "subtitle_use_forced_subtitles",
+    "subtitle_show_only_preferred_languages",
+    "addon_subtitles_enabled",
+    "subtitle_prefer_addon",
+    "subtitle_strip_sdh",
+    "subtitle_organization_mode"
+)
+
 // 4K trailers depend on the device's RAM, so a choice made on one device must not reach another.
 private val localOnlyTrailerProfileSettingsKeys = setOf(
     "trailer_allow_4k"
@@ -220,7 +235,11 @@ internal fun shouldExcludePreferenceFromProfileSettingsSync(feature: String, key
         feature == "layout_settings" && keyName in catalogKeysExcludedFromProfileSettingsBlob -> true
         feature == "layout_settings" && keyName in localOnlyLayoutProfileSettingsKeys -> true
         feature == "layout_settings" && keyName == "search_discover_enabled" -> true
-        feature == PLAYER_SETTINGS_FEATURE && keyName in localOnlyPlayerProfileSettingsKeys -> true
+        feature == PLAYER_SETTINGS_FEATURE && (
+            keyName in localOnlyPlayerProfileSettingsKeys ||
+                keyName in accountSyncExcludedSubtitleProfileSettingsKeys ||
+                keyName.startsWith("subtitle_")
+            ) -> true
         feature == "trailer_settings" && keyName in localOnlyTrailerProfileSettingsKeys -> true
         feature == PluginDataStore.FEATURE && keyName != PluginDataStore.GROUP_STREAMS_BY_REPOSITORY -> true
         keyName in credentialProfileSettingsKeys[feature].orEmpty() -> true
@@ -236,7 +255,7 @@ class ProfileSettingsSyncService @Inject constructor(
     private val profileDataStoreFactory: ProfileDataStoreFactory,
     private val syncClientIdentity: SyncClientIdentity,
     private val providerCredentialSyncService: ProviderCredentialSyncService,
-    private val mediaServerSyncService: MediaServerSyncService,
+    @Suppress("unused") private val mediaServerSyncService: MediaServerSyncService,
     private val tmdbSettingsDataStore: TmdbSettingsDataStore,
     private val metaRepository: MetaRepository,
     private val cwEnrichmentCache: ContinueWatchingEnrichmentCache,
@@ -453,7 +472,6 @@ class ProfileSettingsSyncService @Inject constructor(
 
     fun requestForegroundPull(force: Boolean = false) {
         providerCredentialSyncService.requestForegroundPull(force)
-        mediaServerSyncService.requestForegroundPull(force)
         if (!authManager.isAuthenticated) return
 
         val now = SystemClock.elapsedRealtime()
@@ -838,7 +856,12 @@ class ProfileSettingsSyncService @Inject constructor(
     ): Map<Preferences.Key<*>, Any> {
         val keyNames = when (feature) {
             "layout_settings" -> catalogKeysExcludedFromProfileSettingsBlob + localOnlyLayoutProfileSettingsKeys
-            PLAYER_SETTINGS_FEATURE -> localOnlyPlayerProfileSettingsKeys
+            PLAYER_SETTINGS_FEATURE ->
+                localOnlyPlayerProfileSettingsKeys +
+                    accountSyncExcludedSubtitleProfileSettingsKeys +
+                    mutablePrefs.asMap().keys.mapNotNull { key ->
+                        key.name.takeIf { it.startsWith("subtitle_") }
+                    }
             "trailer_settings" -> localOnlyTrailerProfileSettingsKeys
             else -> credentialProfileSettingsKeys[feature].orEmpty()
         }

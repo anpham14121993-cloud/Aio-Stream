@@ -51,7 +51,7 @@ class SubtitleOutlineShadowTest {
             }
             assertEquals(expected, legacySubtitleEdgeStyle(size, shadow))
         }
-        assertEquals(SubtitleEdgeStyle.DROP_SHADOW, legacySubtitleEdgeStyle(null, null))
+        assertEquals(SubtitleEdgeStyle.OUTLINE, legacySubtitleEdgeStyle(null, null))
         assertEquals(SubtitleEdgeStyle.OUTLINE, legacySubtitleEdgeStyle("FUTURE_EDGE", null))
         assertEquals(SubtitleEdgeStyle.NONE, legacySubtitleEdgeStyle(null, false))
     }

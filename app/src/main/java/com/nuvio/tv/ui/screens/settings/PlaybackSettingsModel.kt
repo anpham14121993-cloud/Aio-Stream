@@ -40,9 +40,13 @@ internal enum class PlaybackSection(
     P2P(R.string.settings_p2p_title, R.string.settings_p2p_subtitle, Icons.Default.Hub)
 }
 
-internal fun visiblePlaybackSections(settings: PlayerSettings): List<PlaybackSection> =
+internal fun visiblePlaybackSections(
+    settings: PlayerSettings,
+    isTv: Boolean = true
+): List<PlaybackSection> =
     PlaybackSection.entries.filter { section ->
-        section != PlaybackSection.BUFFER_NETWORK || settings.usesExoPlayerEngine
+        (section != PlaybackSection.BUFFER_NETWORK || settings.usesExoPlayerEngine) &&
+            (isTv || section != PlaybackSection.REMOTE_BUTTONS)
     }
 
 internal val PlayerSettings.usesExoPlayerEngine: Boolean
