@@ -205,9 +205,12 @@ object NetworkModule {
             .addInterceptor { chain ->
                 val req = chain.request()
                 val reqUrl = req.url
-                if (reqUrl.host == "127.0.0.1" && reqUrl.encodedPath.startsWith("/addon/")) {
+                if (reqUrl.host == "127.0.0.1" &&
+                    (reqUrl.encodedPath.startsWith("${com.nuvio.tv.core.proxy.LocalJsAddonHandler.BASE_PATH}/") ||
+                        reqUrl.encodedPath.startsWith("/addon/"))
+                ) {
                     val livePort = com.nuvio.tv.core.proxy.LocalStreamProxy.shared.ensureStarted(
-                        com.nuvio.tv.core.proxy.Fiml4kLocalAddonHandler.LOCAL_ADDON_DEFAULT_PORT
+                        com.nuvio.tv.core.proxy.LocalJsAddonHandler.LOCAL_ADDON_DEFAULT_PORT
                     )
                     if (reqUrl.port != livePort) {
                         val updated = reqUrl.newBuilder().port(livePort).build()

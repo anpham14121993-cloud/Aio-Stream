@@ -213,14 +213,6 @@ fun AddonManagerScreen(
             addon.enabled && addon.catalogs.any { catalog -> !catalog.isSearchOnlyCatalog() }
         }
     }
-    val localFiml4kAddon = remember(uiState.installedAddons) {
-        uiState.installedAddons.firstOrNull { addon ->
-            val path = runCatching {
-                java.net.URI(addon.baseUrl.trim()).path.orEmpty().trimEnd('/')
-            }.getOrDefault("")
-            path == com.nuvio.tv.core.proxy.Fiml4kLocalAddonHandler.BASE_PATH
-        }
-    }
     val manageFromPhoneSubtitle = if (webConfigMode == com.nuvio.tv.core.server.AddonWebConfigMode.COLLECTIONS_ONLY) {
         stringResource(R.string.addon_manage_collections_from_phone_subtitle)
     } else {
@@ -608,16 +600,9 @@ fun AddonManagerScreen(
 
             if (!viewModel.isReadOnly) {
                 item {
-                    LocalFiml4kAddonEntryCard(
-                        isInstalled = localFiml4kAddon != null,
-                        isInstalling = uiState.isInstalling,
-                        onClick = {
-                            if (localFiml4kAddon != null) {
-                                addonUrlPendingDeletion = localFiml4kAddon.baseUrl
-                            } else if (!uiState.isInstalling) {
-                                viewModel.installLocalFiml4kAddon()
-                            }
-                        }
+                    GitHubAddonStoreEntryCard(
+                        installedCount = uiState.installedLocalJsIds.size,
+                        onClick = { viewModel.openGitHubStore() }
                     )
                 }
             }
@@ -796,6 +781,17 @@ fun AddonManagerScreen(
                     )
                 }
             }
+        }
+
+        if (uiState.isGitHubStoreOpen) {
+            GitHubAddonStoreDialog(
+                uiState = uiState,
+                onRepoUrlChange = viewModel::onGitHubRepoUrlChange,
+                onLoadRepo = viewModel::loadGitHubRepo,
+                onInstallOrUpdate = viewModel::installOrUpdateGitHubAddon,
+                onRemoveAddon = viewModel::removeGitHubAddon,
+                onDismiss = viewModel::closeGitHubStore
+            )
         }
 
         addonUrlPendingDeletion?.let { addonUrl ->
@@ -1092,9 +1088,8 @@ private fun CollectionsEntryCard(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun LocalFiml4kAddonEntryCard(
-    isInstalled: Boolean,
-    isInstalling: Boolean,
+private fun GitHubAddonStoreEntryCard(
+    installedCount: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1136,14 +1131,14 @@ private fun LocalFiml4kAddonEntryCard(
                     modifier = Modifier.size(28.dp),
                     tint = when {
                         isFocused -> NuvioTheme.colors.Secondary
-                        isInstalled -> NuvioTheme.colors.Success
+                        installedCount > 0 -> NuvioTheme.colors.Success
                         else -> NuvioTheme.colors.TextSecondary
                     }
                 )
                 Spacer(modifier = Modifier.width(NuvioTheme.spacing.lg))
                 Column {
                     Text(
-                        text = stringResource(R.string.addon_local_fiml4k_title),
+                        text = stringResource(R.string.addon_github_store_title),
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
                             textDirection = TextDirection.Content
@@ -1151,11 +1146,7 @@ private fun LocalFiml4kAddonEntryCard(
                         color = NuvioTheme.colors.TextPrimary
                     )
                     Text(
-                        text = when {
-                            isInstalling && !isInstalled -> stringResource(R.string.addon_installing)
-                            isInstalled -> stringResource(R.string.addon_local_fiml4k_subtitle_installed)
-                            else -> stringResource(R.string.addon_local_fiml4k_subtitle_install)
-                        },
+                        text = stringResource(R.string.addon_github_store_subtitle),
                         style = MaterialTheme.typography.bodySmall,
                         color = NuvioTheme.colors.TextSecondary
                     )
@@ -1163,15 +1154,302 @@ private fun LocalFiml4kAddonEntryCard(
             }
             Spacer(modifier = Modifier.width(NuvioTheme.spacing.md))
             Icon(
-                imageVector = if (isInstalled) {
-                    Icons.Default.Check
-                } else {
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight
-                },
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
-                tint = if (isInstalled) NuvioTheme.colors.Success else NuvioTheme.colors.TextSecondary
+                tint = NuvioTheme.colors.TextSecondary
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun GitHubAddonStoreDialog(
+    uiState: AddonManagerUiState,
+    onRepoUrlChange: (String) -> Unit,
+    onLoadRepo: () -> Unit,
+    onInstallOrUpdate: (com.nuvio.tv.core.proxy.GitHubAddonRepoEntry) -> Unit,
+    onRemoveAddon: (String, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val urlFieldFocusRequester = remember { FocusRequester() }
+    val closeBtnFocusRequester = remember { FocusRequester() }
+    var isEditingRepoUrl by remember { mutableStateOf(false) }
+
+    BackHandler {
+        isEditingRepoUrl = false
+        keyboardController?.hide()
+        onDismiss()
+    }
+
+    LaunchedEffect(Unit) {
+        repeat(2) { withFrameNanos { } }
+        runCatching { closeBtnFocusRequester.requestFocus() }
+    }
+
+    NuvioDialog(
+        onDismiss = onDismiss,
+        title = stringResource(R.string.addon_github_dialog_title),
+        subtitle = stringResource(R.string.addon_github_dialog_subtitle),
+        width = 680.dp,
+        usePlatformDefaultWidth = false,
+        suppressFirstKeyUp = false
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                onClick = { isEditingRepoUrl = true },
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged {
+                        if (!it.isFocused && !isEditingRepoUrl) {
+                            keyboardController?.hide()
+                        }
+                    },
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = NuvioTheme.colors.BackgroundElevated,
+                    focusedContainerColor = NuvioTheme.colors.BackgroundElevated
+                ),
+                border = ClickableSurfaceDefaults.border(
+                    border = Border(
+                        border = BorderStroke(1.dp, NuvioTheme.colors.Border),
+                        shape = settingsItemShape(NuvioTheme.radii.sm)
+                    ),
+                    focusedBorder = Border(
+                        border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                        shape = settingsItemShape(NuvioTheme.radii.sm)
+                    )
+                ),
+                shape = ClickableSurfaceDefaults.shape(settingsItemShape(NuvioTheme.radii.sm))
+            ) {
+                Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        BasicTextField(
+                            value = uiState.githubRepoUrl,
+                            onValueChange = onRepoUrlChange,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(urlFieldFocusRequester)
+                                .onFocusChanged {
+                                    if (!it.isFocused && isEditingRepoUrl) {
+                                        isEditingRepoUrl = false
+                                        keyboardController?.hide()
+                                    }
+                                },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Uri,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    isEditingRepoUrl = false
+                                    keyboardController?.hide()
+                                    onLoadRepo()
+                                }
+                            ),
+                            textStyle = MaterialTheme.typography.bodySmall.copy(
+                                color = NuvioTheme.colors.TextPrimary,
+                                textDirection = TextDirection.Content
+                            ),
+                            cursorBrush = SolidColor(if (isEditingRepoUrl) NuvioTheme.colors.Primary else Color.Transparent),
+                            decorationBox = { innerTextField ->
+                                if (uiState.githubRepoUrl.isEmpty()) {
+                                    Text(
+                                        text = stringResource(R.string.addon_github_repo_placeholder),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = NuvioTheme.colors.TextTertiary
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        )
+                    }
+                }
+            }
+
+            Button(
+                onClick = {
+                    isEditingRepoUrl = false
+                    keyboardController?.hide()
+                    onLoadRepo()
+                },
+                enabled = !uiState.isLoadingGitHubRepo && uiState.installingGitHubAddonId == null
+            ) {
+                Text(text = stringResource(R.string.addon_github_load_btn))
+            }
+        }
+
+        LaunchedEffect(isEditingRepoUrl) {
+            if (isEditingRepoUrl) {
+                urlFieldFocusRequester.requestFocus()
+                keyboardController?.show()
+            }
+        }
+
+        uiState.githubRepoName?.takeIf { it.isNotBlank() }?.let { repoTitle ->
+            Text(
+                text = listOfNotNull(
+                    repoTitle,
+                    uiState.githubRepoDescription?.takeIf { it.isNotBlank() }
+                ).joinToString(" — "),
+                style = MaterialTheme.typography.bodySmall,
+                color = NuvioTheme.colors.TextSecondary
+            )
+        }
+
+        uiState.githubError?.let { errMsg ->
+            Text(
+                text = errMsg,
+                style = MaterialTheme.typography.bodySmall,
+                color = NuvioTheme.colors.Error
+            )
+        }
+
+        when {
+            uiState.isLoadingGitHubRepo -> {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = NuvioTheme.spacing.lg),
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    LoadingIndicator(modifier = Modifier.size(24.dp))
+                    Text(
+                        text = stringResource(R.string.addon_github_loading),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NuvioTheme.colors.TextSecondary
+                    )
+                }
+            }
+            uiState.githubEntries.isEmpty() -> {
+                Text(
+                    text = stringResource(R.string.addon_github_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioTheme.colors.TextSecondary,
+                    modifier = Modifier.padding(vertical = NuvioTheme.spacing.md)
+                )
+            }
+            else -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+                ) {
+                    itemsIndexed(
+                        items = uiState.githubEntries,
+                        key = { _, entry -> entry.id }
+                    ) { _, entry ->
+                        val isInstalled = uiState.installedLocalJsIds.contains(entry.id)
+                        val installedVer = uiState.installedLocalJsVersions[entry.id] ?: entry.version
+                        val isBusyThis = uiState.installingGitHubAddonId == entry.id
+                        val isAnyBusy = uiState.installingGitHubAddonId != null
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = settingsItemColor(NuvioTheme.colors.BackgroundCard)
+                            ),
+                            shape = settingsItemShape(14.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = entry.name,
+                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = NuvioTheme.colors.TextPrimary
+                                        )
+                                        Text(
+                                            text = if (isInstalled) {
+                                                stringResource(R.string.addon_github_installed_badge, installedVer)
+                                            } else {
+                                                "v${entry.version}"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isInstalled) NuvioTheme.colors.Success else NuvioTheme.colors.TextTertiary
+                                        )
+                                    }
+                                    if (entry.description.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = entry.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = NuvioTheme.colors.TextSecondary
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = entry.types.joinToString(", "),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NuvioTheme.colors.TextTertiary
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(NuvioTheme.spacing.md))
+
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isBusyThis) {
+                                        LoadingIndicator(modifier = Modifier.size(24.dp))
+                                    } else {
+                                        Button(
+                                            onClick = { onInstallOrUpdate(entry) },
+                                            enabled = !isAnyBusy
+                                        ) {
+                                            Text(
+                                                text = if (isInstalled) {
+                                                    stringResource(R.string.addon_github_update_btn)
+                                                } else {
+                                                    stringResource(R.string.addon_github_install_btn)
+                                                }
+                                            )
+                                        }
+                                        if (isInstalled) {
+                                            Button(
+                                                onClick = { onRemoveAddon(entry.id, entry.name) },
+                                                enabled = !isAnyBusy
+                                            ) {
+                                                Text(text = stringResource(R.string.addon_remove))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.focusRequester(closeBtnFocusRequester)
+            ) {
+                Text(text = stringResource(R.string.addon_qr_close))
+            }
         }
     }
 }

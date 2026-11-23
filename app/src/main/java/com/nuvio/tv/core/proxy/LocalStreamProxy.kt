@@ -299,6 +299,10 @@ class LocalStreamProxy(
 
     fun ensureStarted(preferredPort: Int = 0): Int = server.start(preferredPort)
 
+    fun configureLocalJsAddonHandler(handler: LocalJsAddonHandler?) {
+        server.localJsAddonHandler = handler
+    }
+
     fun stop() {
         server.stop()
     }
@@ -460,7 +464,7 @@ class LocalStreamProxy(
         val shared: LocalStreamProxy by lazy {
             LocalStreamProxy(
                 httpClientProvider = { configuredHttpClientProvider() },
-                defaultPreferredPort = Fiml4kLocalAddonHandler.LOCAL_ADDON_DEFAULT_PORT
+                defaultPreferredPort = LocalJsAddonHandler.LOCAL_ADDON_DEFAULT_PORT
             )
         }
     }

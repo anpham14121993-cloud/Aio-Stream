@@ -100,7 +100,7 @@ data class ProxySession(
 class LocalProxyHttpServer(
     private val httpClientProvider: () -> OkHttpClient,
     private val defaultPreferredPort: Int,
-    internal val fiml4kAddonHandler: Fiml4kLocalAddonHandler
+    @Volatile var localJsAddonHandler: LocalJsAddonHandler?
 ) {
     constructor(
         httpClientProvider: () -> OkHttpClient,
@@ -108,7 +108,7 @@ class LocalProxyHttpServer(
     ) : this(
         httpClientProvider = httpClientProvider,
         defaultPreferredPort = defaultPreferredPort,
-        fiml4kAddonHandler = Fiml4kLocalAddonHandler(httpClientProvider)
+        localJsAddonHandler = null
     )
 
     constructor(httpClientProvider: () -> OkHttpClient) : this(
@@ -358,10 +358,10 @@ class LocalProxyHttpServer(
             val json = "{\"ok\":true,\"port\":$port}"
             return sendBytes(output, 200, "OK", "application/json; charset=utf-8", json.toByteArray(StandardCharsets.UTF_8), isHead, wantKeepAlive)
         }
-        if (cleanPath == Fiml4kLocalAddonHandler.BASE_PATH ||
-            cleanPath.startsWith("${Fiml4kLocalAddonHandler.BASE_PATH}/")
-        ) {
-            val reply = fiml4kAddonHandler.handleRequest(req.rawTarget, cleanPath)
+        val addonId = LocalJsAddonHandler.extractAddonIdFromPath(cleanPath)
+        if (addonId != null) {
+            val reply = localJsAddonHandler?.handleRequest(addonId, req.rawTarget, cleanPath)
+                ?: AddonHttpReply(404, """{"error":"Local JS addon handler not configured"}""".toByteArray(StandardCharsets.UTF_8))
             return sendBytes(
                 output = output,
                 statusCode = reply.statusCode,

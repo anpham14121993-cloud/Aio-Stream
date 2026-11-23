@@ -764,12 +764,37 @@ class LocalProxyHttpServerTest {
             assertArrayEquals(subtitleBody, resp.body!!.bytes())
         }
 
-        val manifestUrl = "http://127.0.0.1:${server.port}${Fiml4kLocalAddonHandler.BASE_PATH}/manifest.json"
-        client.newCall(Request.Builder().url(manifestUrl).get().build()).execute().use { resp ->
-            assertEquals(200, resp.code)
-            val body = resp.body!!.string()
-            assertTrue(body.contains(Fiml4kLocalAddonHandler.ADDON_ID))
-            assertTrue(body.contains(Fiml4kLocalAddonHandler.ADDON_NAME))
+        val tempDir = java.nio.file.Files.createTempDirectory("local_js_addon_srv_test").toFile()
+        try {
+            val jsStore = LocalJsAddonStore(tempDir)
+            jsStore.save(
+                meta = InstalledLocalJsAddon(
+                    id = "community.test.local",
+                    name = "Test GitHub Addon",
+                    version = "1.0.3",
+                    description = "Online addon",
+                    scriptUrl = "https://raw.githubusercontent.com/org/repo/main/addons/test.js",
+                    repoUrl = "https://github.com/org/repo",
+                    manifestJson = """{"id":"community.test.local","name":"Test GitHub Addon","version":"1.0.3"}""",
+                    updatedAtMs = 1L
+                ),
+                scriptCode = "// test"
+            )
+            server.localJsAddonHandler = LocalJsAddonHandler(
+                store = jsStore,
+                httpClientProvider = { client },
+                scriptRunner = JsAddonScriptRunner { _, _, _, _ -> "{}" }
+            )
+            val manifestUrl = "http://127.0.0.1:${server.port}${LocalJsAddonHandler.BASE_PATH}/community.test.local/manifest.json"
+            client.newCall(Request.Builder().url(manifestUrl).get().build()).execute().use { resp ->
+                assertEquals(200, resp.code)
+                val body = resp.body!!.string()
+                assertTrue(body.contains("community.test.local"))
+                assertTrue(body.contains("Test GitHub Addon"))
+            }
+        } finally {
+            server.localJsAddonHandler = null
+            tempDir.deleteRecursively()
         }
     }
 

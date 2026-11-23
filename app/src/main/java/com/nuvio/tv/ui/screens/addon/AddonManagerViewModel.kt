@@ -82,7 +82,8 @@ class AddonManagerViewModel @Inject constructor(
     private val traktPublicListSourceResolver: TraktPublicListSourceResolver,
     private val trackingAddonConsentController: TrackingAddonConsentController,
     @ApplicationContext private val context: Context,
-    private val healthStore: AddonHealthStore
+    private val healthStore: AddonHealthStore,
+    private val localJsAddonHandler: com.nuvio.tv.core.proxy.LocalJsAddonHandler
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AddonManagerUiState())
@@ -114,6 +115,7 @@ class AddonManagerViewModel @Inject constructor(
         observeHealth()
         observeCatalogPreferences()
         observeCollections()
+        syncInstalledLocalJsState()
     }
 
     private fun observeHealth() {
@@ -147,12 +149,157 @@ class AddonManagerViewModel @Inject constructor(
         )
     }
 
-    /** Installs the built-in on-device Fiml4K Stremio addon via Local Proxy. */
-    fun installLocalFiml4kAddon() {
-        installAddonUrl(
-            rawUrl = com.nuvio.tv.core.proxy.Fiml4kLocalAddonHandler.CANONICAL_BASE_URL,
-            clearInputOnSuccess = false
-        )
+    fun openGitHubStore() {
+        _uiState.update { it.copy(isGitHubStoreOpen = true, githubError = null) }
+        syncInstalledLocalJsState()
+        if (uiState.value.githubEntries.isEmpty() && !uiState.value.isLoadingGitHubRepo) {
+            loadGitHubRepo()
+        }
+    }
+
+    fun closeGitHubStore() {
+        _uiState.update { it.copy(isGitHubStoreOpen = false, githubError = null) }
+    }
+
+    fun onGitHubRepoUrlChange(url: String) {
+        _uiState.update { it.copy(githubRepoUrl = url, githubError = null) }
+    }
+
+    fun loadGitHubRepo() {
+        val repoUrl = uiState.value.githubRepoUrl.trim()
+        if (repoUrl.isBlank()) {
+            _uiState.update { it.copy(githubError = context.getString(R.string.addon_error_invalid_url)) }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isLoadingGitHubRepo = true,
+                    githubError = null
+                )
+            }
+            localJsAddonHandler.fetchRepoCatalog(repoUrl)
+                .onSuccess { catalog ->
+                    _uiState.update {
+                        it.copy(
+                            isLoadingGitHubRepo = false,
+                            githubRepoName = catalog.repoName,
+                            githubRepoDescription = catalog.description,
+                            githubEntries = catalog.entries,
+                            githubError = null
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    _uiState.update {
+                        it.copy(
+                            isLoadingGitHubRepo = false,
+                            githubError = err.message ?: "Không thể kết nối GitHub"
+                        )
+                    }
+                }
+        }
+    }
+
+    fun installOrUpdateGitHubAddon(entry: com.nuvio.tv.core.proxy.GitHubAddonRepoEntry) {
+        if (uiState.value.installingGitHubAddonId != null) return
+        viewModelScope.launch {
+            val wasAlreadyInstalled = uiState.value.installedLocalJsIds.contains(entry.id)
+            _uiState.update {
+                it.copy(
+                    installingGitHubAddonId = entry.id,
+                    githubError = null
+                )
+            }
+            com.nuvio.tv.core.proxy.LocalStreamProxy.shared.configureLocalJsAddonHandler(localJsAddonHandler)
+            com.nuvio.tv.core.proxy.LocalStreamProxy.shared.ensureStarted(
+                com.nuvio.tv.core.proxy.LocalJsAddonHandler.LOCAL_ADDON_DEFAULT_PORT
+            )
+
+            val downloadResult = localJsAddonHandler.downloadAndInstallAddon(entry)
+            if (downloadResult.isFailure) {
+                val msg = downloadResult.exceptionOrNull()?.message ?: "Lỗi tải trình cắm từ GitHub"
+                _uiState.update {
+                    it.copy(
+                        installingGitHubAddonId = null,
+                        githubError = msg,
+                        transientMessage = msg,
+                        transientMessageIsError = true
+                    )
+                }
+                return@launch
+            }
+
+            val installedMeta = downloadResult.getOrThrow()
+            val addonUrl = com.nuvio.tv.core.proxy.LocalJsAddonHandler.addonBaseUrl(installedMeta.id)
+            when (val fetchRes = addonRepository.fetchAddon(addonUrl)) {
+                is NetworkResult.Success -> {
+                    addonRepository.addAddon(addonUrl)
+                    syncInstalledLocalJsState()
+                    val displayName = fetchRes.data.displayName.ifBlank { installedMeta.name }
+                    val message = if (wasAlreadyInstalled) {
+                        context.getString(R.string.addon_github_update_success, displayName, installedMeta.version)
+                    } else {
+                        context.getString(R.string.addon_install_success, displayName)
+                    }
+                    _uiState.update {
+                        it.copy(
+                            installingGitHubAddonId = null,
+                            githubError = null,
+                            transientMessage = message,
+                            transientMessageIsError = false
+                        )
+                    }
+                }
+                is NetworkResult.Error -> {
+                    if (!wasAlreadyInstalled) {
+                        localJsAddonHandler.removeInstalledAddon(installedMeta.id)
+                    }
+                    syncInstalledLocalJsState()
+                    _uiState.update {
+                        it.copy(
+                            installingGitHubAddonId = null,
+                            githubError = fetchRes.message,
+                            transientMessage = fetchRes.message,
+                            transientMessageIsError = true
+                        )
+                    }
+                }
+                NetworkResult.Loading -> {
+                    _uiState.update { it.copy(installingGitHubAddonId = null) }
+                }
+            }
+        }
+    }
+
+    fun removeGitHubAddon(addonId: String, displayName: String) {
+        viewModelScope.launch {
+            val installedBaseUrls = uiState.value.installedAddons
+                .filter {
+                    com.nuvio.tv.core.proxy.LocalJsAddonHandler.extractAddonIdFromBaseUrl(it.baseUrl) == addonId
+                }
+                .map { it.baseUrl }
+            installedBaseUrls.forEach { addonRepository.removeAddon(it) }
+            addonRepository.removeAddon(com.nuvio.tv.core.proxy.LocalJsAddonHandler.addonBaseUrl(addonId))
+            localJsAddonHandler.removeInstalledAddon(addonId)
+            syncInstalledLocalJsState()
+            _uiState.update {
+                it.copy(
+                    transientMessage = context.getString(R.string.addon_github_remove_success, displayName),
+                    transientMessageIsError = false
+                )
+            }
+        }
+    }
+
+    private fun syncInstalledLocalJsState() {
+        val installed = localJsAddonHandler.listInstalled()
+        _uiState.update { state ->
+            state.copy(
+                installedLocalJsIds = installed.mapTo(LinkedHashSet()) { it.id },
+                installedLocalJsVersions = installed.associate { it.id to it.version }
+            )
+        }
     }
 
     private fun installAddonUrl(rawUrl: String, clearInputOnSuccess: Boolean) {
@@ -249,6 +396,9 @@ class AddonManagerViewModel @Inject constructor(
     fun removeAddon(baseUrl: String) {
         viewModelScope.launch {
             addonRepository.removeAddon(baseUrl)
+            if (localJsAddonHandler.removeInstalledAddon(baseUrl)) {
+                syncInstalledLocalJsState()
+            }
         }
     }
 
