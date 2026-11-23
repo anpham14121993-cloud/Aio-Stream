@@ -76,48 +76,60 @@ internal fun PlayerRuntimeController.prefetchAutoSyncIndex(
 }
 
 /** The user picked [subtitle]: check only that subtitle, never swap in another one. */
-internal fun PlayerRuntimeController.runSelectedAutomaticSubtitleSync(subtitle: Subtitle) =
-    maybeRunAutomaticSubtitleSync(subtitle, AutoSyncCandidateScope.SELECTED_ONLY)
+internal fun PlayerRuntimeController.runSelectedAutomaticSubtitleSync(
+    subtitle: Subtitle,
+    bypassHttpCache: Boolean = false,
+): Boolean =
+    maybeRunAutomaticSubtitleSync(
+        selectedSubtitle = subtitle,
+        candidateScope = AutoSyncCandidateScope.SELECTED_ONLY,
+        bypassHttpCache = bypassHttpCache,
+    )
 
 internal fun PlayerRuntimeController.cancelAutomaticSubtitleSync() {
     automaticSubtitleSyncJob?.cancel()
     automaticSubtitleSyncJob = null
 }
 
+/**
+ * Starts AutoSync for [selectedSubtitle]. Returns `true` only when this call attached the
+ * ExoPlayer sidecar renderer itself so callers can avoid firing a second parallel download.
+ */
 internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
     selectedSubtitle: Subtitle,
     candidateScope: AutoSyncCandidateScope = AutoSyncCandidateScope.STARTUP_SEARCH,
-) {
+    bypassHttpCache: Boolean = false,
+): Boolean {
     AutoSyncPreferences.ensureLoaded(context)
-    if (!AutoSyncPreferences.isEnabled(context)) return
-    if (selectedSubtitle.lang.isBlank()) return
+    if (!AutoSyncPreferences.isEnabled(context)) return false
+    if (selectedSubtitle.lang.isBlank()) return false
     if (!currentStreamUrl.startsWith("http://", ignoreCase = true) &&
         !currentStreamUrl.startsWith("https://", ignoreCase = true)
     ) {
-        return
+        return false
     }
     if (
         candidateScope == AutoSyncCandidateScope.STARTUP_SEARCH &&
         !AutoSyncPreferences.claimStartupRun(hashCode(), currentStreamUrl)
     ) {
-        return
+        return false
     }
     if (isUsingMpvEngine()) {
-        runMpvAutomaticSubtitleSync(selectedSubtitle, candidateScope)
-        return
+        runMpvAutomaticSubtitleSync(selectedSubtitle, candidateScope, bypassHttpCache)
+        return false
     }
 
-    val player = _exoPlayer ?: return
+    val player = _exoPlayer ?: return false
     val useLibass = requestedUseLibassByUser || activePlayerUsesLibass
 
     // ASS/SSA stays on libass's own path so its styling is kept; the result is applied there.
     if (useLibass && isLibassAddonSubtitle(selectedSubtitle)) {
-        runLibassAutomaticSubtitleSync(selectedSubtitle, candidateScope)
-        return
+        runLibassAutomaticSubtitleSync(selectedSubtitle, candidateScope, bypassHttpCache)
+        return false
     }
 
     if (!canAttachAddonSubtitleViaSidecar(selectedSubtitle)) {
-        return
+        return false
     }
 
     automaticSubtitleSyncJob?.cancel()
@@ -138,9 +150,10 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
             selectedBodyDeferred.await()
                 ?: throw IllegalStateException("Subtitle body unavailable")
         },
+        bypassHttpCache = bypassHttpCache,
     )
     if (!started) {
-        return
+        return false
     }
 
     player.trackSelectionParameters = player.trackSelectionParameters
@@ -155,6 +168,7 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
                     url = selectedUrl,
                     headers = selectedSubtitle.headers.orEmpty(),
                     languageHint = selectedSubtitle.lang,
+                    bypassHttpCache = bypassHttpCache,
                 )
             } catch (cancel: CancellationException) {
                 throw cancel
@@ -196,6 +210,7 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
                 },
                 onReferenceReady = {},
                 onAnalysisOutcome = { outcome -> analysisOutcome = outcome },
+                bypassCache = bypassHttpCache,
             ) }
             var resolved = search(
                 withAlternatives = candidateScope == AutoSyncCandidateScope.STARTUP_SEARCH,
@@ -214,7 +229,7 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
             if (resolved == null) {
                 if (!stillRelevant()) return@launch
                 if (activeSidecarSubtitleKey == null) {
-                    startSidecarAddonSubtitle(selectedSubtitle)
+                    startSidecarAddonSubtitle(selectedSubtitle, bypassHttpCache = bypassHttpCache)
                 }
                 context.buildAutoSyncFailureToast(analysisOutcome)?.let(::showAutoSyncToast)
                 return@launch
@@ -254,6 +269,7 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
                         rawBodyLoader = resolved.subtitleBody?.let { body ->
                             suspend { body }
                         },
+                        bypassHttpCache = bypassHttpCache,
                     ) -> {
                     applyAutoSyncSidecarTimeline(
                         sidecar = this@maybeRunAutomaticSubtitleSync,
@@ -277,7 +293,7 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
             if (!applied) {
                 if (!stillRelevant()) return@launch
                 if (activeSidecarSubtitleKey == null) {
-                    startSidecarAddonSubtitle(selectedSubtitle)
+                    startSidecarAddonSubtitle(selectedSubtitle, bypassHttpCache = bypassHttpCache)
                 }
                 return@launch
             }
@@ -299,12 +315,13 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
             Log.w(PlayerRuntimeController.TAG, "AUTO_SYNC_V2 failed", error)
             if (!stillRelevant()) return@launch
             if (activeSidecarSubtitleKey == null) {
-                startSidecarAddonSubtitle(selectedSubtitle)
+                startSidecarAddonSubtitle(selectedSubtitle, bypassHttpCache = bypassHttpCache)
             }
         }
     }.also { job ->
         job.invokeOnCompletion { selectedBodyDeferred.complete(null) }
     }
+    return true
 }
 
 /**
@@ -315,12 +332,17 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
 private fun PlayerRuntimeController.runMpvAutomaticSubtitleSync(
     selectedSubtitle: Subtitle,
     candidateScope: AutoSyncCandidateScope,
+    bypassHttpCache: Boolean = false,
 ) {
     automaticSubtitleSyncJob?.cancel()
 
     val sourceUrlAtStart = currentStreamUrl
     val sourceHeadersAtStart = currentHeaders.toMap()
     val selectedUrl = selectedSubtitle.url
+    val sharedBodyDeferred = pendingMpvAddonSubtitleBody
+        ?.takeIf { (url, _) -> url == selectedUrl }
+        ?.second
+        ?.also { pendingMpvAddonSubtitleBody = null }
     val candidatesAtStart = (_uiState.value.addonSubtitles + selectedSubtitle)
         .distinctBy { it.url }
     val candidateByUrl = candidatesAtStart.associateBy { it.url }
@@ -341,6 +363,7 @@ private fun PlayerRuntimeController.runMpvAutomaticSubtitleSync(
                 sourceHeaders = sourceHeadersAtStart,
                 selectedSubtitleUrl = selectedUrl,
                 selectedSubtitleHeaders = selectedSubtitle.headers.orEmpty(),
+                selectedSubtitleBodyDeferred = sharedBodyDeferred,
                 preferredLanguage = selectedSubtitle.lang,
                 alternativeSubtitles = if (withAlternatives) {
                     candidatesAtStart.map { it.toAutoSyncCandidate() }
@@ -354,6 +377,7 @@ private fun PlayerRuntimeController.runMpvAutomaticSubtitleSync(
                 },
                 onAnalysisOutcome = { outcome -> analysisOutcome = outcome },
                 allowLiveReference = false,
+                bypassCache = bypassHttpCache,
             ) }
             var resolved = search(
                 withAlternatives = candidateScope == AutoSyncCandidateScope.STARTUP_SEARCH,
@@ -406,6 +430,7 @@ private fun PlayerRuntimeController.runMpvAutomaticSubtitleSync(
                     url = path,
                     title = buildAddonSubtitleTrackId(chosenSubtitle),
                     language = PlayerSubtitleUtils.normalizeLanguageCode(chosenSubtitle.lang),
+                    replaceExistingWithSameTitle = bypassHttpCache || AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(chosenSubtitle.url),
                 ) == true
                 if (!added) {
                     return@launch
@@ -458,6 +483,7 @@ private fun PlayerRuntimeController.isLibassAddonSubtitle(subtitle: Subtitle): B
 private fun PlayerRuntimeController.runLibassAutomaticSubtitleSync(
     selectedSubtitle: Subtitle,
     candidateScope: AutoSyncCandidateScope,
+    bypassHttpCache: Boolean = false,
 ) {
     automaticSubtitleSyncJob?.cancel()
     val player = _exoPlayer ?: return
@@ -506,6 +532,7 @@ private fun PlayerRuntimeController.runLibassAutomaticSubtitleSync(
                     null
                 },
                 onAnalysisOutcome = { outcome -> analysisOutcome = outcome },
+                bypassCache = bypassHttpCache,
             ) }
             var resolved = search(ass = true)
             if (
@@ -702,6 +729,7 @@ internal fun autoSyncFailureMessage(analysisOutcome: AutoSyncAnalysisOutcome?): 
         AutoSyncAnalysisOutcome.SUBTITLE_UNAVAILABLE,
         AutoSyncAnalysisOutcome.NO_SUBTITLE_TRACKS,
         AutoSyncAnalysisOutcome.NO_USABLE_REFERENCE,
+        AutoSyncAnalysisOutcome.TRANSLATION_IN_PROGRESS,
         AutoSyncAnalysisOutcome.INCONCLUSIVE,
         null,
         -> null

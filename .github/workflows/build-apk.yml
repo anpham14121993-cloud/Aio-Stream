@@ -207,6 +207,12 @@ jobs:
             --tests 'com.nuvio.tv.launcher.*' \
             --tests 'com.nuvio.tv.ui.screens.settings.*' \
             --tests 'com.nuvio.tv.ui.screens.player.MobilePlayerAspectPolicyTest' \
+            --tests 'com.nuvio.tv.ui.screens.player.AddonSubtitleTranslationPolicyTest' \
+            --tests 'com.nuvio.tv.ui.screens.player.PlayerSubtitleStylingTest' \
+            --tests 'com.nuvio.tv.ui.screens.player.SubtitleAlignmentTagTest' \
+            --tests 'com.nuvio.tv.ui.screens.player.SubtitleCuePositionTest' \
+            --tests 'com.nuvio.tv.ui.screens.player.SubtitleNudgeTest' \
+            --tests 'com.nuvio.tv.ui.screens.player.autosync.AutoSyncRunPolicyTest' \
             --tests 'com.nuvio.tv.ui.screens.player.ParallelRangeByteBufferReadTest' \
             --tests 'com.nuvio.tv.ui.screens.player.TunneledSurfaceResizeModeTest' \
             --tests 'com.nuvio.tv.ui.screens.player.PlaybackPositionRowTest' \

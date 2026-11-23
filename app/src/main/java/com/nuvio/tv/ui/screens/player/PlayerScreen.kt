@@ -3338,6 +3338,78 @@ private data class SubtitleAppliedConfig(
 
 internal const val EXO_SUBTITLE_BASE_SP = 24f
 private const val EXO_SUBTITLE_INNER_PADDING_RATIO = 0.125f
+private const val EXO_SUBTITLE_OFFSET_MIN = -20
+private const val EXO_SUBTITLE_OFFSET_DEFAULT = 5
+private const val EXO_SUBTITLE_OFFSET_MAX = 50
+private const val EXO_SUBTITLE_DEFAULT_BOTTOM_FRACTION = 0.08f
+private const val EXO_SUBTITLE_FONT_BOTTOM_FALLBACK_RATIO = 0.27f
+private const val EXO_SUBTITLE_BOTTOM_FLUSH_FALLBACK_FRACTION = 0.012f
+private const val EXO_SUBTITLE_BOTTOM_FLUSH_MIN_FRACTION = 0.004f
+private const val EXO_SUBTITLE_BOTTOM_FLUSH_MAX_FRACTION = 0.03f
+
+internal fun exoSubtitleExtraBottomPaddingPx(height: Int, verticalOffset: Int): Int {
+    val clampedOffset = verticalOffset.coerceIn(EXO_SUBTITLE_OFFSET_MIN, EXO_SUBTITLE_OFFSET_MAX)
+    return (height * (clampedOffset / 400f)).toInt().coerceAtLeast(0)
+}
+
+/**
+ * Maps `subtitleStyle.verticalOffset` (-20..50) to ExoPlayer's `bottomPaddingFraction`.
+ *
+ * Offsets >= +5 retain ExoPlayer's default curve (+5 -> 0.08f). Below +5, the fraction interpolates
+ * continuously down to -20 where it offsets StaticLayout's bottom font metric padding (`fontBottomPx`),
+ * avoiding the old clamp at 0f (reached at -15) so steps -16..-20 keep lowering to the bottom edge.
+ */
+internal fun exoSubtitleBottomPaddingFraction(
+    verticalOffset: Int,
+    viewHeight: Int = 0,
+    fontBottomPx: Float = 0f
+): Float {
+    val clampedOffset = verticalOffset.coerceIn(EXO_SUBTITLE_OFFSET_MIN, EXO_SUBTITLE_OFFSET_MAX)
+    if (clampedOffset >= EXO_SUBTITLE_OFFSET_DEFAULT) {
+        return (0.06f + (clampedOffset / 250f)).coerceIn(0f, 0.4f)
+    }
+    val flushFraction = if (viewHeight > 0 && fontBottomPx > 0f) {
+        (fontBottomPx / viewHeight.toFloat()).coerceIn(
+            EXO_SUBTITLE_BOTTOM_FLUSH_MIN_FRACTION,
+            EXO_SUBTITLE_BOTTOM_FLUSH_MAX_FRACTION
+        )
+    } else {
+        EXO_SUBTITLE_BOTTOM_FLUSH_FALLBACK_FRACTION
+    }
+    val downwardProgress = (EXO_SUBTITLE_OFFSET_DEFAULT - clampedOffset).toFloat() /
+        (EXO_SUBTITLE_OFFSET_DEFAULT - EXO_SUBTITLE_OFFSET_MIN).toFloat()
+    return EXO_SUBTITLE_DEFAULT_BOTTOM_FRACTION -
+        downwardProgress * (EXO_SUBTITLE_DEFAULT_BOTTOM_FRACTION + flushFraction)
+}
+
+private fun androidx.media3.ui.SubtitleView.measureSubtitleFontBottomPx(
+    scaledFontSizeSp: Float,
+    typeface: android.graphics.Typeface?
+): Float {
+    val textSizePx = runCatching {
+        android.util.TypedValue.applyDimension(
+            android.util.TypedValue.COMPLEX_UNIT_SP,
+            scaledFontSizeSp,
+            resources.displayMetrics
+        )
+    }.getOrDefault(0f)
+    val measuredBottom = runCatching {
+        if (textSizePx <= 0f) {
+            0f
+        } else {
+            val fontMetrics: android.graphics.Paint.FontMetrics? = android.text.TextPaint().apply {
+                this.textSize = textSizePx
+                this.typeface = typeface
+            }.fontMetrics
+            fontMetrics?.bottom ?: 0f
+        }
+    }.getOrDefault(0f)
+    return when {
+        measuredBottom > 0f -> measuredBottom
+        textSizePx > 0f -> textSizePx * EXO_SUBTITLE_FONT_BOTTOM_FALLBACK_RATIO
+        else -> 0f
+    }
+}
 
 private fun PlayerView.isAssOrSsaSubtitleSelected(): Boolean {
     val currentTracks = player?.currentTracks
@@ -3414,15 +3486,19 @@ internal fun PlayerView.applySubtitleStyleIfNeeded(
 
         setApplyEmbeddedStyles(true)
 
-        val bottomPaddingFraction =
-            (0.06f + (subtitleStyle.verticalOffset / 250f)).coerceIn(0f, 0.4f)
         val applyPosition = {
-            val extraPadding = (height * (subtitleStyle.verticalOffset / 400f)).toInt().coerceAtLeast(0)
+            val fontBottomPx = measureSubtitleFontBottomPx(scaledFontSize, typeface)
+            val bottomPaddingFraction = exoSubtitleBottomPaddingFraction(
+                verticalOffset = subtitleStyle.verticalOffset,
+                viewHeight = height,
+                fontBottomPx = fontBottomPx
+            )
+            val extraPadding = exoSubtitleExtraBottomPaddingPx(height, subtitleStyle.verticalOffset)
             setPadding(paddingLeft, paddingTop, paddingRight, extraPadding)
             val availableHeight = height - extraPadding
             setBottomPaddingFraction(
                 if (liftPx > 0f && availableHeight > 0) {
-                    maxOf(bottomPaddingFraction, (liftPx - extraPadding) / availableHeight).coerceIn(0f, 0.5f)
+                    maxOf(bottomPaddingFraction, (liftPx - extraPadding) / availableHeight).coerceIn(-0.04f, 0.5f)
                 } else {
                     bottomPaddingFraction
                 }

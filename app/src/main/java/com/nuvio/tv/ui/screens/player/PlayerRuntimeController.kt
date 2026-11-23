@@ -580,6 +580,8 @@ class PlayerRuntimeController(
     internal var automaticSubtitleSyncJob: Job? = null // AutoSync hook
     /** mpv: the add-on subtitle download and sub-add in flight, which AutoSync lets land first. */
     internal var mpvAddonSubtitleSelectionJob: Job? = null // AutoSync hook
+    /** mpv: shared downloaded body from the active selection so AutoSync does not fetch twice. */
+    internal var pendingMpvAddonSubtitleBody: Pair<String, kotlinx.coroutines.CompletableDeferred<String?>>? = null
     /** ExoPlayer sidecar path: external addon cues without setMediaSource (preserves buffer). */
     internal var sidecarSubtitleJob: Job? = null
     internal var sidecarGenerationCounter: Long = 0L // AutoSync hook

@@ -88,6 +88,10 @@ internal fun PlayerRuntimeController.releasePlayer(
     hideSubtitleDelayOverlayJob?.cancel()
     subtitleAutoSyncLoadJob?.cancel()
     cancelAutomaticSubtitleSync() // AutoSync hook
+    mpvAddonSubtitleSelectionJob?.cancel()
+    mpvAddonSubtitleSelectionJob = null
+    pendingMpvAddonSubtitleBody?.second?.complete(null)
+    pendingMpvAddonSubtitleBody = null
     stopSidecarAddonSubtitle(clearView = true)
     subtitleTimingRefreshJob?.cancel()
     subtitleTimingRefreshJob = null

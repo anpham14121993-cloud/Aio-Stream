@@ -26,6 +26,7 @@ interface AddonApi {
     suspend fun getStreams(@Url streamUrl: String): Response<StreamResponseDto>
 
     @GET
+    @Headers("Cache-Control: no-cache")
     suspend fun getSubtitles(@Url subtitleUrl: String): Response<SubtitleResponseDto>
 
     @GET

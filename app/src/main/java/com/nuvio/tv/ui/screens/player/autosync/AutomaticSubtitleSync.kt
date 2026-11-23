@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.screens.player.autosync
 import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.C
+import com.nuvio.tv.ui.screens.player.AddonSubtitleTranslationPolicy
 import com.nuvio.tv.ui.screens.player.PlayerRuntimeController
 import com.nuvio.tv.ui.screens.player.SubtitleSyncCue
 import kotlinx.coroutines.CancellationException
@@ -115,6 +116,33 @@ internal object AutomaticSubtitleSync {
             ): Boolean = size > MAX_RESOLVED_CACHE_ENTRIES
         }
 
+    /**
+     * Clears any cached parsed/resolved entries for [subtitleUrl] so an explicit reload or dynamic
+     * translation URL always re-reads fresh bytes and re-evaluates sync from scratch.
+     */
+    fun invalidateCachedSubtitle(
+        sourceKey: String? = null,
+        subtitleUrl: String,
+        headers: Map<String, String> = emptyMap(),
+    ) {
+        val exactKey = ParsedSubtitleCacheKey(subtitleUrl, stableHeaderIdentity(headers))
+        synchronized(parsedSubtitleCacheLock) {
+            parsedSubtitleCache.remove(exactKey)
+            parsedSubtitleCache.keys
+                .filter { it.url == subtitleUrl }
+                .forEach(parsedSubtitleCache::remove)
+        }
+        synchronized(resolvedCacheLock) {
+            if (!sourceKey.isNullOrBlank()) {
+                resolvedCache.remove(sourceKey to subtitleUrl)
+            }
+            resolvedCache.entries
+                .filter { (key, value) -> key.second == subtitleUrl || value.subtitleUrl == subtitleUrl }
+                .map { it.key }
+                .forEach(resolvedCache::remove)
+        }
+    }
+
     suspend fun findTimelineRetime(
         sourceKey: String,
         selectedSubtitleUrl: String,
@@ -129,8 +157,10 @@ internal object AutomaticSubtitleSync {
         sourceHeaders: Map<String, String> = emptyMap(),
         /** False when the player does not feed [EmbeddedSubtitleCueStore] (mpv): indexed references only. */
         allowLiveReference: Boolean = true,
+        bypassCache: Boolean = false,
     ): AutoSyncResolvedTimeline? {
-        if (alternativeSubtitles.isEmpty() && alternativeSubtitlesProvider == null) {
+        val disallowCache = bypassCache || AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(selectedSubtitleUrl)
+        if (!disallowCache && alternativeSubtitles.isEmpty() && alternativeSubtitlesProvider == null) {
             synchronized(resolvedCacheLock) { resolvedCache[sourceKey to selectedSubtitleUrl] }
                 ?.let { return it.copy(reused = true) }
         }
@@ -163,6 +193,7 @@ internal object AutomaticSubtitleSync {
                             url = selectedSubtitleUrl,
                             headers = selectedSubtitleHeaders,
                             rawBodyOverride = body,
+                            bypassHttpCache = disallowCache,
                         )
                     }
                 } else {
@@ -170,6 +201,7 @@ internal object AutomaticSubtitleSync {
                         url = selectedSubtitleUrl,
                         headers = selectedSubtitleHeaders,
                         languageHint = preferredLanguage,
+                        bypassHttpCache = disallowCache,
                     )
                 }
             }
@@ -428,6 +460,12 @@ internal object AutomaticSubtitleSync {
                 onAnalysisOutcome?.invoke(AutoSyncAnalysisOutcome.SUBTITLE_UNAVAILABLE)
                 return@supervisorScope null
             }
+            if (selected?.isPlaceholder == true && alternatives.isEmpty() && alternativeSubtitlesProvider == null) {
+                prefetchedAlternativeLoads.values.forEach { it.cancel() }
+                indexedTimelineDeferred.cancel()
+                onAnalysisOutcome?.invoke(AutoSyncAnalysisOutcome.TRANSLATION_IN_PROGRESS)
+                return@supervisorScope null
+            }
 
             var referenceTracks: List<ReferenceTrack> = emptyList()
             var forcedFallbackTracks: List<ReferenceTrack> = emptyList()
@@ -640,6 +678,7 @@ internal object AutomaticSubtitleSync {
                 candidate: AutoSyncSubtitleCandidate,
                 loaded: LoadedSubtitle,
             ) {
+                if (loaded.isPlaceholder) return
                 loadedByUrl[candidate.url] = loaded
                 val index = candidateOrder[candidate.url] ?: return
                 val alternative = LoadedAlternative(
@@ -1128,7 +1167,7 @@ internal object AutomaticSubtitleSync {
                 timeline = memberMatch.timeline,
             )
         }
-        if (result != null) {
+        if (result != null && !disallowCache && !AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(result.subtitleUrl)) {
             synchronized(resolvedCacheLock) { resolvedCache[sourceKey to result.subtitleUrl] = result }
         }
         return result
@@ -1414,29 +1453,44 @@ internal object AutomaticSubtitleSync {
         languageHint: String? = null,
         downloadSemaphore: Semaphore? = null,
         parseSemaphore: Semaphore? = null,
+        bypassHttpCache: Boolean = false,
     ): LoadedSubtitle? {
+        val noCacheForUrl = rawBodyOverride != null ||
+            bypassHttpCache ||
+            AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(url)
         val cacheKey = ParsedSubtitleCacheKey(url, stableHeaderIdentity(headers))
-        if (rawBodyOverride == null) {
+        if (!noCacheForUrl) {
             synchronized(parsedSubtitleCacheLock) {
                 parsedSubtitleCache[cacheKey]
             }?.let { cached ->
                 return LoadedSubtitle(
                     cues = cached.cues,
                     rawBody = cached.rawBody,
+                    isPlaceholder = false,
                 )
             }
         }
 
-        val text = if (rawBodyOverride != null) {
-            rawBodyOverride
+        val fetchedResponse: AutoSyncRawHttpResponse? = if (rawBodyOverride != null) {
+            null
         } else {
             try {
                 if (downloadSemaphore != null) {
                     downloadSemaphore.withPermit {
-                        downloadSubtitleTextWithSingle429Retry(url, headers, languageHint)
+                        downloadSubtitleResponseWithSingle429Retry(
+                            url = url,
+                            headers = headers,
+                            languageHint = languageHint,
+                            bypassHttpCache = noCacheForUrl,
+                        )
                     }
                 } else {
-                    downloadSubtitleTextWithSingle429Retry(url, headers, languageHint)
+                    downloadSubtitleResponseWithSingle429Retry(
+                        url = url,
+                        headers = headers,
+                        languageHint = languageHint,
+                        bypassHttpCache = noCacheForUrl,
+                    )
                 }
             } catch (cancel: CancellationException) {
                 throw cancel
@@ -1444,6 +1498,8 @@ internal object AutomaticSubtitleSync {
                 return null
             }
         }
+        val text = rawBodyOverride ?: fetchedResponse?.body ?: return null
+        val responseHeaders = fetchedResponse?.headers.orEmpty()
         val cues = try {
             val parseAndNormalize: suspend () -> List<SubtitleSyncCue> = {
                 withContext(autoSyncDispatcher) {
@@ -1474,10 +1530,16 @@ internal object AutomaticSubtitleSync {
             return null
         }
 
+        val isPlaceholder = AddonSubtitleTranslationPolicy.isStatusPlaceholderSubtitle(
+            url = url,
+            cueCount = cues.size,
+            rawBody = text,
+            responseHeaders = responseHeaders,
+        )
         val immutable = cues.toList()
-        // A body supplied by the active sidecar is selection-owned and exact. Do not let a
-        // URL/header-only cache substitute bytes from a mutable same-URL resource later.
-        if (rawBodyOverride == null) {
+        // Do not cache bodies supplied via sidecar, no-store responses, translating endpoints,
+        // or short status placeholders so reloads always see updated translations.
+        if (!noCacheForUrl && !isPlaceholder && !AddonSubtitleTranslationPolicy.shouldBypassSubtitleCache(url, responseHeaders)) {
             synchronized(parsedSubtitleCacheLock) {
                 parsedSubtitleCache[cacheKey] = CachedParsedSubtitle(
                     cues = immutable,
@@ -1488,6 +1550,7 @@ internal object AutomaticSubtitleSync {
         return LoadedSubtitle(
             cues = immutable,
             rawBody = text,
+            isPlaceholder = isPlaceholder,
         )
     }
 
@@ -1495,39 +1558,54 @@ internal object AutomaticSubtitleSync {
         url: String,
         headers: Map<String, String>,
         languageHint: String? = null,
+        bypassHttpCache: Boolean = false,
     ): String =
-        downloadSubtitleTextWithSingle429Retry(
+        downloadSubtitleResponseWithSingle429Retry(
             url = url,
             headers = headers,
             languageHint = languageHint,
-        )
+            bypassHttpCache = bypassHttpCache,
+        ).body
 
-    private suspend fun downloadSubtitleTextWithSingle429Retry(
+    private suspend fun downloadSubtitleResponseWithSingle429Retry(
         url: String,
         headers: Map<String, String>,
         languageHint: String?,
-    ): String {
-        val first = requestSubtitle(url, headers, languageHint)
+        bypassHttpCache: Boolean = false,
+    ): AutoSyncRawHttpResponse {
+        val first = requestSubtitle(url, headers, languageHint, bypassHttpCache)
         if (first.status == 429) {
             delay(HTTP_429_RETRY_DELAY_MS)
-            return validatedSubtitleBody(requestSubtitle(url, headers, languageHint))
+            val retry = requestSubtitle(url, headers, languageHint, bypassHttpCache)
+            validatedSubtitleBody(retry)
+            return retry
         }
-        return validatedSubtitleBody(first)
+        validatedSubtitleBody(first)
+        return first
     }
 
     private suspend fun requestSubtitle(
         url: String,
         headers: Map<String, String>,
         languageHint: String?,
-    ): AutoSyncRawHttpResponse =
-        withTimeoutOrNull(SUBTITLE_DOWNLOAD_TIMEOUT_MS) {
+        bypassHttpCache: Boolean = false,
+    ): AutoSyncRawHttpResponse {
+        val extraHeaders = buildMap {
+            put("Accept", "*/*")
+            putAll(headers)
+            if (bypassHttpCache || AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(url)) {
+                put("Cache-Control", "no-cache, no-store")
+            }
+        }
+        return withTimeoutOrNull(SUBTITLE_DOWNLOAD_TIMEOUT_MS) {
             AutoSyncSubtitleHttp.get(
                 url = url,
-                headers = mapOf("Accept" to "*/*") + headers,
+                headers = extraHeaders,
                 maxResponseBodyBytes = MAX_SUBTITLE_RESPONSE_BYTES,
                 languageHint = languageHint,
             )
         } ?: error("subtitle request timed out after ${SUBTITLE_DOWNLOAD_TIMEOUT_MS}ms")
+    }
 
     private fun validatedSubtitleBody(
         response: AutoSyncRawHttpResponse,
@@ -1921,6 +1999,7 @@ internal object AutomaticSubtitleSync {
     private data class LoadedSubtitle(
         val cues: List<SubtitleSyncCue>,
         val rawBody: String?,
+        val isPlaceholder: Boolean = false,
     )
     private data class ReferenceTimingFingerprint(
         val cueCount: Int,
@@ -2010,6 +2089,7 @@ internal enum class AutoSyncAnalysisOutcome {
     SUBTITLE_UNAVAILABLE,
     NO_SUBTITLE_TRACKS,
     NO_USABLE_REFERENCE,
+    TRANSLATION_IN_PROGRESS,
 
     /** The selected subtitle clearly fits none of the video's references: it is out of sync with it. */
     NO_FIT,

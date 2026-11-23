@@ -2029,6 +2029,7 @@
     <string name="audio_maintain_original_audio_on_downmix_subtitle">Khi tắt, chuẩn hóa khi hạ kênh âm thanh có thể làm giảm âm lượng tổng thể.</string>
 
     <string name="subtitle_dialog_title">Phụ đề</string>
+    <string name="subtitle_reload_action">Tải lại phụ đề</string>
     <string name="subtitle_no_builtin">Không có phụ đề tích hợp</string>
     <string name="subtitle_loading_addon">Đang tải phụ đề từ tiện ích\u2026</string>
     <string name="subtitle_no_addon">Không có phụ đề từ tiện ích</string>

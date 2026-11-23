@@ -16,9 +16,10 @@ internal fun AutoSyncCandidateScope.searchAfterSelectedFailed(
     outcome: AutoSyncAnalysisOutcome?,
 ): Boolean =
     this == AutoSyncCandidateScope.SELECTED_THEN_SEARCH &&
-        // Nothing in the video to compare with: other subtitles cannot fit either.
+        // Nothing in the video to compare with, or a temporary translation status placeholder.
         outcome != AutoSyncAnalysisOutcome.NO_SUBTITLE_TRACKS &&
-        outcome != AutoSyncAnalysisOutcome.NO_USABLE_REFERENCE
+        outcome != AutoSyncAnalysisOutcome.NO_USABLE_REFERENCE &&
+        outcome != AutoSyncAnalysisOutcome.TRANSLATION_IN_PROGRESS
 
 internal fun decideAutoSyncStart(enabled: Boolean): AutoSyncStartAction =
     if (enabled) AutoSyncStartAction.RUN else AutoSyncStartAction.ATTACH_ORIGINAL

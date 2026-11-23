@@ -46,6 +46,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -350,6 +351,15 @@ internal fun SubtitleSelectionOverlay(
             }
 
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
+
+            if (selectedAddonSubtitle != null && !editorOpen && !ttsOpen) {
+                PanelActionRow(
+                    label = stringResource(R.string.subtitle_reload_action),
+                    icon = Icons.Filled.Refresh,
+                    onClick = { onAddonSubtitleSelected(selectedAddonSubtitle) }
+                )
+                Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
+            }
 
             if (ttsOpen) {
                 TtsSettingsPanel(

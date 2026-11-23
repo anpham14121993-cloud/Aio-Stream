@@ -245,6 +245,10 @@ internal fun PlayerRuntimeController.selectSubtitleTrack(trackIndex: Int) {
     )
     if (isUsingMpvEngine()) {
         Log.d(PlayerRuntimeController.TAG, "Selecting INTERNAL subtitle trackIndex=$trackIndex (mpv)")
+        mpvAddonSubtitleSelectionJob?.cancel()
+        mpvAddonSubtitleSelectionJob = null
+        pendingMpvAddonSubtitleBody?.second?.complete(null)
+        pendingMpvAddonSubtitleBody = null
         val shouldKeepPlaying = !userPausedManually && !_uiState.value.playbackEnded
         val track = _uiState.value.subtitleTracks.getOrNull(trackIndex)
         val trackId = track?.trackId?.toIntOrNull()
@@ -375,6 +379,10 @@ internal fun subtitleLanguagesAfterPlayerChoice(style: SubtitleStyleSettings, ch
 
 internal fun PlayerRuntimeController.disableSubtitles() {
     resetSubtitleAutoSyncState()
+    mpvAddonSubtitleSelectionJob?.cancel()
+    mpvAddonSubtitleSelectionJob = null
+    pendingMpvAddonSubtitleBody?.second?.complete(null)
+    pendingMpvAddonSubtitleBody = null
     ttsEmbeddedCueBridge.selectInternalTrack(null)
     ttsCoordinator.clearStreamingTimelineCues()
     logSwitchTrace(
@@ -552,67 +560,135 @@ internal fun PlayerRuntimeController.toSubtitleConfiguration(subtitle: Subtitle)
         .build()
 }
 
-internal fun PlayerRuntimeController.selectAddonSubtitle(subtitle: Subtitle) {
+internal fun PlayerRuntimeController.activateAddonSubtitle(
+    subtitle: Subtitle,
+    candidateScope: com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope?,
+    forceReload: Boolean = false,
+) {
+    if (forceReload) {
+        com.nuvio.tv.ui.screens.player.autosync.AutomaticSubtitleSync.invalidateCachedSubtitle(
+            sourceKey = currentStreamUrl,
+            subtitleUrl = subtitle.url,
+            headers = subtitle.headers.orEmpty(),
+        )
+    }
+    selectAddonSubtitle(
+        subtitle = subtitle,
+        forceReload = forceReload,
+        deferExoSidecarToAutoSync = candidateScope != null,
+    )
+    if (hasBurnedInServerSubtitle) clearServerSubtitle()
+    val autoSyncStartedExoSidecar = if (candidateScope != null) {
+        maybeRunAutomaticSubtitleSync(
+            selectedSubtitle = subtitle,
+            candidateScope = candidateScope,
+            bypassHttpCache = forceReload,
+        )
+    } else {
+        false
+    }
+    if (
+        !autoSyncStartedExoSidecar &&
+        !isUsingMpvEngine() &&
+        canAttachAddonSubtitleViaSidecar(subtitle) &&
+        _uiState.value.selectedAddonSubtitle?.url == subtitle.url &&
+        activeSidecarSubtitleKey != subtitle.url
+    ) {
+        startSidecarAddonSubtitle(subtitle, bypassHttpCache = forceReload)
+    }
+}
+
+internal fun PlayerRuntimeController.selectAddonSubtitle(
+    subtitle: Subtitle,
+    forceReload: Boolean = false,
+    deferExoSidecarToAutoSync: Boolean = false,
+) {
     // Any actual selection supersedes a parked auto-restore.
     deferredAutoAddonSubtitle = null
     ttsEmbeddedCueBridge.selectInternalTrack(null)
     logSwitchTrace(
         stage = "select-addon-subtitle",
-        message = "usingMpv=${isUsingMpvEngine()} addonId=${subtitle.id} addonLang=${subtitle.lang} addonName=${subtitle.addonName}"
+        message = "usingMpv=${isUsingMpvEngine()} addonId=${subtitle.id} addonLang=${subtitle.lang} addonName=${subtitle.addonName} reload=$forceReload"
     )
     if (isUsingMpvEngine()) {
         val currentlySelected = _uiState.value.selectedAddonSubtitle
         if (
+            !forceReload &&
             currentlySelected?.id == subtitle.id &&
             currentlySelected.url == subtitle.url &&
             isMpvAddonSubtitleTrackActive(subtitle)
         ) {
             return
         }
-        Log.d(PlayerRuntimeController.TAG, "Selecting ADDON subtitle lang=${subtitle.lang} id=${subtitle.id} (mpv)")
+        Log.d(PlayerRuntimeController.TAG, "Selecting ADDON subtitle lang=${subtitle.lang} id=${subtitle.id} (mpv, reload=$forceReload)")
         val wasPlaying = isPlaybackCurrentlyPlaying()
         val normalizedLang = PlayerSubtitleUtils.normalizeLanguageCode(subtitle.lang)
         val trackTitle = buildAddonSubtitleTrackId(subtitle)
         AutoSyncSyncedSubtitle.clear() // AutoSync hook
+        mpvAddonSubtitleSelectionJob?.cancel()
+        pendingMpvAddonSubtitleBody?.second?.complete(null)
+        val bodyDeferred = kotlinx.coroutines.CompletableDeferred<String?>()
+        pendingMpvAddonSubtitleBody = subtitle.url to bodyDeferred
         mpvAddonSubtitleSelectionJob = scope.launch {
-            val localPath = try {
-                val decodedBody = downloadSubtitleBody(subtitle.url, subtitle.lang, subtitle.headers)
-                val sanitized = SubtitleMojibakeSanitizer.sanitize(decodedBody).toString()
-                val cacheDir = java.io.File(context.cacheDir, "subtitles").also { it.mkdirs() }
-                val ext = if (subtitle.url.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
-                val file = java.io.File(cacheDir, "mpv_${subtitle.id.hashCode()}.$ext")
-                file.writeText(sanitized, Charsets.UTF_8)
-                file.absolutePath
-            } catch (e: Exception) {
-                Log.w(PlayerRuntimeController.TAG, "Failed to cache normalized subtitle for MPV, falling back to URL", e)
-                subtitle.url
-            }
+            try {
+                val localPath = try {
+                    val decodedBody = downloadSubtitleBody(
+                        subtitle.url,
+                        subtitle.lang,
+                        subtitle.headers,
+                        bypassHttpCache = forceReload
+                    )
+                    bodyDeferred.complete(decodedBody)
+                    val sanitized = SubtitleMojibakeSanitizer.sanitize(decodedBody).toString()
+                    val cacheDir = java.io.File(context.cacheDir, "subtitles").also { it.mkdirs() }
+                    val ext = if (subtitle.url.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
+                    val idHash = Integer.toHexString(subtitle.id.hashCode())
+                    val contentHash = Integer.toHexString(sanitized.hashCode())
+                    val prefix = "mpv_${idHash}_"
+                    cacheDir.listFiles { candidate ->
+                        (candidate.name.startsWith(prefix) || candidate.name == "mpv_${subtitle.id.hashCode()}.$ext") &&
+                            candidate.name != "$prefix$contentHash.$ext"
+                    }?.forEach { it.delete() }
+                    val file = java.io.File(cacheDir, "$prefix$contentHash.$ext")
+                    file.writeText(sanitized, Charsets.UTF_8)
+                    file.absolutePath
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    bodyDeferred.complete(null)
+                    Log.w(PlayerRuntimeController.TAG, "Failed to cache normalized subtitle for MPV, falling back to URL", e)
+                    subtitle.url
+                }
 
-            val added = mpvView?.addAndSelectExternalSubtitle(
-                url = localPath,
-                title = trackTitle,
-                language = normalizedLang
-            ) == true
-            if (!added) return@launch
+                val added = mpvView?.addAndSelectExternalSubtitle(
+                    url = localPath,
+                    title = trackTitle,
+                    language = normalizedLang,
+                    replaceExistingWithSameTitle = forceReload || AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(subtitle.url)
+                ) == true
+                if (!added) return@launch
 
-            pendingAddonSubtitleLanguage = null
-            pendingAddonSubtitleTrackId = null
-            pendingAudioSelectionAfterSubtitleRefresh = null
-            _uiState.update {
-                it.copy(
-                    selectedAddonSubtitle = subtitle,
-                    selectedSubtitleTrackIndex = -1
-                )
+                pendingAddonSubtitleLanguage = null
+                pendingAddonSubtitleTrackId = null
+                pendingAudioSelectionAfterSubtitleRefresh = null
+                _uiState.update {
+                    it.copy(
+                        selectedAddonSubtitle = subtitle,
+                        selectedSubtitleTrackIndex = -1
+                    )
+                }
+                updateMpvAvailableTracks()
+                keepMpvPlayingIfNeeded(wasPlaying)
+            } finally {
+                bodyDeferred.complete(null)
             }
-            updateMpvAvailableTracks()
-            keepMpvPlayingIfNeeded(wasPlaying)
         }
         return
     }
 
     _exoPlayer?.let { player ->
         val currentlySelected = _uiState.value.selectedAddonSubtitle
-        if (currentlySelected?.id == subtitle.id && currentlySelected.url == subtitle.url) {
+        if (!forceReload && currentlySelected?.id == subtitle.id && currentlySelected.url == subtitle.url) {
             // Re-assert sidecar paint if the same track is already selected via hot path.
             if (isSidecarAddonSubtitleActive()) {
                 lastSidecarCueSignature = null
@@ -626,7 +702,7 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(subtitle: Subtitle) {
         Log.d(
             PlayerRuntimeController.TAG,
             "Selecting ADDON subtitle addon=${subtitle.addonName} lang=${subtitle.lang} normalizedLang=$normalizedLang " +
-                "id=${subtitle.id} inferredMime=$inferredMime " +
+                "id=${subtitle.id} inferredMime=$inferredMime reload=$forceReload " +
                 "url=${subtitle.url.redactedUrlForLog()}"
         )
 
@@ -649,7 +725,9 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(subtitle: Subtitle) {
                     selectedSubtitleTrackIndex = -1
                 )
             }
-            startSidecarAddonSubtitle(subtitle)
+            if (!deferExoSidecarToAutoSync) {
+                startSidecarAddonSubtitle(subtitle, bypassHttpCache = forceReload)
+            }
             return@let
         }
 
@@ -788,7 +866,6 @@ internal fun PlayerRuntimeController.rememberAddonSubtitleSelection(subtitle: Su
         basePreference
             .copy(subtitle = rememberedSelection)
     persistTrackPreference()
-    rememberSubtitleLanguagePreference(PlayerSubtitleUtils.normalizeLanguageCode(subtitle.lang))
 }
 
 internal fun PlayerRuntimeController.currentTrackPreferenceForPersistence(): PlayerRuntimeController.TrackPreference {

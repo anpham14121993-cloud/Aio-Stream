@@ -225,13 +225,14 @@ private fun PlayerRuntimeController.maybeLoadSubtitleAutoSyncCues(force: Boolean
 internal suspend fun PlayerRuntimeController.downloadSubtitleBody(
     url: String,
     languageHint: String? = null,
-    headers: Map<String, String>? = null
+    headers: Map<String, String>? = null,
+    bypassHttpCache: Boolean = false
 ): String =
     withContext(Dispatchers.IO) {
         var lastError: Exception? = null
         repeat(SUBTITLE_DOWNLOAD_MAX_ATTEMPTS) { attempt ->
             try {
-                return@withContext executeSubtitleDownload(url, languageHint, headers)
+                return@withContext executeSubtitleDownload(url, languageHint, headers, bypassHttpCache)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -342,7 +343,8 @@ internal fun buildSubtitleRequest(
     subtitleUrl: HttpUrl,
     streamUrl: HttpUrl?,
     streamHeaders: Map<String, String>,
-    explicitHeaders: Map<String, String>?
+    explicitHeaders: Map<String, String>?,
+    bypassHttpCache: Boolean = false
 ): Request {
     val requestBuilder = Request.Builder().url(subtitleUrl)
 
@@ -354,6 +356,10 @@ internal fun buildSubtitleRequest(
         if (key.lowercase() !in SUBTITLE_REQUEST_EXCLUDED_HEADERS) {
             requestBuilder.header(key, value)
         }
+    }
+
+    if (bypassHttpCache || AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(subtitleUrl.toString())) {
+        requestBuilder.header("Cache-Control", "no-cache, no-store")
     }
 
     // A stream User-Agent is always allowed through, so this only fills the gap.
@@ -413,7 +419,8 @@ internal fun executeSubtitleRequest(
 private fun PlayerRuntimeController.executeSubtitleDownload(
     url: String,
     languageHint: String? = null,
-    customHeaders: Map<String, String>? = null
+    customHeaders: Map<String, String>? = null,
+    bypassHttpCache: Boolean = false
 ): String {
     val explicitHeaders = customHeaders
         ?: streamSubtitles.firstOrNull { it.url == url }?.headers
@@ -423,7 +430,8 @@ private fun PlayerRuntimeController.executeSubtitleDownload(
         subtitleUrl = url.toHttpUrl(),
         streamUrl = currentStreamUrl.toHttpUrlOrNull(),
         streamHeaders = currentHeaders,
-        explicitHeaders = explicitHeaders
+        explicitHeaders = explicitHeaders,
+        bypassHttpCache = bypassHttpCache
     )
 
     val response = executeSubtitleRequest(request)

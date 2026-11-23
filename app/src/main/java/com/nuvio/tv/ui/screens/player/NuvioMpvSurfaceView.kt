@@ -919,27 +919,51 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     fun addAndSelectExternalSubtitle(
         url: String,
         title: String? = null,
-        language: String? = null
+        language: String? = null,
+        replaceExistingWithSameTitle: Boolean = false
     ): Boolean {
         if (!initialized) return false
         if (url.isBlank()) return false
         return runCatching {
-            // "cached" avoids duplicate re-loads for the same external subtitle.
             val safeTitle = title?.takeIf { it.isNotBlank() }
             val safeLanguage = language?.takeIf { it.isNotBlank() }
+            if (replaceExistingWithSameTitle && safeTitle != null) {
+                removeExternalSubtitleTracksByTitle(safeTitle)
+                cachedTrackList = null
+            }
+            // "cached" avoids duplicate re-loads when the path didn't change; explicit reloads
+            // remove any prior external track with the same title and re-read via "select".
+            val addFlag = if (replaceExistingWithSameTitle) "select" else "cached"
             when {
                 safeTitle != null && safeLanguage != null ->
-                    mpv.command("sub-add", url, "cached", safeTitle, safeLanguage)
+                    mpv.command("sub-add", url, addFlag, safeTitle, safeLanguage)
                 safeTitle != null ->
-                    mpv.command("sub-add", url, "cached", safeTitle)
+                    mpv.command("sub-add", url, addFlag, safeTitle)
                 else ->
-                    mpv.command("sub-add", url, "cached")
+                    mpv.command("sub-add", url, addFlag)
             }
             mpv.setPropertyBoolean("sub-visibility", true)
             true
         }.getOrElse {
             Log.w(TAG, "Failed to add external subtitle: ${it.message}")
             false
+        }
+    }
+
+    private fun removeExternalSubtitleTracksByTitle(targetTitle: String) {
+        val count = mpv.getPropertyInt("track-list/count") ?: return
+        val matchingIds = mutableListOf<Int>()
+        for (i in 0 until count) {
+            val type = mpv.getPropertyString("track-list/$i/type") ?: continue
+            if (!type.equals("sub", ignoreCase = true)) continue
+            if (mpv.getPropertyBoolean("track-list/$i/external") != true) continue
+            val trackTitle = mpv.getPropertyString("track-list/$i/title")?.trim() ?: continue
+            if (trackTitle.equals(targetTitle, ignoreCase = true)) {
+                mpv.getPropertyInt("track-list/$i/id")?.let { matchingIds += it }
+            }
+        }
+        matchingIds.forEach { trackId ->
+            runCatching { mpv.command("sub-remove", trackId.toString()) }
         }
     }
 

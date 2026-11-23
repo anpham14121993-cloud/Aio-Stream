@@ -183,8 +183,6 @@ internal fun PlayerRuntimeController.fetchAddonSubtitles() {
                     ?: visibleSubtitles.firstOrNull { PlayerSubtitleUtils.matchesLanguageCode(it.lang, pendingAddon.lang) }
                 if (match != null) {
                     autoSelectAddonSubtitleDeferringReload(match)
-                    // After a player rebuild this reapplies the earlier result without analysing again.
-                    if (deferredAutoAddonSubtitle == null) runSelectedAutomaticSubtitleSync(match) // AutoSync hook
                     return@launch
                 }
             }
@@ -230,7 +228,10 @@ internal fun PlayerRuntimeController.autoSelectAddonSubtitleDeferringReload(subt
     )
     if (seamless) {
         autoSubtitleSelected = true
-        selectAddonSubtitle(subtitle)
+        activateAddonSubtitle(
+            subtitle = subtitle,
+            candidateScope = com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope.SELECTED_ONLY
+        )
         _uiState.update { it.copy(selectedAddonSubtitle = subtitle, selectedSubtitleTrackIndex = -1) }
         return
     }
@@ -249,9 +250,11 @@ internal fun PlayerRuntimeController.maybeAttachDeferredAddonSubtitle() {
         "attaching deferred addon subtitle at pause: id=${subtitle.id} lang=${subtitle.lang}"
     )
     autoSubtitleSelected = true
-    selectAddonSubtitle(subtitle)
+    activateAddonSubtitle(
+        subtitle = subtitle,
+        candidateScope = com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope.SELECTED_ONLY
+    )
     _uiState.update { it.copy(selectedAddonSubtitle = subtitle, selectedSubtitleTrackIndex = -1) }
-    runSelectedAutomaticSubtitleSync(subtitle)
 }
 
 private fun PlayerRuntimeController.publishStreamSidecarSubtitlesWithoutAddonFetch() {
@@ -283,6 +286,10 @@ internal fun PlayerRuntimeController.refreshSubtitlesForCurrentEpisode() {
     pendingAddonSubtitleTrackId = null
     pendingAudioSelectionAfterSubtitleRefresh = null
     resetSubtitleAutoSyncState()
+    mpvAddonSubtitleSelectionJob?.cancel()
+    mpvAddonSubtitleSelectionJob = null
+    pendingMpvAddonSubtitleBody?.second?.complete(null)
+    pendingMpvAddonSubtitleBody = null
     attachedAddonSubtitleKeys = emptySet()
     stopSidecarAddonSubtitle(clearView = true)
     _uiState.update {

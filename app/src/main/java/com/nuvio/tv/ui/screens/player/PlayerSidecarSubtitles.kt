@@ -118,6 +118,7 @@ internal fun PlayerRuntimeController.stopSidecarAddonSubtitle(clearView: Boolean
 internal fun PlayerRuntimeController.startSidecarAddonSubtitle(
     subtitle: Subtitle,
     rawBodyLoader: (suspend () -> String)? = null,
+    bypassHttpCache: Boolean = false,
 ): Boolean {
     if (!canAttachAddonSubtitleViaSidecar(subtitle)) return false
 
@@ -141,7 +142,12 @@ internal fun PlayerRuntimeController.startSidecarAddonSubtitle(
     sidecarSubtitleJob = scope.launch {
         try {
             val rawBody = rawBodyLoader?.invoke()
-                ?: downloadSubtitleBody(subtitle.url, subtitle.lang, subtitle.headers)
+                ?: downloadSubtitleBody(
+                    subtitle.url,
+                    subtitle.lang,
+                    subtitle.headers,
+                    bypassHttpCache = bypassHttpCache
+                )
             if (!isCurrent()) return@launch
 
             val resolvedMime = PlayerSubtitleUtils.sniffSubtitleMimeType(rawBody, subtitle.url)

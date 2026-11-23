@@ -167,4 +167,43 @@ class PlayerSubtitleStylingTest {
         verify(atLeast = 36) { subtitles.setFixedTextSize(any(), 36f) }
         verify(exactly = 0) { subtitles.setFixedTextSize(any(), neq(36f)) }
     }
+
+    @Test
+    fun `negative vertical offset decreases continuously past -15 down to -20`() {
+        val fractions = (-20..50).reversed().map { offset ->
+            exoSubtitleBottomPaddingFraction(
+                verticalOffset = offset,
+                viewHeight = 1080,
+                fontBottomPx = 13f
+            )
+        }
+        // Strictly decreasing as verticalOffset lowers across the full -20..50 range.
+        for (i in 0 until fractions.lastIndex) {
+            assertTrue(
+                "Expected step $i (${fractions[i]}) > step ${i + 1} (${fractions[i + 1]})",
+                fractions[i] > fractions[i + 1]
+            )
+        }
+        val atDefault = exoSubtitleBottomPaddingFraction(5, viewHeight = 1080, fontBottomPx = 13f)
+        val atMinus15 = exoSubtitleBottomPaddingFraction(-15, viewHeight = 1080, fontBottomPx = 13f)
+        val atMinus20 = exoSubtitleBottomPaddingFraction(-20, viewHeight = 1080, fontBottomPx = 13f)
+        assertEquals(0.08f, atDefault, 0.0001f)
+        assertTrue(atMinus15 > atMinus20)
+        assertEquals(-13f / 1080f, atMinus20, 0.0001f)
+    }
+
+    @Test
+    fun `applySubtitleStyleIfNeeded lowers subtitle fraction at -20 further than at -15`() {
+        select(MimeTypes.APPLICATION_SUBRIP)
+        val bottomFractions = mutableListOf<Float>()
+        every { subtitles.setBottomPaddingFraction(capture(bottomFractions)) } just Runs
+
+        view.applySubtitleStyleIfNeeded(custom.copy(verticalOffset = -15))
+        view.applySubtitleStyleIfNeeded(custom.copy(verticalOffset = -20))
+
+        assertEquals(2, bottomFractions.size)
+        assertTrue(bottomFractions[1] < bottomFractions[0])
+        assertTrue(bottomFractions[1] < 0f)
+        verify(exactly = 2) { subtitles.setPadding(4, 8, 12, 0) }
+    }
 }

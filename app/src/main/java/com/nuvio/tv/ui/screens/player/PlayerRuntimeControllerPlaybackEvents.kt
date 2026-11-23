@@ -2310,9 +2310,11 @@ fun PlayerRuntimeController.onEvent(
             )
             autoSubtitleSelected = true
             rememberAddonSubtitleSelection(event.subtitle)
-            selectAddonSubtitle(event.subtitle)
-            if (hasBurnedInServerSubtitle) clearServerSubtitle()
-            runSelectedAutomaticSubtitleSync(event.subtitle) // AutoSync hook
+            activateAddonSubtitle(
+                subtitle = event.subtitle,
+                candidateScope = com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope.SELECTED_ONLY,
+                forceReload = true
+            )
             _uiState.update {
                 it.copy(
                     showSubtitleOverlay = event.openPanel || it.showSubtitleOverlay,

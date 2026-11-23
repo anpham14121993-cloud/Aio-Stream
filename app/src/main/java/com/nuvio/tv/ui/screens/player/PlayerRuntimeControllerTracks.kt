@@ -1176,8 +1176,10 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                             isUserExplicitSubtitleSelection = true
                             subtitleAddonRestoredByPersistedPreference = true
                             pendingRestoredAddonSubtitle = addonFallback
-                            selectAddonSubtitle(addonFallback)
-                            maybeRunAutomaticSubtitleSync(addonFallback) // AutoSync hook
+                            activateAddonSubtitle(
+                                subtitle = addonFallback,
+                                candidateScope = com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope.STARTUP_SEARCH
+                            )
                             updatedAddonSubtitle = addonFallback
                             updatedPending = updatedPending.copy(subtitle = null)
                         } else {
@@ -1214,13 +1216,10 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                 isUserExplicitSubtitleSelection = true
                 subtitleAddonRestoredByPersistedPreference = true
                 pendingRestoredAddonSubtitle = addonMatch
-                selectAddonSubtitle(addonMatch)
-                // The user's own pick for this series: try it first and keep it if it fits;
-                // only when it does not, look for another same-language subtitle that does.
-                maybeRunAutomaticSubtitleSync(
-                    addonMatch,
-                    com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope.SELECTED_THEN_SEARCH
-                ) // AutoSync hook
+                activateAddonSubtitle(
+                    subtitle = addonMatch,
+                    candidateScope = com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope.SELECTED_THEN_SEARCH
+                )
                 updatedAddonSubtitle = addonMatch
                 val shouldKeepPendingUntilMpvConfirmsSelection =
                     usingSwitchPending && isUsingMpvEngine()
@@ -1820,8 +1819,10 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
                     PlayerRuntimeController.TAG,
                     "AUTO_SUB pick addon (primary) over internal (secondary): addon lang=${primaryAddonMatch.lang} vs internal variant=$trackVariant"
                 )
-                selectAddonSubtitle(primaryAddonMatch)
-                maybeRunAutomaticSubtitleSync(primaryAddonMatch) // AutoSync hook
+                activateAddonSubtitle(
+                    subtitle = primaryAddonMatch,
+                    candidateScope = com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope.STARTUP_SEARCH
+                )
                 return
             }
         }
@@ -1832,8 +1833,10 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
             if (addonFirst != null) {
                 autoSubtitleSelected = true
                 Log.d(PlayerRuntimeController.TAG, "AUTO_SUB pick addon first: lang=${addonFirst.lang} over internal variant=$trackVariant")
-                selectAddonSubtitle(addonFirst)
-                maybeRunAutomaticSubtitleSync(addonFirst) // AutoSync hook
+                activateAddonSubtitle(
+                    subtitle = addonFirst,
+                    candidateScope = com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope.STARTUP_SEARCH
+                )
                 return
             }
         }
@@ -1944,8 +1947,10 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
     if (addonMatch != null) {
         autoSubtitleSelected = true
         Log.d(PlayerRuntimeController.TAG, "AUTO_SUB pick addon lang=${addonMatch.lang} id=${addonMatch.id}")
-        selectAddonSubtitle(addonMatch)
-        maybeRunAutomaticSubtitleSync(addonMatch) // AutoSync hook
+        activateAddonSubtitle(
+            subtitle = addonMatch,
+            candidateScope = com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope.STARTUP_SEARCH
+        )
     } else {
         Log.d(PlayerRuntimeController.TAG, "AUTO_SUB no addon match for targets=$targets")
     }
