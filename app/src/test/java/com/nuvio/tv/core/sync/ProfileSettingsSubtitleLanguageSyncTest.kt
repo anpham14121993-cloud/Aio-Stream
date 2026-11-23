@@ -1,8 +1,6 @@
 package com.nuvio.tv.core.sync
 
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
 import com.nuvio.tv.TestPreferencesStore
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.profile.ProfileManager
@@ -66,7 +64,7 @@ class ProfileSettingsSubtitleLanguageSyncTest {
         harness.player.setSubtitleSecondaryLanguage("es")
         harness.player.setSubtitleTertiaryLanguage("en")
         harness.player.setAddonSubtitlesEnabled(false)
-        harness.player.setSubtitlePreferAddon(true)
+        harness.player.setPreferAddonSubtitles(true)
         harness.player.setSubtitleStripSdh(true)
         harness.player.setSubtitleOrganizationMode(SubtitleOrganizationMode.BY_LANGUAGE)
         harness.service.pushCurrentProfileToRemote().getOrThrow()
