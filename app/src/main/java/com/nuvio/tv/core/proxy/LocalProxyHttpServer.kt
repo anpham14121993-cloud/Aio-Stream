@@ -358,7 +358,7 @@ class LocalProxyHttpServer(
             val json = "{\"ok\":true,\"port\":$port}"
             return sendBytes(output, 200, "OK", "application/json; charset=utf-8", json.toByteArray(StandardCharsets.UTF_8), isHead, wantKeepAlive)
         }
-        val addonId = LocalJsAddonHandler.extractAddonIdFromPath(cleanPath)
+        val addonId = LocalJsAddonHandler.extractAddonIdFromBaseUrl(cleanPath)
         if (addonId != null) {
             val reply = localJsAddonHandler?.handleRequest(addonId, req.rawTarget, cleanPath)
                 ?: AddonHttpReply(404, """{"error":"Local JS addon handler not configured"}""".toByteArray(StandardCharsets.UTF_8))
