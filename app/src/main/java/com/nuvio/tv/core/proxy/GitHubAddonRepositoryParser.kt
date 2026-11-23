@@ -157,6 +157,34 @@ object GitHubAddonRepositoryParser {
         )
     }
 
+    fun compareVersions(remoteVersion: String, installedVersion: String): Int {
+        val a = parseVersionParts(remoteVersion)
+        val b = parseVersionParts(installedVersion)
+        val len = maxOf(a.size, b.size)
+        for (i in 0 until len) {
+            val av = a.getOrElse(i) { 0L }
+            val bv = b.getOrElse(i) { 0L }
+            if (av != bv) return av.compareTo(bv)
+        }
+        return normalizeVersionTag(remoteVersion).compareTo(normalizeVersionTag(installedVersion))
+    }
+
+    fun isNewerVersion(remoteVersion: String, installedVersion: String): Boolean {
+        val cleanRemote = remoteVersion.trim()
+        val cleanInstalled = installedVersion.trim()
+        if (cleanRemote.isEmpty() || cleanRemote == cleanInstalled) return false
+        return compareVersions(cleanRemote, cleanInstalled) > 0
+    }
+
+    private fun parseVersionParts(raw: String): List<Long> =
+        normalizeVersionTag(raw)
+            .split('.', '-', '_')
+            .takeWhile { seg -> seg.isNotEmpty() && seg.all(Char::isDigit) }
+            .mapNotNull { it.toLongOrNull() }
+
+    private fun normalizeVersionTag(raw: String): String =
+        raw.trim().removePrefix("v").removePrefix("V")
+
     private fun JsonObject.str(key: String): String? =
         get(key)?.takeIf(JsonElement::isJsonPrimitive)?.asString?.trim()
 }

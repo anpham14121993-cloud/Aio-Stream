@@ -601,7 +601,7 @@ fun AddonManagerScreen(
             if (!viewModel.isReadOnly) {
                 item {
                     GitHubAddonStoreEntryCard(
-                        installedCount = uiState.installedLocalJsIds.size,
+                        installedVersions = uiState.installedLocalJsVersions,
                         onClick = { viewModel.openGitHubStore() }
                     )
                 }
@@ -1089,11 +1089,15 @@ private fun CollectionsEntryCard(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun GitHubAddonStoreEntryCard(
-    installedCount: Int,
+    installedVersions: Map<String, String>,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val installedCount = installedVersions.size
+    val versionSummary = remember(installedVersions) {
+        installedVersions.values.joinToString(", ") { "v$it" }
+    }
 
     Surface(
         onClick = onClick,
@@ -1146,7 +1150,11 @@ private fun GitHubAddonStoreEntryCard(
                         color = NuvioTheme.colors.TextPrimary
                     )
                     Text(
-                        text = stringResource(R.string.addon_github_store_subtitle),
+                        text = if (installedCount > 0) {
+                            stringResource(R.string.addon_github_store_subtitle_installed, installedCount, versionSummary)
+                        } else {
+                            stringResource(R.string.addon_github_store_subtitle)
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = NuvioTheme.colors.TextSecondary
                     )
@@ -1347,10 +1355,93 @@ private fun GitHubAddonStoreDialog(
                         items = uiState.githubEntries,
                         key = { _, entry -> entry.id }
                     ) { _, entry ->
+                        val isCompactPhone = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600
                         val isInstalled = uiState.installedLocalJsIds.contains(entry.id)
                         val installedVer = uiState.installedLocalJsVersions[entry.id] ?: entry.version
+                        val hasRemoteUpdate = isInstalled &&
+                            com.nuvio.tv.core.proxy.GitHubAddonRepositoryParser.isNewerVersion(entry.version, installedVer)
                         val isBusyThis = uiState.installingGitHubAddonId == entry.id
                         val isAnyBusy = uiState.installingGitHubAddonId != null
+
+                        val renderEntryInfo: @Composable (Modifier) -> Unit = { infoModifier ->
+                            Column(modifier = infoModifier) {
+                                Text(
+                                    text = entry.name,
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = NuvioTheme.colors.TextPrimary
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = when {
+                                        hasRemoteUpdate -> stringResource(
+                                            R.string.addon_github_update_available_badge,
+                                            installedVer,
+                                            entry.version
+                                        )
+                                        isInstalled -> stringResource(
+                                            R.string.addon_github_installed_badge,
+                                            installedVer
+                                        )
+                                        else -> stringResource(
+                                            R.string.addon_github_version_only,
+                                            entry.version
+                                        )
+                                    },
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = when {
+                                        hasRemoteUpdate -> NuvioTheme.colors.Warning
+                                        isInstalled -> NuvioTheme.colors.Success
+                                        else -> NuvioTheme.colors.Secondary
+                                    }
+                                )
+                                if (entry.description.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = entry.description,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = NuvioTheme.colors.TextSecondary
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = entry.types.joinToString(", "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = NuvioTheme.colors.TextTertiary
+                                )
+                            }
+                        }
+
+                        val renderEntryActions: @Composable () -> Unit = {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isBusyThis) {
+                                    LoadingIndicator(modifier = Modifier.size(24.dp))
+                                } else {
+                                    Button(
+                                        onClick = { onInstallOrUpdate(entry) },
+                                        enabled = !isAnyBusy
+                                    ) {
+                                        Text(
+                                            text = if (isInstalled) {
+                                                stringResource(R.string.addon_github_update_btn)
+                                            } else {
+                                                stringResource(R.string.addon_github_install_btn)
+                                            }
+                                        )
+                                    }
+                                    if (isInstalled) {
+                                        Button(
+                                            onClick = { onRemoveAddon(entry.id, entry.name) },
+                                            enabled = !isAnyBusy
+                                        ) {
+                                            Text(text = stringResource(R.string.addon_remove))
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         Card(
                             modifier = Modifier.fillMaxWidth(),
@@ -1359,79 +1450,27 @@ private fun GitHubAddonStoreDialog(
                             ),
                             shape = settingsItemShape(14.dp)
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = entry.name,
-                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                            color = NuvioTheme.colors.TextPrimary
-                                        )
-                                        Text(
-                                            text = if (isInstalled) {
-                                                stringResource(R.string.addon_github_installed_badge, installedVer)
-                                            } else {
-                                                "v${entry.version}"
-                                            },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (isInstalled) NuvioTheme.colors.Success else NuvioTheme.colors.TextTertiary
-                                        )
-                                    }
-                                    if (entry.description.isNotBlank()) {
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = entry.description,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = NuvioTheme.colors.TextSecondary
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = entry.types.joinToString(", "),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = NuvioTheme.colors.TextTertiary
-                                    )
+                            if (isCompactPhone) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
+                                ) {
+                                    renderEntryInfo(Modifier.fillMaxWidth())
+                                    renderEntryActions()
                                 }
-
-                                Spacer(modifier = Modifier.width(NuvioTheme.spacing.md))
-
+                            } else {
                                 Row(
-                                    horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xs),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (isBusyThis) {
-                                        LoadingIndicator(modifier = Modifier.size(24.dp))
-                                    } else {
-                                        Button(
-                                            onClick = { onInstallOrUpdate(entry) },
-                                            enabled = !isAnyBusy
-                                        ) {
-                                            Text(
-                                                text = if (isInstalled) {
-                                                    stringResource(R.string.addon_github_update_btn)
-                                                } else {
-                                                    stringResource(R.string.addon_github_install_btn)
-                                                }
-                                            )
-                                        }
-                                        if (isInstalled) {
-                                            Button(
-                                                onClick = { onRemoveAddon(entry.id, entry.name) },
-                                                enabled = !isAnyBusy
-                                            ) {
-                                                Text(text = stringResource(R.string.addon_remove))
-                                            }
-                                        }
-                                    }
+                                    renderEntryInfo(Modifier.weight(1f))
+                                    Spacer(modifier = Modifier.width(NuvioTheme.spacing.md))
+                                    renderEntryActions()
                                 }
                             }
                         }

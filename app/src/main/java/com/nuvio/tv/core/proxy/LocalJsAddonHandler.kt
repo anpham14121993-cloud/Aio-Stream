@@ -165,6 +165,75 @@ class LocalJsAddonHandler(
         )
     }
 
+    /**
+     * Checks already-fetched GitHub catalog [entries] against installed local JS addons and
+     * automatically downloads & replaces any addon whose remote version is newer.
+     */
+    suspend fun autoUpdateMatchingEntries(
+        entries: List<GitHubAddonRepoEntry>
+    ): List<InstalledLocalJsAddon> = withContext(Dispatchers.IO) {
+        if (entries.isEmpty()) return@withContext emptyList()
+        val installedById = store.listInstalled().associateBy { it.id }
+        if (installedById.isEmpty()) return@withContext emptyList()
+
+        val updated = ArrayList<InstalledLocalJsAddon>()
+        for (entry in entries) {
+            val current = installedById[entry.id] ?: continue
+            if (GitHubAddonRepositoryParser.isNewerVersion(entry.version, current.version)) {
+                downloadAndInstallAddon(entry).getOrNull()?.let { updated.add(it) }
+            }
+        }
+        updated
+    }
+
+    /**
+     * Queries each installed local JS addon's source GitHub repository (or standalone `.js` URL)
+     * and automatically downloads & installs newer versions in the background.
+     */
+    suspend fun autoUpdateInstalledAddons(): List<InstalledLocalJsAddon> = withContext(Dispatchers.IO) {
+        val installed = store.listInstalled()
+        if (installed.isEmpty()) return@withContext emptyList()
+
+        val updated = ArrayList<InstalledLocalJsAddon>()
+        val groupedByRepo = installed.groupBy { it.repoUrl.trim().ifBlank { it.scriptUrl } }
+        for ((repoSource, group) in groupedByRepo) {
+            if (repoSource.isBlank()) continue
+            val catalog = fetchRepoCatalog(repoSource).getOrNull()
+            if (catalog != null && catalog.entries.isNotEmpty()) {
+                val entryById = catalog.entries.associateBy { it.id }
+                for (local in group) {
+                    val remoteEntry = entryById[local.id] ?: continue
+                    if (GitHubAddonRepositoryParser.isNewerVersion(remoteEntry.version, local.version)) {
+                        downloadAndInstallAddon(remoteEntry).getOrNull()?.let { updated.add(it) }
+                    }
+                }
+            } else {
+                for (local in group) {
+                    if (local.scriptUrl.isBlank()) continue
+                    val probeResult = fetchFreshText(local.scriptUrl).getOrNull() ?: continue
+                    val manifestObj = runCatching {
+                        val raw = evaluateScriptManifest(probeResult.second, fallbackId = local.id)
+                        JsonParser.parseString(raw).asJsonObject
+                    }.getOrNull() ?: continue
+                    val remoteVer = manifestObj.str("version").orEmpty()
+                    if (GitHubAddonRepositoryParser.isNewerVersion(remoteVer, local.version)) {
+                        val entry = GitHubAddonRepoEntry(
+                            id = local.id,
+                            name = manifestObj.str("name") ?: local.name,
+                            version = remoteVer,
+                            description = manifestObj.str("description") ?: local.description,
+                            types = listOf("movie", "series"),
+                            scriptUrl = local.scriptUrl,
+                            repoUrl = local.repoUrl
+                        )
+                        downloadAndInstallAddon(entry).getOrNull()?.let { updated.add(it) }
+                    }
+                }
+            }
+        }
+        updated
+    }
+
     fun handleRequest(addonId: String, rawTarget: String, cleanPath: String): AddonHttpReply {
         val stored = store.get(addonId)
             ?: return jsonReply(
@@ -334,8 +403,9 @@ class LocalJsAddonHandler(
     )
 
     private fun fetchFreshText(url: String): Result<Pair<String, String>> = runCatching {
+        val wireUrl = withGitHubCacheBuster(url)
         val req = Request.Builder()
-            .url(url)
+            .url(wireUrl)
             .cacheControl(CacheControl.FORCE_NETWORK)
             .header("Cache-Control", "no-cache")
             .header("Pragma", "no-cache")
@@ -344,14 +414,31 @@ class LocalJsAddonHandler(
             .build()
         outboundClient().newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
-                error("HTTP ${resp.code} từ ${resp.request.url}")
+                error("HTTP ${resp.code} từ ${stripCacheBuster(resp.request.url.toString())}")
             }
             val body = resp.body?.string().orEmpty()
             if (body.isBlank()) {
-                error("Phản hồi rỗng từ ${resp.request.url}")
+                error("Phản hồi rỗng từ ${stripCacheBuster(resp.request.url.toString())}")
             }
-            resp.request.url.toString() to body
+            stripCacheBuster(resp.request.url.toString()) to body
         }
+    }
+
+    private fun withGitHubCacheBuster(url: String): String {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return url
+        val host = uri.host?.lowercase().orEmpty()
+        if (host != "raw.githubusercontent.com") return url
+        val sep = if (uri.rawQuery.isNullOrBlank()) "?" else "&"
+        return "$url${sep}_ts=${System.currentTimeMillis()}"
+    }
+
+    private fun stripCacheBuster(url: String): String {
+        if (!url.contains("_ts=")) return url
+        return url
+            .replace(Regex("""([?&])_ts=\d+&?""")) { m ->
+                if (m.groupValues[1] == "?" && m.value.endsWith("&")) "?" else if (m.value.endsWith("&")) "&" else ""
+            }
+            .trimEnd('?', '&')
     }
 
     private fun parseExtraArgs(extraSegments: List<String>, rawTarget: String): Map<String, String> {

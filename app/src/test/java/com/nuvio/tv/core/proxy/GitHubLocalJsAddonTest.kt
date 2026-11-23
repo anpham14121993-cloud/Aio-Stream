@@ -72,6 +72,87 @@ class GitHubLocalJsAddonTest {
                 "addons/fiml4k.js"
             )
         )
+        assertTrue(GitHubAddonRepositoryParser.isNewerVersion("1.0.4", "1.0.3"))
+        assertTrue(GitHubAddonRepositoryParser.isNewerVersion("1.0.10", "1.0.9"))
+        assertTrue(GitHubAddonRepositoryParser.isNewerVersion("v2.0.0", "1.9.9"))
+        assertFalse(GitHubAddonRepositoryParser.isNewerVersion("1.0.3", "1.0.3"))
+        assertFalse(GitHubAddonRepositoryParser.isNewerVersion("1.0.2", "1.0.3"))
+    }
+
+    @Test
+    fun autoUpdatesInstalledAddonsOnlyWhenRemoteVersionIsNewer() = runBlocking {
+        val repoVersion = AtomicInteger(3)
+        val scriptVersion = AtomicInteger(3)
+        val scriptFetches = AtomicInteger(0)
+
+        githubMock.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                return when (request.path) {
+                    "/repo.json" -> MockResponse()
+                        .setResponseCode(200)
+                        .setBody(
+                            """
+                            {
+                              "id": "nothingp-github-addons",
+                              "name": "Nothing-P Repo",
+                              "addons": [
+                                {
+                                  "id": "community.fiml4k.local",
+                                  "name": "Nothing-P • Fiml4K",
+                                  "version": "1.0.${repoVersion.get()}",
+                                  "description": "Phim 4K Vietsub",
+                                  "types": ["movie", "series"],
+                                  "entry": "addons/fiml4k.js"
+                                }
+                              ]
+                            }
+                            """.trimIndent()
+                        )
+                    "/addons/fiml4k.js" -> {
+                        scriptFetches.incrementAndGet()
+                        MockResponse()
+                            .setResponseCode(200)
+                            .setBody("// version=${scriptVersion.get()}")
+                    }
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+
+        val runner = JsAddonScriptRunner { scriptCode, action, _, _ ->
+            val v = Regex("""// version=(\d+)""").find(scriptCode)?.groupValues?.get(1) ?: "3"
+            when (action) {
+                "manifest" -> """{"id":"community.fiml4k.local","name":"Nothing-P • Fiml4K","version":"1.0.$v","resources":["catalog","meta","stream"],"types":["movie","series"]}"""
+                else -> "{}"
+            }
+        }
+
+        val handler = LocalJsAddonHandler(
+            store = store,
+            httpClientProvider = { client },
+            scriptRunner = runner
+        )
+        val catalog = handler.fetchRepoCatalog(githubMock.url("/repo.json").toString()).getOrThrow()
+        handler.downloadAndInstallAddon(catalog.entries[0]).getOrThrow()
+        assertEquals(1, scriptFetches.get())
+
+        // Same version on repo -> no extra script download on autoUpdate.
+        assertTrue(handler.autoUpdateInstalledAddons().isEmpty())
+        assertEquals(1, scriptFetches.get())
+
+        // Lower version on repo -> never downgrades.
+        repoVersion.set(2)
+        assertTrue(handler.autoUpdateInstalledAddons().isEmpty())
+        assertEquals(1, scriptFetches.get())
+
+        // Bumped version on repo (1.0.3 -> 1.0.4) -> automatically downloads & upgrades stored version.
+        repoVersion.set(4)
+        scriptVersion.set(4)
+        val updated = handler.autoUpdateInstalledAddons()
+        assertEquals(1, updated.size)
+        assertEquals("1.0.4", updated[0].version)
+        assertEquals("1.0.4", store.get("community.fiml4k.local")?.meta?.version)
+        assertEquals(2, scriptFetches.get())
     }
 
     @Test

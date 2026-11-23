@@ -128,10 +128,19 @@ class AddonManagerViewModel @Inject constructor(
 
     fun requestAddonSyncNow() {
         startupSyncService.requestAddonSyncNow()
-        // Also force a manifest re-fetch of every installed addon (bypassing the
-        // in-memory cache), so an addon that dropped out because its manifest
-        // fetch failed reappears without needing a log-out / log-in.
-        viewModelScope.launch { addonRepository.refreshAllManifests() }
+        // Auto-check GitHub local JS addons for newer versions and refresh every installed manifest.
+        viewModelScope.launch {
+            val updated = runCatching { localJsAddonHandler.autoUpdateInstalledAddons() }
+                .getOrDefault(emptyList())
+            if (updated.isNotEmpty()) {
+                updated.forEach { addon ->
+                    addonRepository.fetchAddon(com.nuvio.tv.core.proxy.LocalJsAddonHandler.addonBaseUrl(addon.id))
+                }
+                syncInstalledLocalJsState()
+                notifyAutoUpdated(updated)
+            }
+            addonRepository.refreshAllManifests()
+        }
     }
 
     fun onInstallUrlChange(url: String) {
@@ -152,7 +161,7 @@ class AddonManagerViewModel @Inject constructor(
     fun openGitHubStore() {
         _uiState.update { it.copy(isGitHubStoreOpen = true, githubError = null) }
         syncInstalledLocalJsState()
-        if (uiState.value.githubEntries.isEmpty() && !uiState.value.isLoadingGitHubRepo) {
+        if (!uiState.value.isLoadingGitHubRepo) {
             loadGitHubRepo()
         }
     }
@@ -180,6 +189,19 @@ class AddonManagerViewModel @Inject constructor(
             }
             localJsAddonHandler.fetchRepoCatalog(repoUrl)
                 .onSuccess { catalog ->
+                    val autoUpdated = runCatching {
+                        localJsAddonHandler.autoUpdateMatchingEntries(catalog.entries)
+                    }.getOrDefault(emptyList())
+                    if (autoUpdated.isNotEmpty()) {
+                        autoUpdated.forEach { updatedAddon ->
+                            val url = com.nuvio.tv.core.proxy.LocalJsAddonHandler.addonBaseUrl(updatedAddon.id)
+                            if (addonRepository.fetchAddon(url) is NetworkResult.Success) {
+                                addonRepository.addAddon(url)
+                            }
+                        }
+                        syncInstalledLocalJsState()
+                        notifyAutoUpdated(autoUpdated)
+                    }
                     _uiState.update {
                         it.copy(
                             isLoadingGitHubRepo = false,
@@ -198,6 +220,21 @@ class AddonManagerViewModel @Inject constructor(
                         )
                     }
                 }
+        }
+    }
+
+    private fun notifyAutoUpdated(updated: List<com.nuvio.tv.core.proxy.InstalledLocalJsAddon>) {
+        val message = if (updated.size == 1) {
+            val first = updated.first()
+            context.getString(R.string.addon_github_auto_updated, first.name, first.version)
+        } else {
+            context.getString(R.string.addon_github_auto_update_multi, updated.size)
+        }
+        _uiState.update {
+            it.copy(
+                transientMessage = message,
+                transientMessageIsError = false
+            )
         }
     }
 

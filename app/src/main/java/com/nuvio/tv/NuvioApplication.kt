@@ -60,6 +60,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
     @Inject lateinit var reportStatusChecker: com.nuvio.tv.data.repository.ReportStatusChecker
     @Inject lateinit var screensaverController: com.nuvio.tv.core.player.ScreensaverController
     @Inject lateinit var localJsAddonHandler: com.nuvio.tv.core.proxy.LocalJsAddonHandler
+    @Inject lateinit var addonRepositoryLazy: dagger.Lazy<com.nuvio.tv.domain.repository.AddonRepository>
 
     companion object {
         private const val CACHE_TAG = "NuvioCache"
@@ -195,6 +196,15 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
                 com.nuvio.tv.core.proxy.LocalStreamProxy.shared.ensureStarted(
                     com.nuvio.tv.core.proxy.LocalJsAddonHandler.LOCAL_ADDON_DEFAULT_PORT
                 )
+            }
+            runCatching {
+                val updated = localJsAddonHandler.autoUpdateInstalledAddons()
+                if (updated.isNotEmpty()) {
+                    val repo = addonRepositoryLazy.get()
+                    updated.forEach { addon ->
+                        repo.fetchAddon(com.nuvio.tv.core.proxy.LocalJsAddonHandler.addonBaseUrl(addon.id))
+                    }
+                }
             }
         }
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
