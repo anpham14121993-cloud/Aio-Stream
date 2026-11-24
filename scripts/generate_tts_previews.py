@@ -117,9 +117,7 @@ def trim_and_write_wav(wav_path: Path, samples, sample_rate: int) -> None:
 
 
 def main() -> int:
-    import numpy as np
-    import onnxruntime as ort
-
+    check_only = "--check-only" in sys.argv[1:]
     repo_root = Path(__file__).resolve().parent.parent
     out_dir = repo_root / "app" / "src" / "main" / "assets" / "tts_samples"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -131,6 +129,12 @@ def main() -> int:
     if not missing:
         print(f"All {len(VOICES)} TTS voice preview samples already cached in {out_dir}")
         return 0
+    if check_only:
+        print(f"Missing {len(missing)} TTS voice preview samples: {', '.join(missing)}")
+        return 1
+
+    import numpy as np
+    import onnxruntime as ort
 
     ipa = espeak_ipa(SAMPLE_TEXT)
     print(f"Synthesizing {len(missing)} Piper previews using IPA={ipa!r}")
