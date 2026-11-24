@@ -179,8 +179,9 @@ internal fun PlayerRuntimeController.fetchAddonSubtitles() {
             }
             val pendingAddon = pendingRestoredAddonSubtitle
             if (pendingAddon != null) {
-                val match = visibleSubtitles.firstOrNull { it.id == pendingAddon.id }
-                    ?: visibleSubtitles.firstOrNull { PlayerSubtitleUtils.matchesLanguageCode(it.lang, pendingAddon.lang) }
+                val match = visibleSubtitles.firstOrNull {
+                    it.id == pendingAddon.id || it.url == pendingAddon.url
+                }
                 if (match != null) {
                     autoSelectAddonSubtitleDeferringReload(match)
                     return@launch
@@ -352,7 +353,7 @@ internal fun PlayerRuntimeController.filterToVisibleAddonSubtitles(
 
     return subtitles.filter { subtitle ->
         preferredTargets.any { target ->
-            PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, target)
+            AddonSubtitleTranslationPolicy.matchesPreferredVisibilityLanguage(subtitle, target)
         }
     }
 }

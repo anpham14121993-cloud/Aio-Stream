@@ -1,5 +1,6 @@
 package com.nuvio.tv.ui.screens.player
 
+import com.nuvio.tv.domain.model.Subtitle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -80,5 +81,29 @@ class AddonSubtitleTranslationPolicyTest {
                 mapOf("Cache-Control" to "public, max-age=3600")
             )
         )
+    }
+
+    @Test
+    fun `translating subtitle is excluded from auto-selection but remains visible for target language`() {
+        val aiTrack = Subtitle(
+            id = "ai-eng-vi",
+            url = "https://sub.example.vercel.app/translate-sub/g/tok_123?provider=os&source=en&target=vi&v=1.3.2",
+            lang = "eng",
+            addonName = "NothingP-SubAI",
+            addonLogo = null,
+        )
+        val staticEnglishTrack = Subtitle(
+            id = "os-eng",
+            url = "https://sub.example.vercel.app/sub/os/123.srt",
+            lang = "eng",
+            addonName = "OpenSubtitles",
+            addonLogo = null,
+        )
+
+        assertFalse(AddonSubtitleTranslationPolicy.isEligibleForAutoSelection(aiTrack))
+        assertTrue(AddonSubtitleTranslationPolicy.isEligibleForAutoSelection(staticEnglishTrack))
+        assertTrue(AddonSubtitleTranslationPolicy.matchesPreferredVisibilityLanguage(aiTrack, "vi"))
+        assertTrue(AddonSubtitleTranslationPolicy.matchesPreferredVisibilityLanguage(aiTrack, "en"))
+        assertFalse(AddonSubtitleTranslationPolicy.matchesPreferredVisibilityLanguage(staticEnglishTrack, "vi"))
     }
 }

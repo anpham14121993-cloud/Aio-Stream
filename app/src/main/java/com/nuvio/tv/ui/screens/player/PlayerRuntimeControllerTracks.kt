@@ -1161,7 +1161,8 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                     } else {
                         val state = _uiState.value
                         val addonFallback = state.addonSubtitles.firstOrNull { subtitle ->
-                            PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, resolvedVariant)
+                            AddonSubtitleTranslationPolicy.isEligibleForAutoSelection(subtitle) &&
+                                PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, resolvedVariant)
                         }
                         if (addonFallback != null) {
                             logSwitchTrace(
@@ -1201,7 +1202,10 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
             // should NOT override the normal auto-selection logic which prefers embedded
             // tracks over addon subtitles.
             val addonMatch = state.addonSubtitles.firstOrNull { subtitle ->
-                subtitle.addonName == subtitleSelection.addonName && subtitle.id == subtitleSelection.id
+                subtitle.addonName == subtitleSelection.addonName && (
+                    subtitle.id == subtitleSelection.id ||
+                        (!subtitleSelection.url.isNullOrBlank() && subtitle.url == subtitleSelection.url)
+                    )
             }
             if (addonMatch != null) {
                 logSwitchTrace(
@@ -1218,7 +1222,10 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                 pendingRestoredAddonSubtitle = addonMatch
                 activateAddonSubtitle(
                     subtitle = addonMatch,
-                    candidateScope = com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope.SELECTED_THEN_SEARCH
+                    candidateScope = com.nuvio.tv.ui.screens.player.autosync.candidateScopeForAddonSelection(
+                        isUserExplicitSelection = false,
+                        subtitleUrl = addonMatch.url,
+                    )
                 )
                 updatedAddonSubtitle = addonMatch
                 val shouldKeepPendingUntilMpvConfirmsSelection =
@@ -1731,11 +1738,19 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
         val isPrimarySatisfied = primaryTarget != null && currentSelectedLang != null &&
             PlayerSubtitleUtils.matchesLanguageCode(currentSelectedLang, primaryTarget)
         val hasBetterAddonMatch = !isPrimarySatisfied && primaryTarget != null &&
-            state.addonSubtitles.any { PlayerSubtitleUtils.matchesLanguageCode(it.lang, primaryTarget) }
+            state.addonSubtitles.any {
+                AddonSubtitleTranslationPolicy.isEligibleForAutoSelection(it) &&
+                    PlayerSubtitleUtils.matchesLanguageCode(it.lang, primaryTarget)
+            }
         val addonFirstSwitch = state.subtitleStyle.preferAddonSubtitles &&
             state.selectedAddonSubtitle == null && state.selectedSubtitleTrackIndex >= 0 &&
-            AddonSubtitlesFirst.pick(state.addonSubtitles.filterNot(::addonSubtitleIsForced), preferredTargets,
-                preferredTargets.indexOfFirst { PlayerSubtitleUtils.matchesLanguageCode(currentSelectedLang, it) }) { it.lang } != null
+            AddonSubtitlesFirst.pick(
+                state.addonSubtitles.filter {
+                    !addonSubtitleIsForced(it) && AddonSubtitleTranslationPolicy.isEligibleForAutoSelection(it)
+                },
+                preferredTargets,
+                preferredTargets.indexOfFirst { PlayerSubtitleUtils.matchesLanguageCode(currentSelectedLang, it) }
+            ) { it.lang } != null
 
         if (!hasBetterAddonMatch && !addonFirstSwitch) return
     }
@@ -1810,7 +1825,8 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
         if (matchedTargetPosition > 0 && addonSubtitlesLoaded) {
             val primaryAddonMatch = targets.take(matchedTargetPosition).firstNotNullOfOrNull { higherTarget ->
                 state.addonSubtitles.firstOrNull { subtitle ->
-                    PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, higherTarget)
+                    AddonSubtitleTranslationPolicy.isEligibleForAutoSelection(subtitle) &&
+                        PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, higherTarget)
                 }
             }
             if (primaryAddonMatch != null) {
@@ -1828,7 +1844,11 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
         }
         if (state.subtitleStyle.preferAddonSubtitles && addonSubtitlesLoaded) {
             val addonFirst = AddonSubtitlesFirst.pick(
-                state.addonSubtitles.filterNot(::addonSubtitleIsForced), targets, matchedTargetPosition
+                state.addonSubtitles.filter {
+                    !addonSubtitleIsForced(it) && AddonSubtitleTranslationPolicy.isEligibleForAutoSelection(it)
+                },
+                targets,
+                matchedTargetPosition
             ) { it.lang }
             if (addonFirst != null) {
                 autoSubtitleSelected = true
@@ -1872,7 +1892,8 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
             return
         }
         val forcedAddonMatch = state.addonSubtitles.firstOrNull { subtitle ->
-            addonSubtitleIsForced(subtitle) &&
+            AddonSubtitleTranslationPolicy.isEligibleForAutoSelection(subtitle) &&
+                addonSubtitleIsForced(subtitle) &&
                 addonSubtitleMatchesLanguage(subtitle, requiredForcedTarget) &&
                 selectedAudioTrack != null &&
                 addonSubtitleMatchesSelectedAudioLanguage(subtitle, selectedAudioTrack)
@@ -1890,6 +1911,11 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
     }
 
     val selectedAddon = state.selectedAddonSubtitle
+    if (selectedAddon != null && AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(selectedAddon.url)) {
+        autoSubtitleSelected = true
+        Log.d(PlayerRuntimeController.TAG, "AUTO_SUB stop: preserving active dynamic/translating addon subtitle")
+        return
+    }
     val selectedAddonMatchesTarget = selectedAddon != null &&
         (!useForcedSubtitles || !addonSubtitleIsForced(selectedAddon)) &&
         targets.any { target -> PlayerSubtitleUtils.matchesLanguageCode(selectedAddon.lang, target) }
@@ -1900,7 +1926,6 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
         )
         if (selectedMatchesPrimary) {
             autoSubtitleSelected = true
-            maybeRunAutomaticSubtitleSync(matchingSelectedAddon) // AutoSync hook
             Log.d(PlayerRuntimeController.TAG, "AUTO_SUB stop: matching addon already selected (primary match)")
             return
         }
@@ -1930,7 +1955,8 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
         // Try each target in priority order so primary language is preferred over secondary.
         for (target in targets) {
             val match = state.addonSubtitles.firstOrNull { subtitle ->
-                (!useForcedSubtitles || !addonSubtitleIsForced(subtitle)) &&
+                AddonSubtitleTranslationPolicy.isEligibleForAutoSelection(subtitle) &&
+                    (!useForcedSubtitles || !addonSubtitleIsForced(subtitle)) &&
                     PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, target)
             }
             if (match != null) {
@@ -2035,6 +2061,13 @@ internal fun PlayerRuntimeController.applySubtitlePreferences(
     tertiary: String? = null
 ) {
     if (isUserExplicitSubtitleSelection) return
+    val hasActiveAddonOrSidecar =
+        _uiState.value.selectedAddonSubtitle != null ||
+            isSidecarAddonSubtitleActive() ||
+            mpvAddonSubtitleSelectionJob?.isActive == true
+    if (hasActiveAddonOrSidecar && !preferred.equals("none", ignoreCase = true)) {
+        return
+    }
     if (isUsingMpvEngine()) {
         mpvView?.applySubtitleLanguagePreferences(preferred, secondary, tertiary)
         if (preferred == "none") {
@@ -2059,10 +2092,10 @@ internal fun PlayerRuntimeController.applySubtitlePreferences(
             val userDisabledSubtitles = autoSubtitleSelected &&
                     _uiState.value.selectedSubtitleTrackIndex == -1 &&
                     _uiState.value.selectedAddonSubtitle == null
-            // Suppress ExoPlayer auto-select when forced mode is active —
-            // our custom logic handles track selection.
+            // Suppress ExoPlayer auto-select when forced mode is active or an addon/sidecar
+            // subtitle is active — our custom logic handles track selection.
             val useForcedSubtitles = _uiState.value.subtitleStyle.useForcedSubtitles
-            val shouldSuppressExoAutoSelect = useForcedSubtitles && !autoSubtitleSelected
+            val shouldSuppressExoAutoSelect = (useForcedSubtitles && !autoSubtitleSelected) || hasActiveAddonOrSidecar
             if (!userDisabledSubtitles && !shouldSuppressExoAutoSelect) {
                 builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             }

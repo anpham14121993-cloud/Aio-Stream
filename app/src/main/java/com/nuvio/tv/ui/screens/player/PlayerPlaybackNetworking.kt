@@ -115,6 +115,25 @@ internal object PlayerPlaybackNetworking {
             .also { ServerTrust.closeConnectionsOnWithdrawal(it.connectionPool) }
     }
 
+    internal const val SUBTITLE_HTTP_CONNECT_TIMEOUT_SECONDS = 60L
+    internal const val SUBTITLE_HTTP_READ_TIMEOUT_SECONDS = 60L
+    internal const val SUBTITLE_HTTP_WRITE_TIMEOUT_SECONDS = 60L
+    internal const val SUBTITLE_HTTP_CALL_TIMEOUT_SECONDS = 75L
+
+    /**
+     * Dedicated subtitle client sharing [playbackHttpClient]'s connection pool, DNS, and TLS trust
+     * stack, with Nuvio-parity 60s I/O timeouts so AI translation / slow subtitle servers do not
+     * abort mid-flight.
+     */
+    internal val subtitleHttpClient: OkHttpClient by lazy {
+        playbackHttpClient.newBuilder()
+            .connectTimeout(SUBTITLE_HTTP_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .readTimeout(SUBTITLE_HTTP_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .writeTimeout(SUBTITLE_HTTP_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .callTimeout(SUBTITLE_HTTP_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build()
+    }
+
     /** Diagnostic owners never borrow playback's dispatcher, pool or event listener. */
     internal fun createContentLengthProbeCallFactory(
         primary: OkHttpClient = playbackHttpClient,

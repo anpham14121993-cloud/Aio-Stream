@@ -565,7 +565,9 @@ internal fun PlayerRuntimeController.activateAddonSubtitle(
     candidateScope: com.nuvio.tv.ui.screens.player.autosync.AutoSyncCandidateScope?,
     forceReload: Boolean = false,
 ) {
-    if (forceReload) {
+    val isDynamicTranslation = AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(subtitle.url)
+    val shouldBypassHttpCache = forceReload || isDynamicTranslation
+    if (shouldBypassHttpCache) {
         com.nuvio.tv.ui.screens.player.autosync.AutomaticSubtitleSync.invalidateCachedSubtitle(
             sourceKey = currentStreamUrl,
             subtitleUrl = subtitle.url,
@@ -582,7 +584,7 @@ internal fun PlayerRuntimeController.activateAddonSubtitle(
         maybeRunAutomaticSubtitleSync(
             selectedSubtitle = subtitle,
             candidateScope = candidateScope,
-            bypassHttpCache = forceReload,
+            bypassHttpCache = shouldBypassHttpCache,
         )
     } else {
         false
@@ -594,7 +596,7 @@ internal fun PlayerRuntimeController.activateAddonSubtitle(
         _uiState.value.selectedAddonSubtitle?.url == subtitle.url &&
         activeSidecarSubtitleKey != subtitle.url
     ) {
-        startSidecarAddonSubtitle(subtitle, bypassHttpCache = forceReload)
+        startSidecarAddonSubtitle(subtitle, bypassHttpCache = shouldBypassHttpCache)
     }
 }
 
@@ -624,9 +626,20 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(
         val wasPlaying = isPlaybackCurrentlyPlaying()
         val normalizedLang = PlayerSubtitleUtils.normalizeLanguageCode(subtitle.lang)
         val trackTitle = buildAddonSubtitleTrackId(subtitle)
+        val isDynamicTranslation = AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(subtitle.url)
+        val targetSelectionKey = addonSubtitleKey(subtitle)
         AutoSyncSyncedSubtitle.clear() // AutoSync hook
         mpvAddonSubtitleSelectionJob?.cancel()
         pendingMpvAddonSubtitleBody?.second?.complete(null)
+        pendingAddonSubtitleLanguage = null
+        pendingAddonSubtitleTrackId = null
+        pendingAudioSelectionAfterSubtitleRefresh = null
+        _uiState.update {
+            it.copy(
+                selectedAddonSubtitle = subtitle,
+                selectedSubtitleTrackIndex = -1
+            )
+        }
         val bodyDeferred = kotlinx.coroutines.CompletableDeferred<String?>()
         pendingMpvAddonSubtitleBody = subtitle.url to bodyDeferred
         mpvAddonSubtitleSelectionJob = scope.launch {
@@ -636,7 +649,7 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(
                         subtitle.url,
                         subtitle.lang,
                         subtitle.headers,
-                        bypassHttpCache = forceReload
+                        bypassHttpCache = forceReload || isDynamicTranslation
                     )
                     bodyDeferred.complete(decodedBody)
                     val sanitized = SubtitleMojibakeSanitizer.sanitize(decodedBody).toString()
@@ -645,12 +658,18 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(
                     val idHash = Integer.toHexString(subtitle.id.hashCode())
                     val contentHash = Integer.toHexString(sanitized.hashCode())
                     val prefix = "mpv_${idHash}_"
+                    val reloadSuffix = if (forceReload || isDynamicTranslation) {
+                        "_r${System.nanoTime().toUInt().toString(16)}"
+                    } else {
+                        ""
+                    }
+                    val targetFileName = "$prefix$contentHash$reloadSuffix.$ext"
+                    val file = java.io.File(cacheDir, targetFileName)
+                    file.writeText(sanitized, Charsets.UTF_8)
                     cacheDir.listFiles { candidate ->
                         (candidate.name.startsWith(prefix) || candidate.name == "mpv_${subtitle.id.hashCode()}.$ext") &&
-                            candidate.name != "$prefix$contentHash.$ext"
+                            candidate.name != targetFileName
                     }?.forEach { it.delete() }
-                    val file = java.io.File(cacheDir, "$prefix$contentHash.$ext")
-                    file.writeText(sanitized, Charsets.UTF_8)
                     file.absolutePath
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
@@ -660,11 +679,14 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(
                     subtitle.url
                 }
 
+                if (_uiState.value.selectedAddonSubtitle?.let { addonSubtitleKey(it) } != targetSelectionKey) {
+                    return@launch
+                }
                 val added = mpvView?.addAndSelectExternalSubtitle(
                     url = localPath,
                     title = trackTitle,
                     language = normalizedLang,
-                    replaceExistingWithSameTitle = forceReload || AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(subtitle.url)
+                    replaceExistingWithSameTitle = forceReload || isDynamicTranslation
                 ) == true
                 if (!added) return@launch
 
@@ -688,13 +710,16 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(
 
     _exoPlayer?.let { player ->
         val currentlySelected = _uiState.value.selectedAddonSubtitle
+        val isDynamicTranslation = AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(subtitle.url)
         if (!forceReload && currentlySelected?.id == subtitle.id && currentlySelected.url == subtitle.url) {
-            // Re-assert sidecar paint if the same track is already selected via hot path.
             if (isSidecarAddonSubtitleActive()) {
                 lastSidecarCueSignature = null
                 renderSidecarCuesAtCurrentPosition()
+                return@let
             }
-            return@let
+            if (!canAttachAddonSubtitleViaSidecar(subtitle)) {
+                return@let
+            }
         }
         resetSubtitleAutoSyncState()
         val normalizedLang = PlayerSubtitleUtils.normalizeLanguageCode(subtitle.lang)
@@ -715,7 +740,14 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(
                 "Selecting ADDON subtitle via sidecar (buffer preserved) addon=${subtitle.addonName} " +
                     "id=${subtitle.id} mime=$inferredMime"
             )
-            disableSubtitles()
+            cancelAutomaticSubtitleSync()
+            ttsEmbeddedCueBridge.selectInternalTrack(null)
+            ttsCoordinator.clearStreamingTimelineCues()
+            stopSidecarAddonSubtitle(clearView = true)
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .build()
             pendingAddonSubtitleLanguage = null
             pendingAddonSubtitleTrackId = null
             pendingAudioSelectionAfterSubtitleRefresh = null
@@ -726,7 +758,7 @@ internal fun PlayerRuntimeController.selectAddonSubtitle(
                 )
             }
             if (!deferExoSidecarToAutoSync) {
-                startSidecarAddonSubtitle(subtitle, bypassHttpCache = forceReload)
+                startSidecarAddonSubtitle(subtitle, bypassHttpCache = forceReload || isDynamicTranslation)
             }
             return@let
         }

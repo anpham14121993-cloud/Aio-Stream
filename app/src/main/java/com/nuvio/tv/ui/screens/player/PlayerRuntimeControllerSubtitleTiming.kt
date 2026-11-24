@@ -20,10 +20,12 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
 
 private fun OkHttpClient.Builder.subtitleDownloadDefaults(): OkHttpClient.Builder = this
-    // Sidecar and auto-sync downloads use these clients; keep timeouts generous for flaky hosts.
-    .connectTimeout(12_000, TimeUnit.MILLISECONDS)
-    .readTimeout(15_000, TimeUnit.MILLISECONDS)
-    .callTimeout(25_000, TimeUnit.MILLISECONDS)
+    // Sidecar and auto-sync downloads use these clients; match Nuvio's 60s timeouts for
+    // AI-translating and slow subtitle servers.
+    .connectTimeout(PlayerPlaybackNetworking.SUBTITLE_HTTP_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    .readTimeout(PlayerPlaybackNetworking.SUBTITLE_HTTP_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    .writeTimeout(PlayerPlaybackNetworking.SUBTITLE_HTTP_WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    .callTimeout(PlayerPlaybackNetworking.SUBTITLE_HTTP_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
     .retryOnConnectionFailure(true)
     .followRedirects(true)
     .followSslRedirects(true)
@@ -360,6 +362,7 @@ internal fun buildSubtitleRequest(
 
     if (bypassHttpCache || AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(subtitleUrl.toString())) {
         requestBuilder.header("Cache-Control", "no-cache, no-store")
+        requestBuilder.header("Pragma", "no-cache")
     }
 
     // A stream User-Agent is always allowed through, so this only fills the gap.

@@ -927,12 +927,14 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         return runCatching {
             val safeTitle = title?.takeIf { it.isNotBlank() }
             val safeLanguage = language?.takeIf { it.isNotBlank() }
-            if (replaceExistingWithSameTitle && safeTitle != null) {
-                removeExternalSubtitleTracksByTitle(safeTitle)
-                cachedTrackList = null
+            val supersededTrackIds = if (replaceExistingWithSameTitle && safeTitle != null) {
+                findExternalSubtitleTrackIdsByTitle(safeTitle)
+            } else {
+                emptyList()
             }
-            // "cached" avoids duplicate re-loads when the path didn't change; explicit reloads
-            // remove any prior external track with the same title and re-read via "select".
+            // Add and select the new external subtitle BEFORE removing any prior track with the same
+            // title so MPV never passes through a zero-subtitle gap where `slang` can snap to an
+            // embedded track. "cached" avoids duplicate re-loads when the path didn't change.
             val addFlag = if (replaceExistingWithSameTitle) "select" else "cached"
             when {
                 safeTitle != null && safeLanguage != null ->
@@ -942,6 +944,13 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
                 else ->
                     mpv.command("sub-add", url, addFlag)
             }
+            val activeSid = mpv.getPropertyInt("sid")
+            supersededTrackIds
+                .filter { it != activeSid }
+                .forEach { trackId ->
+                    runCatching { mpv.command("sub-remove", trackId.toString()) }
+                }
+            cachedTrackList = null
             mpv.setPropertyBoolean("sub-visibility", true)
             true
         }.getOrElse {
@@ -950,8 +959,8 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         }
     }
 
-    private fun removeExternalSubtitleTracksByTitle(targetTitle: String) {
-        val count = mpv.getPropertyInt("track-list/count") ?: return
+    private fun findExternalSubtitleTrackIdsByTitle(targetTitle: String): List<Int> {
+        val count = mpv.getPropertyInt("track-list/count") ?: return emptyList()
         val matchingIds = mutableListOf<Int>()
         for (i in 0 until count) {
             val type = mpv.getPropertyString("track-list/$i/type") ?: continue
@@ -962,9 +971,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
                 mpv.getPropertyInt("track-list/$i/id")?.let { matchingIds += it }
             }
         }
-        matchingIds.forEach { trackId ->
-            runCatching { mpv.command("sub-remove", trackId.toString()) }
-        }
+        return matchingIds
     }
 
     fun applySubtitleLanguagePreferences(preferred: String, secondary: String?, tertiary: String? = null) {

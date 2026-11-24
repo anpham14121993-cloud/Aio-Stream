@@ -82,7 +82,7 @@ internal object AutomaticSubtitleSync {
     private const val MIN_LIVE_REFERENCE_SPAN_RATIO = 0.80
 
     private const val HTTP_429_RETRY_DELAY_MS = 900L
-    private const val SUBTITLE_DOWNLOAD_TIMEOUT_MS = 15_000L
+    internal const val SUBTITLE_DOWNLOAD_TIMEOUT_MS = 60_000L
     private const val MAX_SUBTITLE_RESPONSE_BYTES = 4 * 1024 * 1024
     private const val MAX_RESOLVED_CACHE_ENTRIES = 4
     private const val MAX_PARSED_SUBTITLE_CACHE_ENTRIES = 8
@@ -213,6 +213,27 @@ internal object AutomaticSubtitleSync {
             val prefetchedAlternativeLoads =
                 linkedMapOf<String, Deferred<LoadedSubtitle?>>()
 
+            fun filterAlternativeCandidates(
+                candidates: List<AutoSyncSubtitleCandidate>,
+                language: String?,
+            ): List<AutoSyncSubtitleCandidate> =
+                candidates
+                    .asSequence()
+                    .filter {
+                        it.url.isNotBlank() &&
+                            it.url != selectedSubtitleUrl &&
+                            AddonSubtitleTranslationPolicy.isEligibleForAutoSelection(it.url)
+                    }
+                    .filter { candidate ->
+                        language.isNullOrBlank() ||
+                            SubtitleLanguageMatching.matchesLanguageCode(
+                                candidate.language,
+                                language,
+                            )
+                    }
+                    .distinctBy { it.url }
+                    .toList()
+
             fun currentPrefetchCandidates(): List<AutoSyncSubtitleCandidate> {
                 val snapshot =
                     (alternativeSubtitlesProvider?.invoke() ?: alternativeSubtitles)
@@ -223,18 +244,7 @@ internal object AutomaticSubtitleSync {
                         ?.takeIf { it.isNotBlank() }
                         ?: preferredLanguage?.takeIf { it.isNotBlank() }
 
-                return snapshot
-                    .asSequence()
-                    .filter { it.url.isNotBlank() && it.url != selectedSubtitleUrl }
-                    .filter { candidate ->
-                        language.isNullOrBlank() ||
-                            SubtitleLanguageMatching.matchesLanguageCode(
-                                candidate.language,
-                                language,
-                            )
-                    }
-                    .distinctBy { it.url }
-                    .toList()
+                return filterAlternativeCandidates(snapshot, language)
             }
 
             fun fillPrefetchSlots() {
@@ -333,19 +343,7 @@ internal object AutomaticSubtitleSync {
             fun sameLanguageAlternatives(
                 candidates: List<AutoSyncSubtitleCandidate>,
                 language: String?,
-            ): List<AutoSyncSubtitleCandidate> =
-                candidates
-                    .asSequence()
-                    .filter { it.url.isNotBlank() && it.url != selectedSubtitleUrl }
-                    .filter { candidate ->
-                        language.isNullOrBlank() ||
-                            SubtitleLanguageMatching.matchesLanguageCode(
-                                candidate.language,
-                                language,
-                            )
-                    }
-                    .distinctBy { it.url }
-                    .toList()
+            ): List<AutoSyncSubtitleCandidate> = filterAlternativeCandidates(candidates, language)
 
             var availableCandidates = currentExternalCandidates()
             var language = selectedLanguage(availableCandidates)
@@ -460,7 +458,7 @@ internal object AutomaticSubtitleSync {
                 onAnalysisOutcome?.invoke(AutoSyncAnalysisOutcome.SUBTITLE_UNAVAILABLE)
                 return@supervisorScope null
             }
-            if (selected?.isPlaceholder == true && alternatives.isEmpty() && alternativeSubtitlesProvider == null) {
+            if (selected?.isPlaceholder == true) {
                 prefetchedAlternativeLoads.values.forEach { it.cancel() }
                 indexedTimelineDeferred.cancel()
                 onAnalysisOutcome?.invoke(AutoSyncAnalysisOutcome.TRANSLATION_IN_PROGRESS)
@@ -1595,6 +1593,7 @@ internal object AutomaticSubtitleSync {
             putAll(headers)
             if (bypassHttpCache || AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(url)) {
                 put("Cache-Control", "no-cache, no-store")
+                put("Pragma", "no-cache")
             }
         }
         return withTimeoutOrNull(SUBTITLE_DOWNLOAD_TIMEOUT_MS) {

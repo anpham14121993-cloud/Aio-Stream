@@ -623,20 +623,28 @@ private fun PlayerRuntimeController.applyMpvTrackSnapshot(snapshot: MpvTrackSnap
     markMpvTextTracksScannedIfReady(hasInternalSubtitleTracks = internalSubtitleTracks.isNotEmpty())
     maybeRestorePendingAudioSelectionAfterSubtitleRefresh(audioTracks)
 
+    val mpvSelectionInFlight = mpvAddonSubtitleSelectionJob?.isActive == true
     _uiState.update { state ->
         val selectedAddonFromMpvTrack = selectedExternalSubtitleTrack?.let { track ->
-            state.addonSubtitles.firstOrNull { subtitle ->
+            state.selectedAddonSubtitle?.takeIf {
+                buildAddonSubtitleTrackId(it).equals(track.name, ignoreCase = true)
+            } ?: state.addonSubtitles.firstOrNull { subtitle ->
                 buildAddonSubtitleTrackId(subtitle).equals(track.name, ignoreCase = true)
             }
         }
+        val keepPendingAddon = com.nuvio.tv.ui.screens.player.autosync.shouldKeepSelectedAddonOnMpvSnapshot(
+            isMpvAddonSelectionInFlight = mpvSelectionInFlight,
+            hasPendingAddonSubtitle = state.selectedAddonSubtitle != null,
+        )
 
         val addonSelection = when {
             selectedAddonFromMpvTrack != null -> selectedAddonFromMpvTrack
+            keepPendingAddon -> state.selectedAddonSubtitle
             selectedExternalSubtitle -> null
             selectedSubtitleIndex >= 0 -> null
             else -> state.selectedAddonSubtitle
         }
-        val normalizedSelectedSubtitleIndex = if (selectedExternalSubtitle) {
+        val normalizedSelectedSubtitleIndex = if (selectedExternalSubtitle || keepPendingAddon) {
             -1
         } else {
             selectedSubtitleIndex

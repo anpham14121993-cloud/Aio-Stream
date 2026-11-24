@@ -191,7 +191,17 @@ internal fun SubtitleSelectionOverlay(
 
     var editorOpen by remember(visible) { mutableStateOf(false) }
     var ttsOpen by remember(visible) { mutableStateOf(false) }
-    var currentSelectedOptionId by remember(visible) { mutableStateOf(sessionSelectedOptionId) }
+    val liveSelectedOptionId = selectedSubtitleOptionId(
+        internalTracks = sessionInternalTracks,
+        selectedInternalIndex = selectedInternalIndex,
+        selectedAddonSubtitle = selectedAddonSubtitle
+    )
+    var currentSelectedOptionId by remember(visible) { mutableStateOf(liveSelectedOptionId) }
+    LaunchedEffect(visible, liveSelectedOptionId) {
+        if (visible) {
+            currentSelectedOptionId = liveSelectedOptionId
+        }
+    }
     // null = the language list is showing; otherwise the subtitles of that language.
     var shownLanguageKey by remember(visible) {
         mutableStateOf(openLanguageKey.takeUnless { it == SubtitleOffLanguageKey })

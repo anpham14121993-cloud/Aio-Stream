@@ -49,6 +49,20 @@ internal object AddonSubtitleTranslationPolicy {
         return PlayerSubtitleUtils.normalizeLanguageCode(declaredLang).takeIf { it.isNotBlank() }
     }
 
+    fun isEligibleForAutoSelection(url: String): Boolean = !isTranslatingSubtitleUrl(url)
+
+    fun isEligibleForAutoSelection(subtitle: com.nuvio.tv.domain.model.Subtitle): Boolean =
+        isEligibleForAutoSelection(subtitle.url)
+
+    fun matchesPreferredVisibilityLanguage(
+        subtitle: com.nuvio.tv.domain.model.Subtitle,
+        targetLanguage: String,
+    ): Boolean {
+        if (PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, targetLanguage)) return true
+        val effectiveLang = effectiveAddonSubtitleLanguage(subtitle.lang, subtitle.url)
+        return effectiveLang != null && PlayerSubtitleUtils.matchesLanguageCode(effectiveLang, targetLanguage)
+    }
+
     fun hasNoStoreCacheControl(responseHeaders: Map<String, String>): Boolean {
         val cacheControl = responseHeaders.entries
             .firstOrNull { (key, _) -> key.equals("cache-control", ignoreCase = true) }

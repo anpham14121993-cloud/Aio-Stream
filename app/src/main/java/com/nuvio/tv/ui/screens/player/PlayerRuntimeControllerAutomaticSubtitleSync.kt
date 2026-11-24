@@ -24,6 +24,7 @@ import com.nuvio.tv.ui.screens.player.autosync.AutoSyncSyncedSubtitle
 import com.nuvio.tv.ui.screens.player.autosync.AutomaticSubtitleSync
 import com.nuvio.tv.ui.screens.player.autosync.EmbeddedSubtitleTimelineLoader
 import com.nuvio.tv.ui.screens.player.autosync.applyAutoSyncSidecarTimeline
+import com.nuvio.tv.ui.screens.player.autosync.canAutoSyncSwitchSelectedAddonSubtitle
 import com.nuvio.tv.ui.screens.player.autosync.maxAlignmentShiftMs
 import com.nuvio.tv.ui.screens.player.autosync.replaceAutoSyncSidecarSubtitle
 import com.nuvio.tv.ui.screens.player.autosync.searchAfterSelectedFailed
@@ -108,14 +109,20 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
     ) {
         return false
     }
+    val effectiveScope =
+        if (AddonSubtitleTranslationPolicy.isTranslatingSubtitleUrl(selectedSubtitle.url)) {
+            AutoSyncCandidateScope.SELECTED_ONLY
+        } else {
+            candidateScope
+        }
     if (
-        candidateScope == AutoSyncCandidateScope.STARTUP_SEARCH &&
+        effectiveScope == AutoSyncCandidateScope.STARTUP_SEARCH &&
         !AutoSyncPreferences.claimStartupRun(hashCode(), currentStreamUrl)
     ) {
         return false
     }
     if (isUsingMpvEngine()) {
-        runMpvAutomaticSubtitleSync(selectedSubtitle, candidateScope, bypassHttpCache)
+        runMpvAutomaticSubtitleSync(selectedSubtitle, effectiveScope, bypassHttpCache)
         return false
     }
 
@@ -124,7 +131,7 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
 
     // ASS/SSA stays on libass's own path so its styling is kept; the result is applied there.
     if (useLibass && isLibassAddonSubtitle(selectedSubtitle)) {
-        runLibassAutomaticSubtitleSync(selectedSubtitle, candidateScope, bypassHttpCache)
+        runLibassAutomaticSubtitleSync(selectedSubtitle, effectiveScope, bypassHttpCache)
         return false
     }
 
@@ -187,7 +194,7 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
         try {
             Log.d(
                 PlayerRuntimeController.TAG,
-                "AUTO_SYNC_V2 start scope=${candidateScope.name} " +
+                "AUTO_SYNC_V2 start scope=${effectiveScope.name} " +
                     "lang=${selectedSubtitle.lang} candidates=${candidatesAtStart.size}",
             )
             var analysisOutcome: AutoSyncAnalysisOutcome? = null
@@ -213,11 +220,11 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
                 bypassCache = bypassHttpCache,
             ) }
             var resolved = search(
-                withAlternatives = candidateScope == AutoSyncCandidateScope.STARTUP_SEARCH,
+                withAlternatives = effectiveScope == AutoSyncCandidateScope.STARTUP_SEARCH,
             )
             if (
                 resolved == null && stillRelevant() &&
-                candidateScope.searchAfterSelectedFailed(analysisOutcome)
+                effectiveScope.searchAfterSelectedFailed(analysisOutcome)
             ) {
                 Log.d(
                     PlayerRuntimeController.TAG,
@@ -245,6 +252,12 @@ internal fun PlayerRuntimeController.maybeRunAutomaticSubtitleSync(
                 ?: _uiState.value.addonSubtitles.firstOrNull { it.url == resolved.subtitleUrl }
                 ?: selectedSubtitle.takeIf { it.url == resolved.subtitleUrl }
                 ?: return@launch
+            if (
+                chosenSubtitle.url != selectedUrl &&
+                !canAutoSyncSwitchSelectedAddonSubtitle(selectedUrl, chosenSubtitle.url)
+            ) {
+                return@launch
+            }
 
             // A confident match whose whole-film correction is within the user's tolerance keeps
             // the selected subtitle's original timing instead of retiming it.
@@ -412,7 +425,14 @@ private fun PlayerRuntimeController.runMpvAutomaticSubtitleSync(
 
             val chosenSubtitle = candidateByUrl[resolved.subtitleUrl]
                 ?: _uiState.value.addonSubtitles.firstOrNull { it.url == resolved.subtitleUrl }
+                ?: selectedSubtitle.takeIf { it.url == resolved.subtitleUrl }
                 ?: return@launch
+            if (
+                chosenSubtitle.url != selectedUrl &&
+                !canAutoSyncSwitchSelectedAddonSubtitle(selectedUrl, chosenSubtitle.url)
+            ) {
+                return@launch
+            }
 
             // A confident match whose whole-film correction is within the user's tolerance keeps
             // the selected subtitle's original timing instead of retiming it.
@@ -421,7 +441,11 @@ private fun PlayerRuntimeController.runMpvAutomaticSubtitleSync(
                 resolved.subtitleUrl == selectedUrl &&
                 resolved.timeline.maxAlignmentShiftMs() <= toleranceMs
             if (!withinTolerance) {
-                val path = writeMpvAutoSyncedSubtitle(chosenSubtitle, resolved)
+                val path = writeMpvAutoSyncedSubtitle(
+                    subtitle = chosenSubtitle,
+                    resolved = resolved,
+                    bypassHttpCache = bypassHttpCache,
+                )
                 if (!streamUnchanged() || _uiState.value.selectedAddonSubtitle?.url != activeSubtitleUrl) {
                     return@launch
                 }
@@ -571,7 +595,14 @@ private fun PlayerRuntimeController.runLibassAutomaticSubtitleSync(
 
             val chosenSubtitle = candidateByUrl[resolved.subtitleUrl]
                 ?: _uiState.value.addonSubtitles.firstOrNull { it.url == resolved.subtitleUrl }
+                ?: selectedSubtitle.takeIf { it.url == resolved.subtitleUrl }
                 ?: return@launch
+            if (
+                chosenSubtitle.url != selectedUrl &&
+                !canAutoSyncSwitchSelectedAddonSubtitle(selectedUrl, chosenSubtitle.url)
+            ) {
+                return@launch
+            }
 
             // A confident match whose whole-film correction is within the user's tolerance keeps
             // the selected subtitle's original timing instead of retiming it.
@@ -584,6 +615,7 @@ private fun PlayerRuntimeController.runLibassAutomaticSubtitleSync(
                 selectedSubtitle = selectedSubtitle,
                 chosenSubtitle = chosenSubtitle,
                 resolved = resolved,
+                bypassHttpCache = bypassHttpCache,
                 stillApplicable = {
                     streamUnchanged() &&
                         _uiState.value.selectedAddonSubtitle?.url.let {
@@ -633,6 +665,7 @@ private suspend fun PlayerRuntimeController.applyLibassAutoSyncResult(
     selectedSubtitle: Subtitle,
     chosenSubtitle: Subtitle,
     resolved: AutoSyncResolvedTimeline,
+    bypassHttpCache: Boolean = false,
     stillApplicable: () -> Boolean,
 ): Boolean {
     val selectedUrl = selectedSubtitle.url
@@ -645,6 +678,7 @@ private suspend fun PlayerRuntimeController.applyLibassAutoSyncResult(
         val applied = startSidecarAddonSubtitle(
             subtitle = chosenSubtitle,
             rawBodyLoader = resolved.subtitleBody?.let { body -> suspend { body } },
+            bypassHttpCache = bypassHttpCache,
         ) && applyAutoSyncSidecarTimeline(
             sidecar = this,
             url = chosenSubtitle.url,
@@ -652,14 +686,19 @@ private suspend fun PlayerRuntimeController.applyLibassAutoSyncResult(
         )
         if (!applied) {
             stopSidecarAddonSubtitle()
-            selectAddonSubtitle(selectedSubtitle)
+            selectAddonSubtitle(selectedSubtitle, forceReload = bypassHttpCache)
         }
         return applied
     }
 
     val assHandler = player.getAssHandlerCompat() ?: return false
     val body = resolved.subtitleBody
-        ?: downloadSubtitleBody(chosenSubtitle.url, chosenSubtitle.lang, chosenSubtitle.headers)
+        ?: downloadSubtitleBody(
+            chosenSubtitle.url,
+            chosenSubtitle.lang,
+            chosenSubtitle.headers,
+            bypassHttpCache = bypassHttpCache,
+        )
     val retimed = withContext(AutomaticSubtitleSync.autoSyncDispatcher) {
         AutoSyncSubtitleTextRetimer.retime(
             body = SubtitleMojibakeSanitizer.sanitize(body).toString(),
@@ -684,9 +723,15 @@ private suspend fun PlayerRuntimeController.applyLibassAutoSyncResult(
 private suspend fun PlayerRuntimeController.writeMpvAutoSyncedSubtitle(
     subtitle: Subtitle,
     resolved: AutoSyncResolvedTimeline,
+    bypassHttpCache: Boolean = false,
 ): String? {
     val body = resolved.subtitleBody
-        ?: downloadSubtitleBody(subtitle.url, subtitle.lang, subtitle.headers)
+        ?: downloadSubtitleBody(
+            subtitle.url,
+            subtitle.lang,
+            subtitle.headers,
+            bypassHttpCache = bypassHttpCache,
+        )
     val retimed = withContext(AutomaticSubtitleSync.autoSyncDispatcher) {
         AutoSyncSubtitleTextRetimer.retime(
             body = SubtitleMojibakeSanitizer.sanitize(body).toString(),

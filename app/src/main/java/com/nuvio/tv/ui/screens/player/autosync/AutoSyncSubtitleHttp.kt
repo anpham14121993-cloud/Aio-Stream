@@ -31,6 +31,7 @@ internal object AutoSyncSubtitleHttp {
         headers: Map<String, String>,
         maxResponseBodyBytes: Int,
         languageHint: String? = null,
+        callFactory: Call.Factory = PlayerPlaybackNetworking.subtitleHttpClient,
     ): AutoSyncRawHttpResponse {
         val requestBuilder = Request.Builder()
             .url(url)
@@ -44,7 +45,7 @@ internal object AutoSyncSubtitleHttp {
             }
         }
 
-        val call = PlayerPlaybackNetworking.playbackHttpClient.newCall(requestBuilder.build())
+        val call = callFactory.newCall(requestBuilder.build())
 
         return suspendCancellableCoroutine { continuation ->
             continuation.invokeOnCancellation {
