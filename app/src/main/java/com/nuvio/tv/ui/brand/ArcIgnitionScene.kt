@@ -21,6 +21,7 @@ import com.nuvio.tv.R
 import java.util.concurrent.CancellationException
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.floor
@@ -43,6 +44,8 @@ class ArcIgnitionScene private constructor(
     /** Reserved for glass plate styling consistency; cutout plates preserve own alpha cleanly. */
     @Suppress("unused")
     private val glassPlate: Boolean,
+    /** Device pixels per stage unit the backdrop buffer was prepared for. */
+    @Suppress("unused")
     private val pixelScale: Float
 ) {
     /** 2 = full detail, 1 = fewer filaments and sparks, 0 = also no wide storm haze. */
@@ -92,25 +95,6 @@ class ArcIgnitionScene private constructor(
         Branch(0.84f, 1.55f, buildBolt(TipBRX, TipBRY, TipBRX + 125f, TipBRY - 75f, 9, 18f, 841))
     )
 
-    // Precompute bounding layers so hardware layer blits stay tightly cropped around VFX activity.
-    private val igniteBounds = RectF(
-        LogoX - LightMargin - 140f,
-        0f,
-        LogoX + LogoSize + LightMargin + 140f,
-        LetterTop + 160f
-    ).apply { intersect(-1f, -1f, StageW + 1f, StageH + 1f) }
-
-    private val currentsBounds = RectF(igniteBounds).also { r ->
-        for (stream in samples) {
-            for (pts in stream) {
-                for (i in pts.indices step 3) {
-                    r.union(pts[i] - LightMargin, pts[i + 1] - LightMargin, pts[i] + LightMargin, pts[i + 1] + LightMargin)
-                }
-            }
-        }
-        r.intersect(-1f, -1f, StageW + 1f, StageH + 1f)
-    }
-
     private val tones = HashMap<Int, Int>()
     private fun tone(rgb: Int): Int = tones.getOrPut(rgb) { palette.map(0xFF000000.toInt() or rgb) }
 
@@ -123,7 +107,12 @@ class ArcIgnitionScene private constructor(
     private val src = Rect()
     private val dst = RectF()
     private val bezelRect = RectF()
+    private val layerBounds = RectF()
     private val stageRect = RectF(0f, 0f, StageW, StageH)
+
+    private var originX = 0f
+    private var originY = 0f
+    private var drawScale = 1f
 
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -144,21 +133,29 @@ class ArcIgnitionScene private constructor(
     private val plainPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val glowSprite = buildGlowSprite()
 
-    private val backdrop = Bitmap.createBitmap(
-        max(1, (StageW * pixelScale).roundToInt()),
-        max(1, (StageH * pixelScale).roundToInt()),
-        Bitmap.Config.ARGB_8888
-    ).also {
-        val c = Canvas(it)
-        c.scale(it.width / StageW, it.height / StageH)
-        c.drawColor(Backdrop)
-        c.drawRect(0f, 0f, StageW, StageH, backdropGlow(CenterX, CenterY + 12f, 760f, 0.17f, 0x1E4B78))
-        c.drawRect(0f, 0f, StageW, StageH, backdropGlow(TipTLX + 80f, TipTLY + 70f, 360f, 0.08f, 0x4EC4FF))
-        c.drawRect(0f, 0f, StageW, StageH, backdropGlow(TipBRX - 60f, TipBRY - 60f, 340f, 0.07f, 0x4EC4FF))
-        it.prepareToDraw()
+    // Keep radial glows fading strictly to exact Backdrop color well inside [0..StageW, 0..StageH]
+    // so non-16:9 mobile screens blend seamlessly with canvas.drawColor(Backdrop) without seams.
+    private val backdrop = run {
+        val backdropScale = min(pixelScale, 1f)
+        Bitmap.createBitmap(
+            max(1, (StageW * backdropScale).roundToInt()),
+            max(1, (StageH * backdropScale).roundToInt()),
+            Bitmap.Config.ARGB_8888
+        ).also {
+            val c = Canvas(it)
+            c.scale(it.width / StageW, it.height / StageH)
+            c.drawColor(Backdrop)
+            c.drawRect(0f, 0f, StageW, StageH, backdropGlow(CenterX, CenterY + 12f, 430f, 0.18f, 0x1E4B78))
+            c.drawRect(0f, 0f, StageW, StageH, backdropGlow(TipTLX + 70f, TipTLY + 65f, 220f, 0.09f, 0x4EC4FF))
+            c.drawRect(0f, 0f, StageW, StageH, backdropGlow(TipBRX - 60f, TipBRY - 60f, 220f, 0.08f, 0x4EC4FF))
+            it.prepareToDraw()
+        }
     }
 
-    /** Draw one frame stacked on top of [backdrop] at elapsed scene [clock] seconds. */
+    /**
+     * Draws the frame at [clock] seconds onto a translucent Surface [canvas] of [width] x [height] pixels.
+     * Supports full-bleed scaling across portrait phones and landscape TVs without clipping or surface tearing.
+     */
     fun draw(
         canvas: Canvas,
         width: Int,
@@ -168,22 +165,41 @@ class ArcIgnitionScene private constructor(
         content: Float = 1f,
         handoff: Boolean = false
     ) {
-        if (width <= 0 || height <= 0 || alpha <= 0.002f) return
-        val scale = min(width / StageW, height / StageH)
-        val originX = (width - StageW * scale) * 0.5f
-        val originY = (height - StageH * scale) * 0.5f
-
-        val backdropFits = width <= (StageW * scale + 1f) && height <= (StageH * scale + 1f)
-        if (backdropFits) {
-            plainPaint.alpha = 255
-            dst.set(0f, 0f, width.toFloat(), height.toFloat())
-            canvas.drawBitmap(backdrop, null, dst, plainPaint)
+        if (width <= 0 || height <= 0) return
+        val scale = if (height > width) {
+            min(width / PortraitStageW, height / StageH)
+        } else {
+            min(width / StageW, height / StageH)
+        }
+        val backdropFits = backdrop.width == width && backdrop.height == height && height <= width
+        if (!backdropFits || alpha < 0.997f || content <= 0.003f) {
+            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        }
+        if (alpha <= 0.003f) return
+        if (content <= 0.003f) {
+            drawStage(canvas, width, height, scale, (alpha * 255).toInt())
+            return
         }
 
-        val layer = canvas.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
+        val outer = if (alpha < 0.997f) {
+            canvas.saveLayerAlpha(null, (alpha * 255).toInt())
+        } else {
+            canvas.save()
+        }
+
+        if (!backdropFits) canvas.drawColor(Backdrop)
+        originX = (width - StageW * scale) * 0.5f
+        originY = (height - StageH * scale) * 0.5f
+        drawScale = scale
+        plainPaint.alpha = 255
+        if (backdropFits) {
+            canvas.drawBitmap(backdrop, 0f, 0f, plainPaint)
+        }
         canvas.translate(originX, originY)
         canvas.scale(scale, scale)
-        if (!backdropFits) canvas.drawBitmap(backdrop, null, stageRect, plainPaint)
+        if (!backdropFits) {
+            canvas.drawBitmap(backdrop, null, stageRect, plainPaint)
+        }
 
         // Subtle atmospheric storm pulses beneath the mark before and during strike.
         drawStormBackdropPulses(canvas, clock, content)
@@ -201,22 +217,33 @@ class ArcIgnitionScene private constructor(
             val breath = 0.90f + 0.08f * sin((clock - Ignite) * 2.3f)
             val strikeFlash = 0.24f * exp(-max(0f, clock - Ignite) * 4.5f)
             val alphaLit = clamp((breath + strikeFlash) * smooth((clock - Ignite) / 0.045f) * content)
-            canvas.save()
-            canvas.rotate(-40f, CenterX, CenterY)
-            canvas.clipRect(
-                CenterX - LogoSize,
-                CenterY - LogoSize * 0.72f,
-                CenterX + LogoSize,
-                CenterY - LogoSize * 0.72f + reveal * (LogoSize * 1.44f)
-            )
-            canvas.rotate(40f, CenterX, CenterY)
             platePaint.alpha = (alphaLit * 255).toInt()
-            drawPlate(canvas, litPlate, platePaint)
-            canvas.restore()
+            if (reveal >= 0.999f) {
+                drawPlate(canvas, litPlate, platePaint)
+            } else {
+                canvas.save()
+                canvas.rotate(-40f, CenterX, CenterY)
+                canvas.clipRect(
+                    CenterX - LogoSize,
+                    CenterY - LogoSize * 0.72f,
+                    CenterX + LogoSize,
+                    CenterY - LogoSize * 0.72f + reveal * (LogoSize * 1.44f)
+                )
+                canvas.rotate(40f, CenterX, CenterY)
+                drawPlate(canvas, litPlate, platePaint)
+                canvas.restore()
+            }
         }
 
+        // Full-viewport stage bounds guarantee shockwaves and radial blooms never clip along straight lines.
+        layerBounds.set(
+            -originX / scale,
+            -originY / scale,
+            (width - originX) / scale,
+            (height - originY) / scale
+        )
         layerPaint.alpha = (content * 255).toInt()
-        canvas.saveLayer(if (clock > 3.68f) igniteBounds else currentsBounds, layerPaint)
+        canvas.saveLayer(layerBounds, layerPaint)
 
         val gatherGlow = smooth(clock / 3.4f) * (1f - smooth((clock - 3.66f) / 0.48f))
         if (gatherGlow > 0.005f) {
@@ -230,15 +257,26 @@ class ArcIgnitionScene private constructor(
         drawLeaderBolt(canvas, clock)
         drawShockwavesAndBolts(canvas, clock)
         drawSettledPulse(canvas, clock)
-        drawWordmark(canvas, clock)
+        drawWordmarkWash(canvas, clock)
 
         canvas.restore() // end additive/screen VFX layer
 
-        if (alpha < 0.999f) {
-            plainPaint.alpha = (clamp(1f - alpha) * 255).toInt()
-            canvas.drawBitmap(backdrop, null, stageRect, plainPaint)
+        drawWordmarkText(canvas, clock, content)
+        canvas.restoreToCount(outer)
+    }
+
+    private fun drawStage(canvas: Canvas, width: Int, height: Int, scale: Float, stageAlpha: Int) {
+        if (backdrop.width == width && backdrop.height == height && height <= width) {
+            plainPaint.alpha = stageAlpha
+            canvas.drawBitmap(backdrop, 0f, 0f, plainPaint)
+            return
         }
+        val layer = canvas.saveLayerAlpha(null, stageAlpha)
+        canvas.drawColor(Backdrop)
+        canvas.translate((width - StageW * scale) * 0.5f, (height - StageH * scale) * 0.5f)
+        canvas.scale(scale, scale)
         plainPaint.alpha = 255
+        canvas.drawBitmap(backdrop, null, stageRect, plainPaint)
         canvas.restoreToCount(layer)
     }
 
@@ -248,8 +286,10 @@ class ArcIgnitionScene private constructor(
     }
 
     private fun placeArt(art: Bitmap, x: Float, y: Float, w: Float, h: Float) {
-        if (abs(art.width / pixelScale - w) < 0.75f && abs(art.height / pixelScale - h) < 0.75f) {
-            dst.set(x, y, x + art.width / pixelScale, y + art.height / pixelScale)
+        if (abs(art.width - w * drawScale) <= 1.5f && abs(art.height - h * drawScale) <= 1.5f) {
+            val left = ((originX + x * drawScale).roundToInt() - originX) / drawScale
+            val top = ((originY + y * drawScale).roundToInt() - originY) / drawScale
+            dst.set(left, top, left + art.width / drawScale, top + art.height / drawScale)
         } else {
             dst.set(x, y, x + w, y + h)
         }
@@ -264,8 +304,8 @@ class ArcIgnitionScene private constructor(
                 exp(-((clock - Ignite) / 0.18f).pow(2)) * 0.65f
         val pulse = preFlash * content
         if (pulse > 0.005f) {
-            glow(canvas, CenterX - 180f, CenterY - 170f, 540f, pulse * 0.45f, 0x38AEFF, screenGlowPaint)
-            glow(canvas, CenterX + 160f, CenterY + 130f, 480f, pulse * 0.35f, 0x62C8FF, screenGlowPaint)
+            glow(canvas, CenterX - 180f, CenterY - 170f, 480f, pulse * 0.45f, 0x38AEFF, screenGlowPaint)
+            glow(canvas, CenterX + 160f, CenterY + 130f, 440f, pulse * 0.35f, 0x62C8FF, screenGlowPaint)
         }
     }
 
@@ -476,18 +516,25 @@ class ArcIgnitionScene private constructor(
         pinpoint(canvas, TipBRX, TipBRY, glintB * 0.55f, 26f, 0xD8F6FF)
     }
 
-    private fun drawWordmark(canvas: Canvas, clock: Float) {
-        if (clock < 3.82f) return
-        val reveal = smooth((clock - 3.82f) / 0.58f)
+    private fun drawWordmarkWash(canvas: Canvas, clock: Float) {
+        if (clock < 3.74f) return
         val wash = smooth((clock - 3.74f) / 0.14f) * (1f - smooth((clock - 3.96f) / 0.72f))
         if (wash > 0.005f) {
             glow(canvas, CenterX, LetterTop + 42f, 220f * wash, 0.28f * wash, 0x7EE0FF, fillPaint)
         }
+    }
+
+    private fun drawWordmarkText(canvas: Canvas, clock: Float, content: Float) {
+        if (clock < 1.35f) return
+        val reveal = smooth((clock - 1.35f) / 0.95f)
+        val igniteBoost = smooth((clock - 3.74f) / 0.45f)
+        val visibility = 0.40f * reveal + 0.60f * igniteBoost
+        if (visibility <= 0.004f) return
         val letterH = LetterWidth * lettering.height / lettering.width
-        val slideY = (1f - reveal) * 10f
+        val slideY = (1f - reveal) * 8f
         placeArt(lettering, LetterLeft, LetterTop + slideY, LetterWidth, letterH)
-        platePaint.alpha = (reveal * 255).toInt()
-        canvas.drawBitmap(lettering, null, dst, platePaint)
+        plainPaint.alpha = (visibility * content * 255).toInt()
+        canvas.drawBitmap(lettering, null, dst, plainPaint)
     }
 
     private fun lightStroke(
@@ -518,7 +565,7 @@ class ArcIgnitionScene private constructor(
         val length = hypot(x1 - x0, y1 - y0).coerceAtLeast(1f)
         gradientMatrix.reset()
         gradientMatrix.setScale(length, length)
-        gradientMatrix.postRotate(Math.toDegrees(kotlin.math.atan2((y1 - y0).toDouble(), (x1 - x0).toDouble())).toFloat())
+        gradientMatrix.postRotate(Math.toDegrees(atan2((y1 - y0).toDouble(), (x1 - x0).toDouble())).toFloat())
         gradientMatrix.postTranslate(x0, y0)
         val gradient = gradients.getOrPut(rgb) {
             LinearGradient(
@@ -556,8 +603,8 @@ class ArcIgnitionScene private constructor(
         val color = tone(rgb)
         shader = RadialGradient(
             x, y, r,
-            intArrayOf(withAlpha(color, (alpha * 255).toInt()), withAlpha(color, (alpha * 0.38f * 255).toInt()), 0),
-            floatArrayOf(0f, 0.46f, 1f),
+            intArrayOf(withAlpha(color, (alpha * 255).toInt()), withAlpha(color, (alpha * 0.36f * 255).toInt()), 0),
+            floatArrayOf(0f, 0.44f, 1f),
             Shader.TileMode.CLAMP
         )
         isDither = true
@@ -633,6 +680,7 @@ class ArcIgnitionScene private constructor(
         /** The thunder discharge has landed and the mark breathes quietly from here on. */
         const val SettleSeconds = 4.6f
 
+        private const val PortraitStageW = 780f
         private const val LogoX = 680f
         private const val LogoY = 160f
         private const val LogoSize = 560f
@@ -660,7 +708,6 @@ class ArcIgnitionScene private constructor(
         private const val LetterLeft = 617f
         private const val LetterTop = 735f
         private const val LetterWidth = 686f
-        private const val LightMargin = 160f
         private const val SampleCount = 421
         private val Backdrop = Color.rgb(3, 5, 10)
 

@@ -292,15 +292,20 @@ class ArcIgnitionView(
         /** Reduced motion shows the settled mark without the breathing. */
         private const val ReducedMotionClock = 5.4f
 
-        /** A 1080p buffer keeps fill cost flat on 4K interfaces (the display scaler does the rest); light boxes use 720p. */
-        private fun bufferCapFor(width: Int, height: Int, reduced: Boolean): Float =
-            min(1f, min(1920f / width, 1080f / height)) * if (reduced) 2f / 3f else 1f
+        /** A 1080p buffer keeps fill cost flat on 4K interfaces and portrait phones without downscaling art; light boxes use 720p. */
+        private fun bufferCapFor(width: Int, height: Int, reduced: Boolean): Float {
+            val maxW = if (height > width) 1080f else 1920f
+            val maxH = if (height > width) 1920f else 1080f
+            return min(1f, min(maxW / width, maxH / height)) * if (reduced) 2f / 3f else 1f
+        }
 
         /** Device pixels per stage unit in the buffer, so the scene can size its art to land pixel for pixel. */
         internal fun bufferScaleFor(width: Int, height: Int, reduced: Boolean): Float {
             if (width <= 0 || height <= 0) return if (reduced) 2f / 3f else 1f
             val cap = bufferCapFor(width, height, reduced)
-            return min((width * cap).roundToInt() / 1920f, (height * cap).roundToInt() / 1080f)
+            val bw = (width * cap).roundToInt()
+            val bh = (height * cap).roundToInt()
+            return if (bh > bw) min(bw / 780f, bh / 1080f) else min(bw / 1920f, bh / 1080f)
         }
     }
 }

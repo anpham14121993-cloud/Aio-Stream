@@ -140,8 +140,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 24
         targetSdk = 36
-        versionCode = providers.gradleProperty("arcVersionCode").orNull?.toIntOrNull() ?: 10031
-        versionName = providers.gradleProperty("arcVersionName").orNull ?: "1.0.31"
+        versionCode = providers.gradleProperty("arcVersionCode").orNull?.toIntOrNull() ?: 10032
+        versionName = providers.gradleProperty("arcVersionName").orNull ?: "1.0.32"
         // Bundle both 32-bit (TV Box / legacy Android) and 64-bit ARM ABIs into one universal APK.
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")

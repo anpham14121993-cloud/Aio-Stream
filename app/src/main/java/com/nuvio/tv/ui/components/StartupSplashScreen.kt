@@ -27,7 +27,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -105,7 +104,6 @@ fun StartupSplashScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
                     .background(
                         brush = Brush.verticalGradient(
                             colorStops = arrayOf(
@@ -133,28 +131,28 @@ fun StartupSplashScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Box(
-                modifier = Modifier.size(240.dp),
+                modifier = Modifier.size(260.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val center = Offset(size.width / 2f, size.height / 2f)
-                    val radius = size.minDimension * 0.42f
+                    val radius = size.minDimension * 0.48f
                     val stormCyan = Color(0xFF66D4FF)
                     val stormIce = Color(0xFFE6FAFF)
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                stormCyan.copy(alpha = 0.28f * pulseGlow),
-                                Color(0xFF3E78FF).copy(alpha = 0.10f * pulseGlow),
+                                stormCyan.copy(alpha = 0.26f * pulseGlow),
+                                Color(0xFF3E78FF).copy(alpha = 0.09f * pulseGlow),
                                 Color.Transparent
                             ),
                             center = center,
-                            radius = radius * 1.45f
+                            radius = radius
                         ),
-                        radius = radius * 1.45f,
+                        radius = radius,
                         center = center
                     )
-                    val ringDiameter = radius * 1.18f
+                    val ringDiameter = 98.dp.toPx()
                     val topLeft = Offset(center.x - ringDiameter / 2f, center.y - ringDiameter / 2f)
                     val arcSize = Size(ringDiameter, ringDiameter)
                     drawArc(
