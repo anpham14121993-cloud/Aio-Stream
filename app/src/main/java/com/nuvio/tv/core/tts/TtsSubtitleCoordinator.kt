@@ -690,9 +690,7 @@ class TtsSubtitleCoordinator(
         // Dual-voice pitch correction: if an already-prefetched clip's gender flipped before playback, invalidate & re-fetch it.
         if (settings.dualVoiceEnabled) {
             val horizonMs = posMs + lookaheadMs
-            val firstScanIdx = max(0, findActiveCueIndex(cues, posMs - 200L).let {
-                if (it >= 0) it else findInsertionPointByStart(cues, posMs)
-            })
+            val firstScanIdx = findWindowStartIndexIn(cues, posMs)
             for (i in firstScanIdx until cues.size) {
                 if (!googleRolling && urgentSynthWaiters.get() > 0) return
                 if (inFlightPrefetches.size >= activePrefetchCap) break
@@ -1222,9 +1220,7 @@ class TtsSubtitleCoordinator(
                 return emptyList()
             }
             val horizonMs = posMs + lookaheadMs
-            val firstScanIdx = max(0, findActiveCueIndexIn(cues, posMs - 200L).let {
-                if (it >= 0) it else findInsertionPointByStartIn(cues, posMs)
-            })
+            val firstScanIdx = findWindowStartIndexIn(cues, posMs)
             val slotsAvailable = maxConcurrentPrefetches - currentInFlightCount
             val selected = ArrayList<Int>(slotsAvailable)
             var windowCount = 0
@@ -1250,6 +1246,11 @@ class TtsSubtitleCoordinator(
             }
             return selected
         }
+
+        private fun findWindowStartIndexIn(cues: List<SubtitleSyncCue>, posMs: Long): Int =
+            max(0, findActiveCueIndexIn(cues, posMs - 200L).let {
+                if (it >= 0) it else findInsertionPointByStartIn(cues, posMs)
+            })
 
         private fun findActiveCueIndexIn(cues: List<SubtitleSyncCue>, posMs: Long): Int {
             var lo = 0
