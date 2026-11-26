@@ -25,8 +25,7 @@ enum class SpeakerGender {
 
 enum class TtsBackendType {
     PIPER_ONNX,
-    GOOGLE_TRANSLATE,
-    SYSTEM_TTS
+    GOOGLE_TRANSLATE
 }
 
 data class TtsVoiceOption(
@@ -46,12 +45,11 @@ data class TtsDownloadState(
 )
 
 /**
- * Catalog of offline Piper VITS voices, Google Translate online TTS, and Android System TTS.
+ * Catalog of offline Piper VITS voices and Google Translate online TTS.
  * Piper ONNX + JSON model pairs are hosted on HuggingFace (`dinhphuongvn/ttsvn`).
  */
 object TtsVoiceCatalog {
     const val GOOGLE_VOICE_ID = "google_online"
-    const val SYSTEM_VOICE_ID = "system_tts"
     const val DEFAULT_FEMALE_VOICE_ID = "ngoc_huyen_new"
     const val DEFAULT_MALE_VOICE_ID = "minh_quang"
 
@@ -90,21 +88,13 @@ object TtsVoiceCatalog {
         TtsVoiceOption("ngoc_ngan", "Ngọc Ngạn (Nam)", "Miền Nam", SpeakerGender.MALE, TtsBackendType.PIPER_ONNX),
         TtsVoiceOption("tran_thanh", "Trấn Thành (Nam)", "Miền Nam", SpeakerGender.MALE, TtsBackendType.PIPER_ONNX),
         TtsVoiceOption("viet_thao", "Việt Thảo (Nam)", "Miền Nam", SpeakerGender.MALE, TtsBackendType.PIPER_ONNX),
-        // Built-in online / system backends
+        // Built-in online backend
         TtsVoiceOption(
             id = GOOGLE_VOICE_ID,
             displayName = "Google Dịch (Online)",
             regionLabel = "Trực tuyến • Cần mạng",
             gender = SpeakerGender.FEMALE,
             backend = TtsBackendType.GOOGLE_TRANSLATE,
-            sizeMb = 0.0
-        ),
-        TtsVoiceOption(
-            id = SYSTEM_VOICE_ID,
-            displayName = "Giọng hệ thống (Android TTS)",
-            regionLabel = "Thiết bị • Có sẵn",
-            gender = SpeakerGender.UNSPECIFIED,
-            backend = TtsBackendType.SYSTEM_TTS,
             sizeMb = 0.0
         )
     )

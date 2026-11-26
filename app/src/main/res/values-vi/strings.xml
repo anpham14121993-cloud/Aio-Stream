@@ -4684,7 +4684,7 @@
     <string name="aio_device_mode_tablet">Máy tính bảng</string>
     <string name="aio_device_mode_tv">TV / TV Box</string>
     <string name="playback_section_tts">Thuyết minh</string>
-    <string name="playback_section_tts_desc">Lồng tiếng phụ đề tự động bằng giọng đọc AI Offline (Piper), Google Dịch và giọng hệ thống</string>
+    <string name="playback_section_tts_desc">Lồng tiếng phụ đề tự động bằng giọng đọc AI Offline (Piper) và Google Dịch Online</string>
     <string name="cd_tts_dubbing">Thuyết minh</string>
     <string name="exit_confirm_title">Thoát AioStream?</string>
     <string name="exit_confirm_message">Bạn có đồng ý thoát ứng dụng không?</string>

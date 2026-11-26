@@ -350,7 +350,7 @@ internal class ActiveWavAudioTrack(
         }
         activeResumeUptimeMs = android.os.SystemClock.elapsedRealtime()
         track.play()
-        val targetSpeed = effectiveSpeed.coerceIn(0.6f, 1.55f)
+        val targetSpeed = effectiveSpeed.coerceIn(0.6f, 2.0f)
         activeSpeed = if (abs(targetSpeed - 1.0f) > 0.02f) {
             val applied = runCatching {
                 track.playbackParams = PlaybackParams()

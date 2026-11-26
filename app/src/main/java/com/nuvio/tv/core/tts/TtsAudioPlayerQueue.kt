@@ -199,19 +199,11 @@ class TtsAudioPlayerQueue(
                 continue
             }
 
-            val backlogSpeed = when {
-                pendingCount >= 3 -> max(next.baseSpeed * 1.30f, 1.35f)
-                pendingCount == 2 -> max(next.baseSpeed * 1.20f, 1.24f)
-                pendingCount == 1 -> max(next.baseSpeed * 1.12f, 1.15f)
-                else -> next.baseSpeed
-            }
-            val latenessSpeed = when {
-                latenessMs > 2800L -> max(next.baseSpeed * 1.30f, 1.36f)
-                latenessMs > 1500L -> max(next.baseSpeed * 1.20f, 1.24f)
-                latenessMs > 600L -> max(next.baseSpeed * 1.10f, 1.14f)
-                else -> next.baseSpeed
-            }
-            val effectiveSpeed = max(backlogSpeed, latenessSpeed).coerceIn(0.6f, 1.42f)
+            val effectiveSpeed = computeEffectivePlaybackSpeed(
+                baseSpeed = next.baseSpeed,
+                pendingCount = pendingCount,
+                latenessMs = latenessMs
+            )
 
             // Prefer persistent 48 kHz stereo AudioTrack for PCM WAV (Piper / System TTS) to bypass
             // Android TV OEM HAL track-reopen mutes and 22050 Hz mono NuPlayer quirks; fall back to
@@ -260,6 +252,7 @@ class TtsAudioPlayerQueue(
                     postOnPlayerThread {
                         if (activePlayer === finished) {
                             releaseActiveOnPlayerThread()
+                            onItemPlayed?.invoke()
                             playNextOnPlayerThread()
                         } else {
                             runCatching { finished.release() }
@@ -284,10 +277,18 @@ class TtsAudioPlayerQueue(
                 // some Android TV OEM MediaPlayers return pitch=0f/speed=0f when queried in Prepared
                 // state or mute short clips if PlaybackParams is set before start().
                 if (abs(effectiveSpeed - 1.0f) > 0.02f) {
-                    runCatching {
+                    val applied = runCatching {
                         mp.playbackParams = PlaybackParams()
                             .setSpeed(effectiveSpeed)
                             .setPitch(1.0f)
+                        true
+                    }.getOrDefault(false)
+                    if (!applied && effectiveSpeed > 2.0f) {
+                        runCatching {
+                            mp.playbackParams = PlaybackParams()
+                                .setSpeed(2.0f)
+                                .setPitch(1.0f)
+                        }
                     }
                 }
                 notifySpeaking(true)
@@ -338,6 +339,30 @@ class TtsAudioPlayerQueue(
         if (isSpeaking != speaking) {
             isSpeaking = speaking
             runCatching { onSpeakingStateChanged(speaking) }
+        }
+    }
+
+    companion object {
+        internal fun computeEffectivePlaybackSpeed(
+            baseSpeed: Float,
+            pendingCount: Int,
+            latenessMs: Long
+        ): Float {
+            val safeBase = baseSpeed.coerceIn(0.6f, 2.0f)
+            val backlogSpeed = when {
+                pendingCount >= 3 -> max(safeBase * 1.25f, 1.35f)
+                pendingCount == 2 -> max(safeBase * 1.18f, 1.24f)
+                pendingCount == 1 -> max(safeBase * 1.10f, 1.15f)
+                else -> safeBase
+            }
+            val latenessSpeed = when {
+                latenessMs > 2800L -> max(safeBase * 1.25f, 1.36f)
+                latenessMs > 1500L -> max(safeBase * 1.18f, 1.24f)
+                latenessMs > 600L -> max(safeBase * 1.10f, 1.14f)
+                else -> safeBase
+            }
+            val maxSpeed = if (safeBase > 1.5f) 2.25f else 2.0f
+            return max(backlogSpeed, latenessSpeed).coerceIn(0.6f, maxSpeed)
         }
     }
 }

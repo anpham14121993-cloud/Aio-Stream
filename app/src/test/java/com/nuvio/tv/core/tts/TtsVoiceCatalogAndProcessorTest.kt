@@ -426,4 +426,121 @@ class TtsVoiceCatalogAndProcessorTest {
             )
         )
     }
+
+    @Test
+    fun systemVoiceRemovedAndMaxSpeedRaisedToTwoX() {
+        assertTrue(TtsVoiceCatalog.voices.none { it.id == "system_tts" })
+        assertEquals(
+            TtsVoiceCatalog.GOOGLE_VOICE_ID,
+            TtsVoiceCatalog.findVoice("system_tts").id
+        )
+        assertEquals(0.7f, TtsPreferencesStore.MIN_SPEECH_SPEED, 0.001f)
+        assertEquals(2.0f, TtsPreferencesStore.MAX_SPEECH_SPEED, 0.001f)
+
+        // Piper WAVs already bake user speed into synthesis, whereas Google MP3s play at user speed.
+        assertEquals(1.0f, TtsSubtitleCoordinator.playbackBaseSpeedFor(TtsBackendType.PIPER_ONNX, 2.0f), 0.001f)
+        assertEquals(2.0f, TtsSubtitleCoordinator.playbackBaseSpeedFor(TtsBackendType.GOOGLE_TRANSLATE, 2.0f), 0.001f)
+
+        assertEquals(
+            2.0f,
+            TtsAudioPlayerQueue.computeEffectivePlaybackSpeed(baseSpeed = 2.0f, pendingCount = 0, latenessMs = 0L),
+            0.001f
+        )
+        assertTrue(
+            TtsAudioPlayerQueue.computeEffectivePlaybackSpeed(baseSpeed = 2.0f, pendingCount = 2, latenessMs = 1800L) in 2.0f..2.25f
+        )
+    }
+
+    @Test
+    fun googleRollingPrefetchSlidesWindowAndSkipsBackedOffFailures() {
+        val cues = (0 until 20).map { idx ->
+            val start = (idx + 1) * 1_500L
+            SubtitleSyncCue(start, start + 1_200L, "Câu thoại số $idx")
+        }
+        val keys = cues.mapIndexed { idx, cue -> TtsSubtitleCoordinator.cueKeyFor(cue, idx) }
+
+        val ready = mutableSetOf<String>()
+        val inFlight = mutableSetOf<String>()
+        val triggered = mutableSetOf<String>()
+        val retryAfter = mutableMapOf<String, Long>()
+
+        // Initial rolling wave fills up to 3 concurrent slots starting at cue 0.
+        val wave1 = TtsSubtitleCoordinator.selectRollingPrefetchIndices(
+            cues = cues,
+            posMs = 0L,
+            nowElapsedMs = 1_000L,
+            lookaheadMs = 45_000L,
+            maxWindowCues = 12,
+            maxConcurrentPrefetches = 3,
+            currentInFlightCount = inFlight.size,
+            isSpeakable = { true },
+            isReady = { it in ready },
+            isInFlight = { it in inFlight },
+            isTriggered = { it in triggered },
+            retryAfterElapsedMs = { retryAfter[it] }
+        )
+        assertEquals(listOf(0, 1, 2), wave1)
+
+        // Cue 0 completes, cue 1 fails (backed off until 2500ms), cue 2 still in flight -> window jumps to 3 & 4.
+        ready += keys[0]
+        retryAfter[keys[1]] = 2_500L
+        inFlight += keys[2]
+        val wave2 = TtsSubtitleCoordinator.selectRollingPrefetchIndices(
+            cues = cues,
+            posMs = 500L,
+            nowElapsedMs = 1_200L,
+            lookaheadMs = 45_000L,
+            maxWindowCues = 12,
+            maxConcurrentPrefetches = 3,
+            currentInFlightCount = inFlight.size,
+            isSpeakable = { true },
+            isReady = { it in ready },
+            isInFlight = { it in inFlight },
+            isTriggered = { it in triggered },
+            retryAfterElapsedMs = { retryAfter[it] }
+        )
+        assertEquals(listOf(3, 4), wave2)
+
+        // Once backoff expires (nowElapsedMs = 2600ms) and slots open, cue 1 is cleanly retried.
+        inFlight.clear()
+        ready += keys[2]
+        ready += keys[3]
+        val retryWave = TtsSubtitleCoordinator.selectRollingPrefetchIndices(
+            cues = cues,
+            posMs = 1_000L,
+            nowElapsedMs = 2_600L,
+            lookaheadMs = 45_000L,
+            maxWindowCues = 12,
+            maxConcurrentPrefetches = 3,
+            currentInFlightCount = 0,
+            isSpeakable = { true },
+            isReady = { it in ready },
+            isInFlight = { it in inFlight },
+            isTriggered = { it in triggered },
+            retryAfterElapsedMs = { retryAfter[it] }
+        )
+        assertEquals(listOf(1, 4, 5), retryWave)
+
+        // When cue 0 & 1 are triggered and consumed, rolling window of 12 slides forward to include cue 12 & 13.
+        triggered += keys[0]
+        triggered += keys[1]
+        ready.remove(keys[0])
+        ready.remove(keys[1])
+        for (i in 2..11) ready += keys[i]
+        val slidWave = TtsSubtitleCoordinator.selectRollingPrefetchIndices(
+            cues = cues,
+            posMs = 4_000L,
+            nowElapsedMs = 4_000L,
+            lookaheadMs = 45_000L,
+            maxWindowCues = 12,
+            maxConcurrentPrefetches = 3,
+            currentInFlightCount = 0,
+            isSpeakable = { true },
+            isReady = { it in ready },
+            isInFlight = { it in inFlight },
+            isTriggered = { it in triggered },
+            retryAfterElapsedMs = { retryAfter[it] }
+        )
+        assertEquals(listOf(12, 13), slidWave)
+    }
 }

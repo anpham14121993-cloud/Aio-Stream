@@ -496,14 +496,14 @@ internal fun TtsSettingsPanel(
                     label = "Tốc độ đọc",
                     valueText = String.format(Locale.US, "%.2fx", ttsSettings.speechSpeed),
                     canDecrease = ttsSettings.speechSpeed > 0.72f,
-                    canIncrease = ttsSettings.speechSpeed < 1.48f,
+                    canIncrease = ttsSettings.speechSpeed < 1.98f,
                     tvFocusMode = tvFocusMode,
                     onDecrease = {
                         val next = (((ttsSettings.speechSpeed - 0.05f) * 20).roundToInt() / 20f).coerceAtLeast(0.7f)
                         onEvent(PlayerEvent.OnSetTtsSpeechSpeed(next))
                     },
                     onIncrease = {
-                        val next = (((ttsSettings.speechSpeed + 0.05f) * 20).roundToInt() / 20f).coerceAtMost(1.5f)
+                        val next = (((ttsSettings.speechSpeed + 0.05f) * 20).roundToInt() / 20f).coerceAtMost(2.0f)
                         onEvent(PlayerEvent.OnSetTtsSpeechSpeed(next))
                     }
                 )

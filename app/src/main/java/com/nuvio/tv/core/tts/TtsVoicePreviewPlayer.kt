@@ -35,7 +35,7 @@ data class TtsVoicePreviewState(
  * Plays a short voice sample when user taps "Nghe thử" BEFORE or AFTER downloading a voice model.
  * Priority:
  * 1) Downloaded local Piper model (synthesizes live with user speed)
- * 2) Built-in backend (Google Translate Online / Android System TTS)
+ * 2) Built-in backend (Google Translate Online)
  * 3) Bundled APK sample clip (`assets/tts_samples/<voiceId>.m4a`)
  * 4) Remote lightweight preview clip (cached in `cacheDir/tts_preview_cache/`)
  */
@@ -124,7 +124,12 @@ object TtsVoicePreviewPlayer {
                 return@launch
             }
 
-            playAudioFile(file, voiceId, speechSpeed, generation)
+            playAudioFile(
+                file = file,
+                voiceId = voiceId,
+                speechSpeed = if (resolved.alreadySpeedScaled) 1.0f else speechSpeed,
+                generation = generation
+            )
         }
     }
 
@@ -140,7 +145,8 @@ object TtsVoicePreviewPlayer {
 
     private data class PreviewResolveResult(
         val file: File?,
-        val errorMessage: String? = null
+        val errorMessage: String? = null,
+        val alreadySpeedScaled: Boolean = false
     )
 
     private suspend fun resolvePreviewAudioFile(
@@ -157,33 +163,21 @@ object TtsVoicePreviewPlayer {
                 val google = GoogleTranslateTtsEngine(appContext)
                 return PreviewResolveResult(google.synthesizeToMp3(previewText, "preview_${option.id}"))
             }
-            TtsBackendType.SYSTEM_TTS -> {
-                val system = SystemTtsEngine(appContext)
-                return try {
-                    PreviewResolveResult(
-                        system.synthesizeToWav(
-                            text = previewText,
-                            gender = option.gender,
-                            speechRate = speechSpeed,
-                            cacheKey = "preview_sys_${(speechSpeed * 100).toInt()}"
-                        )
-                    )
-                } finally {
-                    system.release()
-                }
-            }
             TtsBackendType.PIPER_ONNX -> {
                 if (TtsVoiceCatalog.isVoiceReady(appContext, option.id)) {
-                    val outWav = File(previewCacheDir, "live_${option.id}_${(speechSpeed * 100).toInt()}.wav")
-                    if (outWav.exists() && outWav.length() > 256L) return PreviewResolveResult(outWav)
+                    val clamped = speechSpeed.coerceIn(0.7f, 2.0f)
+                    val outWav = File(previewCacheDir, "live_${option.id}_${(clamped * 100).toInt()}.wav")
+                    if (outWav.exists() && outWav.length() > 256L) {
+                        return PreviewResolveResult(outWav, alreadySpeedScaled = true)
+                    }
                     val piper = PiperOnnxEngine(appContext)
                     try {
                         val speakable = VietnameseTextNormalizer.parseAndCleanCue(previewText).speakableText
-                        val synth = piper.synthesize(option.id, speakable, speechSpeed)
+                        val synth = piper.synthesize(option.id, speakable, clamped)
                         if (synth != null) {
                             val trimmed = TtsAudioPostProcessor.trimSilence(synth.samples, synth.sampleRate)
                             if (TtsAudioPostProcessor.writeNormalizedWav(trimmed, synth.sampleRate, 100, outWav)) {
-                                return PreviewResolveResult(outWav)
+                                return PreviewResolveResult(outWav, alreadySpeedScaled = true)
                             }
                             return PreviewResolveResult(null, "Không ghi được file WAV nghe thử Piper")
                         }
@@ -276,7 +270,7 @@ object TtsVoicePreviewPlayer {
             if (playbackGeneration != generation) return@post
             releaseActiveOnPlayerThread()
 
-            val clampedSpeed = speechSpeed.coerceIn(0.7f, 1.5f)
+            val clampedSpeed = speechSpeed.coerceIn(0.7f, 2.0f)
             if (file.name.endsWith(".wav", ignoreCase = true)) {
                 var startedTrack: ActiveWavAudioTrack? = null
                 val wavAttempt = runCatching {

@@ -54,7 +54,7 @@ class TtsPreferencesStore(context: Context) {
     fun setFemaleVoiceId(voiceId: String) = update { it.copy(femaleVoiceId = voiceId) }
 
     fun setSpeechSpeed(speed: Float) = update {
-        it.copy(speechSpeed = speed.coerceIn(0.7f, 1.5f))
+        it.copy(speechSpeed = speed.coerceIn(MIN_SPEECH_SPEED, MAX_SPEECH_SPEED))
     }
 
     fun setTtsVolumePercent(percent: Int) = update {
@@ -84,18 +84,30 @@ class TtsPreferencesStore(context: Context) {
     private fun readState(): TtsSettingsState = TtsSettingsState(
         enabled = prefs.getBoolean(KEY_ENABLED, false),
         dualVoiceEnabled = prefs.getBoolean(KEY_DUAL_VOICE, false),
-        primaryVoiceId = prefs.getString(KEY_PRIMARY_VOICE, TtsVoiceCatalog.DEFAULT_FEMALE_VOICE_ID)
-            ?: TtsVoiceCatalog.DEFAULT_FEMALE_VOICE_ID,
-        maleVoiceId = prefs.getString(KEY_MALE_VOICE, TtsVoiceCatalog.DEFAULT_MALE_VOICE_ID)
-            ?: TtsVoiceCatalog.DEFAULT_MALE_VOICE_ID,
-        femaleVoiceId = prefs.getString(KEY_FEMALE_VOICE, TtsVoiceCatalog.DEFAULT_FEMALE_VOICE_ID)
-            ?: TtsVoiceCatalog.DEFAULT_FEMALE_VOICE_ID,
-        speechSpeed = prefs.getFloat(KEY_SPEED, 1.0f).coerceIn(0.7f, 1.5f),
+        primaryVoiceId = sanitizeVoiceId(
+            prefs.getString(KEY_PRIMARY_VOICE, TtsVoiceCatalog.DEFAULT_FEMALE_VOICE_ID),
+            TtsVoiceCatalog.DEFAULT_FEMALE_VOICE_ID
+        ),
+        maleVoiceId = sanitizeVoiceId(
+            prefs.getString(KEY_MALE_VOICE, TtsVoiceCatalog.DEFAULT_MALE_VOICE_ID),
+            TtsVoiceCatalog.DEFAULT_MALE_VOICE_ID
+        ),
+        femaleVoiceId = sanitizeVoiceId(
+            prefs.getString(KEY_FEMALE_VOICE, TtsVoiceCatalog.DEFAULT_FEMALE_VOICE_ID),
+            TtsVoiceCatalog.DEFAULT_FEMALE_VOICE_ID
+        ),
+        speechSpeed = prefs.getFloat(KEY_SPEED, 1.0f).coerceIn(MIN_SPEECH_SPEED, MAX_SPEECH_SPEED),
         ttsVolumePercent = prefs.getInt(KEY_TTS_VOLUME, 100).coerceIn(0, 150),
         movieVolumePercent = prefs.getInt(KEY_MOVIE_VOLUME, 70).coerceIn(0, 100),
         hideSubtitlesOnTts = prefs.getBoolean(KEY_HIDE_SUBS, false),
         preserveTvPassthrough = prefs.getBoolean(KEY_PRESERVE_PASSTHROUGH, false)
     )
+
+    private fun sanitizeVoiceId(raw: String?, fallback: String): String {
+        val candidate = raw?.takeIf { it.isNotBlank() } ?: return fallback
+        if (candidate == LEGACY_SYSTEM_VOICE_ID) return TtsVoiceCatalog.GOOGLE_VOICE_ID
+        return candidate
+    }
 
     private fun writeState(state: TtsSettingsState) {
         prefs.edit()
@@ -113,6 +125,9 @@ class TtsPreferencesStore(context: Context) {
     }
 
     companion object {
+        const val MIN_SPEECH_SPEED = 0.7f
+        const val MAX_SPEECH_SPEED = 2.0f
+        private const val LEGACY_SYSTEM_VOICE_ID = "system_tts"
         private const val PREFS_NAME = "tts_voice_prefs"
         private const val KEY_ENABLED = "tts_enabled"
         private const val KEY_DUAL_VOICE = "tts_dual_voice"

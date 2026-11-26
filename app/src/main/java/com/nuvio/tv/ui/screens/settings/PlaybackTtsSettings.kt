@@ -91,7 +91,7 @@ internal fun PlaybackTtsSection() {
 
     SettingsToggleRow(
         title = "Bật thuyết minh phụ đề",
-        subtitle = "Tự động đọc phụ đề bằng Piper AI Offline, Google Dịch hoặc giọng hệ thống",
+        subtitle = "Tự động đọc phụ đề bằng Piper AI Offline hoặc Google Dịch Online",
         checked = ttsSettings.enabled,
         onToggle = { prefs.setEnabled(!ttsSettings.enabled) }
     )
@@ -191,7 +191,7 @@ internal fun PlaybackTtsSection() {
         value = (ttsSettings.speechSpeed * 100f).roundToInt(),
         valueText = String.format(Locale.US, "%.2fx", ttsSettings.speechSpeed),
         minValue = 70,
-        maxValue = 150,
+        maxValue = 200,
         step = 5,
         onValueChange = { percent -> prefs.setSpeechSpeed(percent / 100f) }
     )
